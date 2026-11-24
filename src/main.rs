@@ -1,22 +1,22 @@
 //! ToolStow binary entrypoint.
 
 use std::fs;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+use toolstow::auth::AuthManager;
 use toolstow::config::Config;
 use toolstow::registry::ToolRegistry;
-use toolstow::routes::{AppState, build_router};
+use toolstow::routes::{AppState, build_router, is_custom_theme_active};
+use toolstow::settings::SettingsStore;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::parse();
-
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -24,6 +24,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let config = Config::from_cli_and_env();
+
+    fs::create_dir_all(&config.data_dir).with_context(|| {
+        format!(
+            "failed to create data directory '{}'",
+            config.data_dir.display()
+        )
+    })?;
     fs::create_dir_all(&config.tools_dir).with_context(|| {
         format!(
             "failed to create tools directory '{}'",
@@ -31,24 +39,37 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
 
+    let settings = SettingsStore::load(config.settings_path());
+    let auth = AuthManager::new(
+        config.admin_key.clone(),
+        config.api_key.clone(),
+        config.cookie_secure,
+    );
+    auth.warn_weak_keys();
+
     let registry = Arc::new(ToolRegistry::new(config.tools_dir.clone()));
     let loaded_count = registry
         .scan_all()
         .context("failed to perform initial scan of tools directory")?;
-    info!(
-        tools_dir = %config.tools_dir.display(),
-        count = loaded_count,
-        "initial tool scan completed"
-    );
-
     let _watcher = registry
         .start_watcher()
         .context("failed to start tools directory watcher")?;
 
     let listen_addr = config.listen_addr();
+    let theme_mode = if is_custom_theme_active(&config.theme_dir) {
+        "custom"
+    } else {
+        "embedded"
+    };
+    let admin_enabled = auth.is_admin_enabled();
+    let api_enabled = auth.is_api_enabled();
+
+    let config = Arc::new(config);
     let state = AppState {
         registry,
-        config: Arc::new(config),
+        config: Arc::clone(&config),
+        settings,
+        auth,
     };
     let app = build_router(state);
 
@@ -59,12 +80,28 @@ async fn main() -> anyhow::Result<()> {
         .local_addr()
         .context("failed to read bound listener address")?;
 
-    info!(url = %format!("http://{local_addr}"), "ToolStow server listening");
+    info!(
+        url = %format!("http://{local_addr}"),
+        data_dir = %config.data_dir.display(),
+        tools_dir = %config.tools_dir.display(),
+        theme_dir = %config.theme_dir.display(),
+        theme_mode,
+        tools_loaded = loaded_count,
+        admin_panel_enabled = admin_enabled,
+        ai_bearer_api_enabled = api_enabled,
+        include_drafts = config.include_drafts,
+        cookie_secure = config.cookie_secure,
+        max_upload_mb = config.max_upload_mb,
+        "ToolStow server listening"
+    );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("HTTP server exited with error")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("HTTP server exited with error")?;
 
     info!("ToolStow server shut down gracefully");
     Ok(())

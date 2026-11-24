@@ -1,40 +1,56 @@
-//! Axum HTTP router, API endpoints, CSRF protection, static tool hosting,
-//! and embedded frontend shell serving.
+//! Axum HTTP router, dual-key authentication, CSRF protection, admin APIs,
+//! decoupled custom theme serving, static tool hosting, and embedded assets.
 
+use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::multipart::{Multipart, MultipartError, MultipartRejection};
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Path as AxumPath, Query, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, ORIGIN, X_CONTENT_TYPE_OPTIONS};
+use axum::http::header::{
+    AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, ORIGIN, SET_COOKIE,
+    X_CONTENT_TYPE_OPTIONS,
+};
 use axum::http::request::Parts;
 use axum::http::uri::Authority;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Json, Redirect, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, patch, post};
 use rust_embed::RustEmbed;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 
 use crate::archive::{self, ArchiveLimits};
+use crate::auth::AuthManager;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::manifest::{self, ToolEntry};
 use crate::registry::ToolRegistry;
+use crate::settings::{SettingsStore, SiteSettings, SiteSettingsUpdate};
 
-/// Custom header required on browser-originated mutating requests so cross-origin
-/// or sandboxed `multipart/form-data` submissions trigger CORS preflight and are blocked.
+/// Custom header required on browser-originated and cookie-authenticated mutating requests so
+/// cross-origin or sandboxed submissions trigger CORS preflight and are blocked.
 pub const CLIENT_HEADER_NAME: &str = "x-toolstow-client";
 
-/// Embedded frontend shell assets from `frontend/`.
+/// Embedded default public frontend shell assets from `frontend/`.
 ///
 /// In debug builds `rust-embed` reads files from disk for fast iteration; in
 /// release builds assets are compiled directly into the single binary.
 #[derive(RustEmbed)]
 #[folder = "frontend/"]
 struct FrontendAssets;
+
+/// Embedded locked admin panel assets from `admin/`.
+///
+/// Always served directly from the binary under `/admin*` and never shadowable by `data/theme/`.
+#[derive(RustEmbed)]
+#[folder = "admin/"]
+struct AdminAssets;
 
 /// Shared application state injected into Axum route handlers.
 #[derive(Debug, Clone)]
@@ -43,6 +59,10 @@ pub struct AppState {
     pub registry: Arc<ToolRegistry>,
     /// Parsed runtime server configuration.
     pub config: Arc<Config>,
+    /// File-backed site settings store (`<data_dir>/settings.json`).
+    pub settings: SettingsStore,
+    /// Dual-key authentication, admin session, and rate-limit manager.
+    pub auth: AuthManager,
 }
 
 /// Optional query filters accepted by `GET /api/tools`.
@@ -53,11 +73,79 @@ struct ListToolsQuery {
     tag: Option<String>,
 }
 
-/// Request guard enforcing CSRF and Origin checks on mutating API routes.
-///
-/// Running this as a [`FromRequestParts`] extractor ensures cross-site and
-/// sandboxed iframe (`Origin: null`) requests are rejected with `403 Forbidden`
-/// before any multipart body is parsed.
+/// Optional query filters accepted by `GET /api/admin/tools`.
+#[derive(Debug, Default, Deserialize)]
+struct AdminListToolsQuery {
+    q: Option<String>,
+    category: Option<String>,
+    tag: Option<String>,
+    draft: Option<String>,
+}
+
+/// JSON response payload for `GET /api/me`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeResponse {
+    site_title: String,
+    site_description: String,
+    default_accent: String,
+    is_admin: bool,
+    admin_enabled: bool,
+    theme_source: &'static str,
+}
+
+/// JSON response payload for `GET /api/admin/session`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdminSessionResponse {
+    authenticated: bool,
+    admin_enabled: bool,
+}
+
+/// JSON request payload for `POST /api/admin/login`.
+#[derive(Debug, Deserialize)]
+struct LoginRequest {
+    key: String,
+}
+
+/// JSON response payload for `POST /api/admin/login`.
+#[derive(Debug, Serialize)]
+struct LoginResponse {
+    ok: bool,
+}
+
+/// JSON request payload for `PATCH /api/admin/tools/{id}`.
+#[derive(Debug, Deserialize)]
+struct PatchToolRequest {
+    draft: bool,
+}
+
+/// Extracts a rate-limit client key from optional `ConnectInfo<SocketAddr>`, falling back to
+/// `"local"` in in-process `oneshot` tests where no TCP peer address is attached.
+#[derive(Debug, Clone)]
+struct ClientKey(String);
+
+impl<S> FromRequestParts<S> for ClientKey
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(extract_client_key(parts)))
+    }
+}
+
+/// Extracts the client IP string from request extensions if `ConnectInfo<SocketAddr>` is present.
+fn extract_client_key(parts: &Parts) -> String {
+    parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip().to_string())
+        .unwrap_or_else(|| "local".to_string())
+}
+
+/// Request guard enforcing CSRF and Origin checks on browser-originated mutating routes.
 #[derive(Debug, Clone, Copy)]
 struct CsrfGuard;
 
@@ -73,18 +161,95 @@ where
     }
 }
 
-/// Validates request headers for state-mutating endpoints (`POST /api/tools/upload`,
-/// `DELETE /api/tools/{id}`).
+/// Request guard for Admin-Session-only routes (`GET /api/admin/settings`, `PUT /api/admin/settings`).
 ///
-/// Rules:
-/// 1. Reject if `Sec-Fetch-Site` is `"cross-site"`.
-/// 2. If `Origin` is present (browser request):
-///    - Reject if `Origin` is `"null"` (sandboxed opaque origin).
-///    - Verify `Origin`'s host and effective port match the `Host` header.
-///    - Require a non-empty `X-ToolStow-Client` header.
-/// 3. Non-browser CLI / `curl` requests (no `Origin` header and not `Sec-Fetch-Site: cross-site`)
-///    are permitted.
-fn verify_csrf_headers(headers: &HeaderMap) -> Result<(), AppError> {
+/// - Fail-closed (`404`) when `TOOLSTOW_ADMIN_KEY` is not configured.
+/// - Always rejects `Origin: null` and `Sec-Fetch-Site: cross-site` (`403`).
+/// - Strictly requires a valid Admin Session Cookie (`401` otherwise; `TOOLSTOW_API_KEY` Bearer
+///   tokens are NEVER accepted).
+/// - Enforces CSRF + `X-ToolStow-Client` on mutating requests and whenever `Origin` is present.
+#[derive(Debug, Clone, Copy)]
+struct AdminSessionOnly;
+
+impl FromRequestParts<AppState> for AdminSessionOnly {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if !state.auth.is_admin_enabled() {
+            return Err(AppError::not_found("admin panel is disabled"));
+        }
+
+        verify_no_cross_site_or_null_origin(&parts.headers)?;
+
+        if !state.auth.has_valid_admin_session(&parts.headers) {
+            return Err(AppError::unauthorized("admin session required"));
+        }
+
+        let is_mutating = !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
+        if is_mutating {
+            verify_csrf_headers(&parts.headers)?;
+            require_client_header(&parts.headers)?;
+        } else if parts.headers.contains_key(ORIGIN) {
+            verify_csrf_headers(&parts.headers)?;
+        }
+
+        Ok(Self)
+    }
+}
+
+/// Request guard for Admin Tool Management routes (`/api/admin/tools*`).
+///
+/// Accepts EITHER a valid `Authorization: Bearer <TOOLSTOW_API_KEY>` OR a valid Admin Session
+/// Cookie (with CSRF protection on mutating requests and whenever `Origin` is present).
+/// Running as a [`FromRequestParts`] extractor ensures unauthorized or cross-site requests are
+/// rejected before any multipart upload body is parsed.
+#[derive(Debug, Clone, Copy)]
+struct AdminToolsAuth;
+
+impl FromRequestParts<AppState> for AdminToolsAuth {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        if !state.auth.is_any_management_enabled() {
+            return Err(AppError::not_found("tool management endpoints are disabled"));
+        }
+
+        verify_no_cross_site_or_null_origin(&parts.headers)?;
+
+        if parts.headers.contains_key(AUTHORIZATION) {
+            let client_key = extract_client_key(parts);
+            let verified = state
+                .auth
+                .verify_bearer_api_key(&client_key, &parts.headers)?;
+            if !verified {
+                return Err(AppError::unauthorized("authentication required"));
+            }
+            return Ok(Self);
+        }
+
+        if state.auth.has_valid_admin_session(&parts.headers) {
+            let is_mutating = !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
+            if is_mutating {
+                verify_csrf_headers(&parts.headers)?;
+                require_client_header(&parts.headers)?;
+            } else if parts.headers.contains_key(ORIGIN) {
+                verify_csrf_headers(&parts.headers)?;
+            }
+            return Ok(Self);
+        }
+
+        Err(AppError::unauthorized("authentication required"))
+    }
+}
+
+/// Rejects `Sec-Fetch-Site: cross-site` and opaque/null `Origin` headers with `403 Forbidden`.
+fn verify_no_cross_site_or_null_origin(headers: &HeaderMap) -> Result<(), AppError> {
     if let Some(sec_fetch_site) = headers.get("sec-fetch-site") {
         let value = sec_fetch_site
             .to_str()
@@ -106,6 +271,44 @@ fn verify_csrf_headers(headers: &HeaderMap) -> Result<(), AppError> {
                 "requests from opaque or null origins are not allowed",
             ));
         }
+    }
+
+    Ok(())
+}
+
+/// Requires a non-empty `X-ToolStow-Client` header.
+fn require_client_header(headers: &HeaderMap) -> Result<(), AppError> {
+    let client_header = headers
+        .get(CLIENT_HEADER_NAME)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    if client_header.is_none() {
+        return Err(AppError::forbidden(
+            "missing required X-ToolStow-Client header",
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validates request headers for browser-originated state-mutating endpoints.
+///
+/// Rules:
+/// 1. Reject if `Sec-Fetch-Site` is `"cross-site"`.
+/// 2. If `Origin` is present (browser request):
+///    - Reject if `Origin` is empty or `"null"` (sandboxed opaque origin).
+///    - Verify `Origin`'s host and effective port match the `Host` header.
+///    - Require a non-empty `X-ToolStow-Client` header.
+fn verify_csrf_headers(headers: &HeaderMap) -> Result<(), AppError> {
+    verify_no_cross_site_or_null_origin(headers)?;
+
+    if let Some(origin_header) = headers.get(ORIGIN) {
+        let origin_raw = origin_header
+            .to_str()
+            .map_err(|_| AppError::forbidden("invalid Origin header"))?
+            .trim();
 
         let origin_uri: Uri = origin_raw
             .parse()
@@ -126,7 +329,9 @@ fn verify_csrf_headers(headers: &HeaderMap) -> Result<(), AppError> {
             .ok_or_else(|| AppError::forbidden("Origin header missing host authority"))?;
 
         if origin_authority.as_str().contains('@') {
-            return Err(AppError::forbidden("Origin header must not include userinfo"));
+            return Err(AppError::forbidden(
+                "Origin header must not include userinfo",
+            ));
         }
 
         let host_raw = headers
@@ -156,20 +361,45 @@ fn verify_csrf_headers(headers: &HeaderMap) -> Result<(), AppError> {
             ));
         }
 
-        let client_header = headers
-            .get(CLIENT_HEADER_NAME)
-            .and_then(|v| v.to_str().ok())
-            .map(str::trim)
-            .filter(|v| !v.is_empty());
-
-        if client_header.is_none() {
-            return Err(AppError::forbidden(
-                "missing required X-ToolStow-Client header",
-            ));
-        }
+        require_client_header(headers)?;
     }
 
     Ok(())
+}
+
+/// Detects whether the client reached ToolStow over HTTPS via reverse-proxy headers
+/// (`X-Forwarded-Proto: https` or RFC 7239 `Forwarded: ...proto=https`).
+pub fn is_request_https(headers: &HeaderMap) -> bool {
+    if let Some(proto_val) = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        && let Some(first) = proto_val.split(',').next()
+        && first.trim().eq_ignore_ascii_case("https")
+    {
+        return true;
+    }
+
+    if let Some(forwarded_val) = headers.get("forwarded").and_then(|v| v.to_str().ok())
+        && let Some(first_hop) = forwarded_val.split(',').next()
+    {
+        for param in first_hop.split(';') {
+            if let Some((k, v)) = param.split_once('=')
+                && k.trim().eq_ignore_ascii_case("proto")
+            {
+                let unquoted = v.trim().trim_matches('"');
+                if unquoted.eq_ignore_ascii_case("https") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Returns `true` when an external custom public theme (`<theme_dir>/index.html`) is active.
+pub fn is_custom_theme_active(theme_dir: &Path) -> bool {
+    theme_dir.join("index.html").is_file()
 }
 
 /// Builds the full ToolStow Axum [`Router`].
@@ -180,35 +410,64 @@ pub fn build_router(state: AppState) -> Router {
         .saturating_add(1024 * 1024);
 
     let upload_route = Router::new()
-        .route("/api/tools/upload", post(upload_tool))
+        .route("/api/admin/tools/upload", post(upload_tool))
         .layer(DefaultBodyLimit::max(upload_body_limit));
 
     Router::new()
+        // Public frontend shell root
         .route("/", get(serve_index))
+        // Public read-only API
+        .route("/api/me", get(get_me))
         .route("/api/tools", get(list_tools))
-        .merge(upload_route)
-        .route("/api/tools/{id}", delete(delete_tool))
+        // Static sandboxed tool hosting
         .route("/t/{id}", get(redirect_tool_entry))
         .route("/t/{id}/", get(redirect_tool_entry))
         .route("/t/{id}/{*path}", get(serve_tool_asset))
+        // Locked embedded admin panel (never shadowable by data/theme/)
+        .route("/admin", get(serve_admin_index))
+        .route("/admin/", get(serve_admin_index))
+        .route("/admin/{*path}", get(serve_admin_asset))
+        // Admin session & settings endpoints
+        .route("/api/admin/session", get(get_admin_session))
+        .route("/api/admin/login", post(admin_login))
+        .route("/api/admin/logout", post(admin_logout))
+        .route(
+            "/api/admin/settings",
+            get(get_admin_settings).put(update_admin_settings),
+        )
+        // Admin tool management endpoints (Admin Session Cookie OR AI Bearer API key)
+        .route("/api/admin/tools", get(list_admin_tools))
+        .merge(upload_route)
+        .route(
+            "/api/admin/tools/{id}",
+            patch(patch_tool).delete(delete_tool),
+        )
+        // Decoupled public theme / embedded frontend fallback
         .fallback(serve_frontend_fallback)
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
 
-/// `GET /`: serves the embedded `frontend/index.html` shell.
-async fn serve_index() -> Result<Response, AppError> {
-    serve_embedded_asset("index.html", false)
+/// `GET /`: serves `index.html` from the active public theme (`data/theme/` or embedded `FrontendAssets`).
+async fn serve_index(State(state): State<AppState>) -> Result<Response, AppError> {
+    serve_public_asset(&state.config.theme_dir, "index.html", false).await
 }
 
-/// Fallback handler serving embedded frontend shell assets without ever shadowing `/api/*` or `/t/*`.
-async fn serve_frontend_fallback(method: Method, uri: Uri) -> Result<Response, AppError> {
+/// Fallback handler serving custom theme or embedded frontend assets without ever shadowing
+/// `/admin*`, `/api/*`, or `/t/*`.
+async fn serve_frontend_fallback(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+) -> Result<Response, AppError> {
     let raw_path = uri.path();
 
     if raw_path == "/api"
         || raw_path.starts_with("/api/")
         || raw_path == "/t"
         || raw_path.starts_with("/t/")
+        || raw_path == "/admin"
+        || raw_path.starts_with("/admin/")
     {
         return Err(AppError::not_found(format!("route not found: {raw_path}")));
     }
@@ -217,18 +476,107 @@ async fn serve_frontend_fallback(method: Method, uri: Uri) -> Result<Response, A
         return Err(AppError::not_found(format!("route not found: {raw_path}")));
     }
 
-    let rel_path = raw_path.trim_start_matches('/');
+    let rel_path = raw_path.strip_prefix('/').unwrap_or(raw_path);
     let rel_path = if rel_path.is_empty() {
         "index.html"
     } else {
         rel_path
     };
 
-    serve_embedded_asset(rel_path, method == Method::HEAD)
+    serve_public_asset(&state.config.theme_dir, rel_path, method == Method::HEAD).await
 }
 
-/// Serves a single file from [`FrontendAssets`].
-fn serve_embedded_asset(path: &str, head_only: bool) -> Result<Response, AppError> {
+/// Serves a public frontend asset from `theme_dir` when custom theme is active, otherwise from
+/// embedded [`FrontendAssets`].
+async fn serve_public_asset(
+    theme_dir: &Path,
+    rel_path: &str,
+    head_only: bool,
+) -> Result<Response, AppError> {
+    if is_custom_theme_active(theme_dir) {
+        serve_custom_theme_asset(theme_dir, rel_path, head_only).await
+    } else {
+        serve_embedded_frontend_asset(rel_path, head_only)
+    }
+}
+
+/// Safely serves a static file from `theme_dir` with relative path validation and canonical
+/// containment check to block traversal and symlink escapes.
+async fn serve_custom_theme_asset(
+    theme_dir: &Path,
+    rel_path_str: &str,
+    head_only: bool,
+) -> Result<Response, AppError> {
+    let rel_path = manifest::validate_safe_rel_path(rel_path_str)
+        .map_err(|err| AppError::bad_request(err.to_string()))?;
+
+    let candidate_path = theme_dir.join(&rel_path);
+
+    let canonical_theme_dir = tokio::fs::canonicalize(theme_dir).await.map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found("custom theme directory not found")
+        } else {
+            AppError::internal(format!("failed to resolve custom theme directory: {err}"))
+        }
+    })?;
+
+    let canonical_target = tokio::fs::canonicalize(&candidate_path)
+        .await
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!("theme asset not found: /{rel_path_str}"))
+            } else {
+                AppError::internal(format!("failed to resolve theme asset path: {err}"))
+            }
+        })?;
+
+    if !canonical_target.starts_with(&canonical_theme_dir) {
+        return Err(AppError::forbidden(
+            "requested path escapes custom theme directory boundary",
+        ));
+    }
+
+    let metadata = tokio::fs::metadata(&canonical_target)
+        .await
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!("theme asset not found: /{rel_path_str}"))
+            } else {
+                AppError::internal(format!("failed to inspect theme asset metadata: {err}"))
+            }
+        })?;
+
+    if !metadata.is_file() {
+        return Err(AppError::not_found(format!(
+            "theme asset '/{rel_path_str}' is not a regular file"
+        )));
+    }
+
+    let content_type = content_type_for_path(&canonical_target);
+    let body = if head_only {
+        Body::empty()
+    } else {
+        let bytes = tokio::fs::read(&canonical_target).await.map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!("theme asset not found: /{rel_path_str}"))
+            } else {
+                AppError::internal(format!("failed to read theme asset: {err}"))
+            }
+        })?;
+        Body::from(bytes)
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .body(body)
+        .map_err(|err| AppError::internal(format!("failed to build theme asset response: {err}")))
+}
+
+/// Serves a single file from embedded [`FrontendAssets`].
+fn serve_embedded_frontend_asset(path: &str, head_only: bool) -> Result<Response, AppError> {
     let asset = FrontendAssets::get(path)
         .ok_or_else(|| AppError::not_found(format!("frontend asset not found: /{path}")))?;
 
@@ -248,7 +596,78 @@ fn serve_embedded_asset(path: &str, head_only: bool) -> Result<Response, AppErro
         .map_err(|err| AppError::internal(format!("failed to build frontend response: {err}")))
 }
 
-/// `GET /api/tools`: returns sorted tool entries filtered by optional `q`, `category`, and `tag`.
+/// `GET /admin` and `GET /admin/`: serves locked embedded `admin/index.html`.
+async fn serve_admin_index(State(state): State<AppState>) -> Result<Response, AppError> {
+    if !state.auth.is_admin_enabled() {
+        return Err(AppError::not_found("admin panel is disabled"));
+    }
+
+    serve_embedded_admin_asset("index.html")
+}
+
+/// `GET /admin/{*path}`: serves locked embedded admin panel assets (`admin.css`, `admin.js`, etc.).
+async fn serve_admin_asset(
+    State(state): State<AppState>,
+    AxumPath(path): AxumPath<String>,
+) -> Result<Response, AppError> {
+    if !state.auth.is_admin_enabled() {
+        return Err(AppError::not_found("admin panel is disabled"));
+    }
+
+    let rel_path = path.trim_start_matches('/');
+    let rel_path = if rel_path.is_empty() {
+        "index.html"
+    } else {
+        rel_path
+    };
+
+    serve_embedded_admin_asset(rel_path)
+}
+
+/// Serves a single file from embedded [`AdminAssets`].
+fn serve_embedded_admin_asset(path: &str) -> Result<Response, AppError> {
+    let asset = AdminAssets::get(path)
+        .ok_or_else(|| AppError::not_found(format!("admin asset not found: /admin/{path}")))?;
+
+    let content_type = content_type_for_path(Path::new(path));
+    let cache_control = if path == "index.html" {
+        HeaderValue::from_static("no-store")
+    } else {
+        HeaderValue::from_static("no-cache")
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
+        .header(CACHE_CONTROL, cache_control)
+        .body(Body::from(asset.data.into_owned()))
+        .map_err(|err| AppError::internal(format!("failed to build admin response: {err}")))
+}
+
+/// `GET /api/me`: returns public site settings, current admin session state, and theme source.
+async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let settings = state.settings.get();
+    let theme_source = if is_custom_theme_active(&state.config.theme_dir) {
+        "custom"
+    } else {
+        "embedded"
+    };
+
+    let body = MeResponse {
+        site_title: settings.site_title,
+        site_description: settings.site_description,
+        default_accent: settings.default_accent,
+        is_admin: state.auth.has_valid_admin_session(&headers),
+        admin_enabled: state.auth.is_admin_enabled(),
+        theme_source,
+    };
+
+    no_store_json(StatusCode::OK, body)
+}
+
+/// `GET /api/tools`: returns sorted public tool entries filtered by optional `q`, `category`,
+/// and `tag`. Drafts are hidden unless `config.include_drafts` is enabled.
 async fn list_tools(
     State(state): State<AppState>,
     Query(query): Query<ListToolsQuery>,
@@ -257,13 +676,117 @@ async fn list_tools(
     let category = normalize_query_param(query.category.as_deref());
     let tag = normalize_query_param(query.tag.as_deref());
 
-    let tools = state.registry.list(q, category, tag);
+    let tools = state
+        .registry
+        .list_filtered(q, category, tag, state.config.include_drafts);
     Json(tools)
 }
 
-/// `POST /api/tools/upload`: validates and atomically installs or updates a `.zip` tool package.
-async fn upload_tool(
+/// `GET /api/admin/session`: reports admin authentication and availability status (always 200 JSON).
+async fn get_admin_session(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let body = AdminSessionResponse {
+        authenticated: state.auth.has_valid_admin_session(&headers),
+        admin_enabled: state.auth.is_admin_enabled(),
+    };
+    no_store_json(StatusCode::OK, body)
+}
+
+/// `POST /api/admin/login`: validates `TOOLSTOW_ADMIN_KEY`, enforces rate limits, and sets the
+/// `HttpOnly; SameSite=Strict` admin session cookie.
+async fn admin_login(
     _csrf: CsrfGuard,
+    ClientKey(client_key): ClientKey,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    payload: Result<Json<LoginRequest>, JsonRejection>,
+) -> Result<Response, AppError> {
+    let Json(body) = payload
+        .map_err(|err| AppError::bad_request(format!("invalid JSON login payload: {err}")))?;
+
+    let token = state.auth.login_admin(&client_key, &body.key)?;
+    let is_https = is_request_https(&headers);
+    let cookie_value = state.auth.build_session_cookie_header(&token, is_https);
+    let cookie_header = HeaderValue::from_str(&cookie_value)
+        .map_err(|err| AppError::internal(format!("failed to format session cookie: {err}")))?;
+
+    let mut resp = no_store_json(StatusCode::OK, LoginResponse { ok: true });
+    resp.headers_mut().append(SET_COOKIE, cookie_header);
+    Ok(resp)
+}
+
+/// `POST /api/admin/logout`: revokes the current admin session (if any) and clears the cookie.
+async fn admin_logout(
+    _csrf: CsrfGuard,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    if let Some(token) = AuthManager::extract_session_cookie(&headers) {
+        state.auth.logout_session(&token);
+    }
+
+    let is_https = is_request_https(&headers);
+    let clear_value = state.auth.build_clear_cookie_header(is_https);
+    let clear_header = HeaderValue::from_str(&clear_value)
+        .map_err(|err| AppError::internal(format!("failed to format clear cookie: {err}")))?;
+
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(SET_COOKIE, clear_header)
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
+        .body(Body::empty())
+        .map_err(|err| AppError::internal(format!("failed to build logout response: {err}")))
+}
+
+/// `GET /api/admin/settings`: returns persisted site settings (Admin Session ONLY).
+async fn get_admin_settings(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+) -> Response {
+    let settings: SiteSettings = state.settings.get();
+    no_store_json(StatusCode::OK, settings)
+}
+
+/// `PUT /api/admin/settings`: validates and atomically updates site settings (Admin Session ONLY).
+async fn update_admin_settings(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+    payload: Result<Json<SiteSettingsUpdate>, JsonRejection>,
+) -> Result<Response, AppError> {
+    let Json(update) = payload
+        .map_err(|err| AppError::bad_request(format!("invalid JSON settings payload: {err}")))?;
+
+    let settings_store = state.settings.clone();
+    let updated = tokio::task::spawn_blocking(move || settings_store.update(update))
+        .await
+        .map_err(|err| AppError::internal(format!("settings update task failed: {err}")))??;
+
+    Ok(no_store_json(StatusCode::OK, updated))
+}
+
+/// `GET /api/admin/tools`: returns all tools (including drafts) with optional `q`, `category`,
+/// `tag`, and `draft=true|false` filters (Admin Session OR AI Bearer API key).
+async fn list_admin_tools(
+    _auth: AdminToolsAuth,
+    State(state): State<AppState>,
+    Query(query): Query<AdminListToolsQuery>,
+) -> Result<Response, AppError> {
+    let q = normalize_query_param(query.q.as_deref());
+    let category = normalize_query_param(query.category.as_deref());
+    let tag = normalize_query_param(query.tag.as_deref());
+    let draft_filter = parse_optional_bool_param("draft", query.draft.as_deref())?;
+
+    let mut tools = state.registry.list_filtered(q, category, tag, true);
+    if let Some(expected_draft) = draft_filter {
+        tools.retain(|tool| tool.draft == expected_draft);
+    }
+
+    Ok(no_store_json(StatusCode::OK, tools))
+}
+
+/// `POST /api/admin/tools/upload`: validates and atomically installs or updates a `.zip` tool
+/// package (Admin Session OR AI Bearer API key).
+async fn upload_tool(
+    _auth: AdminToolsAuth,
     State(state): State<AppState>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<(StatusCode, Json<ToolEntry>), AppError> {
@@ -274,7 +797,10 @@ async fn upload_tool(
                 state.config.max_upload_mb
             ))
         } else {
-            AppError::bad_request(format!("invalid multipart request: {}", rejection.body_text()))
+            AppError::bad_request(format!(
+                "invalid multipart request: {}",
+                rejection.body_text()
+            ))
         }
     })?;
 
@@ -337,9 +863,36 @@ async fn upload_tool(
     Ok((status, Json(result.entry)))
 }
 
-/// `DELETE /api/tools/{id}`: deletes a tool directory from disk and removes it from the registry.
+/// `PATCH /api/admin/tools/{id}`: atomically updates a tool's `draft` flag in `manifest.json`
+/// and refreshes the in-memory registry (Admin Session OR AI Bearer API key).
+async fn patch_tool(
+    _auth: AdminToolsAuth,
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    payload: Result<Json<PatchToolRequest>, JsonRejection>,
+) -> Result<Json<ToolEntry>, AppError> {
+    manifest::validate_id(&id)?;
+    let Json(body) = payload
+        .map_err(|err| AppError::bad_request(format!("invalid JSON patch payload: {err}")))?;
+
+    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let tools_dir = state.registry.tools_dir().to_path_buf();
+    let id_for_task = id.clone();
+
+    let updated = tokio::task::spawn_blocking(move || {
+        archive::set_tool_draft(&tools_dir, &id_for_task, body.draft)
+    })
+    .await
+    .map_err(|err| AppError::internal(format!("update tool draft task failed: {err}")))??;
+
+    state.registry.upsert(updated.clone());
+    Ok(Json(updated))
+}
+
+/// `DELETE /api/admin/tools/{id}`: deletes a tool directory from disk and removes it from the
+/// registry (Admin Session OR AI Bearer API key).
 async fn delete_tool(
-    _csrf: CsrfGuard,
+    _auth: AdminToolsAuth,
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<StatusCode, AppError> {
@@ -364,8 +917,11 @@ async fn delete_tool(
 }
 
 /// `GET /t/{id}` and `GET /t/{id}/`: redirects to the registered tool's `entry_url`.
+/// Draft tools return `404` unless `--include-drafts` is enabled or a valid Admin Session Cookie
+/// is present.
 async fn redirect_tool_entry(
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Response, AppError> {
     let entry = state
@@ -373,19 +929,30 @@ async fn redirect_tool_entry(
         .get(&id)
         .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
+    if entry.draft && !state.config.include_drafts && !state.auth.has_valid_admin_session(&headers)
+    {
+        return Err(AppError::not_found(format!("tool '{id}' not found")));
+    }
+
     Ok(Redirect::temporary(&entry.entry_url).into_response())
 }
 
 /// `GET /t/{id}/{*path}`: serves a static asset inside a registered tool directory with strict
-/// path containment and `Content-Security-Policy: sandbox` isolation headers.
+/// draft visibility gating, path containment, and `Content-Security-Policy: sandbox` headers.
 async fn serve_tool_asset(
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath((id, path)): AxumPath<(String, String)>,
 ) -> Result<Response, AppError> {
     let entry = state
         .registry
         .get(&id)
         .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+
+    if entry.draft && !state.config.include_drafts && !state.auth.has_valid_admin_session(&headers)
+    {
+        return Err(AppError::not_found(format!("tool '{id}' not found")));
+    }
 
     let rel_path = manifest::validate_safe_rel_path(&path)
         .map_err(|err| AppError::bad_request(err.to_string()))?;
@@ -401,13 +968,15 @@ async fn serve_tool_asset(
         }
     })?;
 
-    let canonical_target = tokio::fs::canonicalize(&candidate_path).await.map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            AppError::not_found(format!("asset '{path}' not found in tool '{}'", entry.id))
-        } else {
-            AppError::internal(format!("failed to resolve asset path: {err}"))
-        }
-    })?;
+    let canonical_target = tokio::fs::canonicalize(&candidate_path)
+        .await
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!("asset '{path}' not found in tool '{}'", entry.id))
+            } else {
+                AppError::internal(format!("failed to resolve asset path: {err}"))
+            }
+        })?;
 
     if !canonical_target.starts_with(&canonical_tool_dir) {
         return Err(AppError::forbidden(
@@ -415,13 +984,15 @@ async fn serve_tool_asset(
         ));
     }
 
-    let metadata = tokio::fs::metadata(&canonical_target).await.map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            AppError::not_found(format!("asset '{path}' not found in tool '{}'", entry.id))
-        } else {
-            AppError::internal(format!("failed to inspect asset metadata: {err}"))
-        }
-    })?;
+    let metadata = tokio::fs::metadata(&canonical_target)
+        .await
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!("asset '{path}' not found in tool '{}'", entry.id))
+            } else {
+                AppError::internal(format!("failed to inspect asset metadata: {err}"))
+            }
+        })?;
 
     if !metadata.is_file() {
         return Err(AppError::not_found(format!(
@@ -461,9 +1032,34 @@ async fn serve_tool_asset(
         .map_err(|err| AppError::internal(format!("failed to build tool asset response: {err}")))
 }
 
+/// Builds a JSON response with `Cache-Control: no-store`.
+fn no_store_json<T: Serialize>(status: StatusCode, payload: T) -> Response {
+    let mut resp = (status, Json(payload)).into_response();
+    resp.headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
+}
+
 /// Converts blank/whitespace query parameters into `None`.
 fn normalize_query_param(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Parses an optional boolean query parameter (`"true"` / `"false"`, blank treated as `None`).
+fn parse_optional_bool_param(name: &str, value: Option<&str>) -> Result<Option<bool>, AppError> {
+    let Some(raw) = normalize_query_param(value) else {
+        return Ok(None);
+    };
+
+    if raw.eq_ignore_ascii_case("true") {
+        Ok(Some(true))
+    } else if raw.eq_ignore_ascii_case("false") {
+        Ok(Some(false))
+    } else {
+        Err(AppError::bad_request(format!(
+            "invalid '{name}' query parameter '{raw}': expected 'true' or 'false'"
+        )))
+    }
 }
 
 /// Maps an Axum [`MultipartError`] into a structured [`AppError`], preserving `413 Payload Too Large`.
@@ -575,5 +1171,34 @@ mod tests {
             ("x-toolstow-client", "1"),
         ]);
         assert!(verify_csrf_headers(&default_port_match).is_ok());
+    }
+
+    #[test]
+    fn is_request_https_detects_proxy_headers() {
+        assert!(!is_request_https(&HeaderMap::new()));
+        assert!(!is_request_https(&headers_from(&[(
+            "x-forwarded-proto",
+            "http",
+        )])));
+        assert!(is_request_https(&headers_from(&[(
+            "x-forwarded-proto",
+            "https",
+        )])));
+        assert!(is_request_https(&headers_from(&[(
+            "x-forwarded-proto",
+            "HTTPS, http",
+        )])));
+        assert!(is_request_https(&headers_from(&[(
+            "forwarded",
+            "for=192.0.2.60;proto=https;by=203.0.113.43",
+        )])));
+        assert!(is_request_https(&headers_from(&[(
+            "forwarded",
+            "for=192.0.2.60; PROTO=\"https\"",
+        )])));
+        assert!(!is_request_https(&headers_from(&[(
+            "forwarded",
+            "for=192.0.2.60;proto=http",
+        )])));
     }
 }
