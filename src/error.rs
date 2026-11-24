@@ -22,6 +22,10 @@ pub enum AppError {
     #[error("{0}")]
     BadRequest(String),
 
+    /// Client failed authentication or supplied invalid credentials (`401 Unauthorized`).
+    #[error("{0}")]
+    Unauthorized(String),
+
     /// Request blocked by security policy, such as CSRF/Origin checks (`403 Forbidden`).
     #[error("{0}")]
     Forbidden(String),
@@ -38,6 +42,10 @@ pub enum AppError {
     #[error("{0}")]
     UnprocessableEntity(String),
 
+    /// Client exceeded authentication or request rate limits (`429 Too Many Requests`).
+    #[error("{0}")]
+    TooManyRequests(String),
+
     /// Unexpected server-side error (`500 Internal Server Error`).
     #[error("{0}")]
     Internal(String),
@@ -47,6 +55,11 @@ impl AppError {
     /// Constructs a `400 Bad Request` error.
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self::BadRequest(msg.into())
+    }
+
+    /// Constructs a `401 Unauthorized` error.
+    pub fn unauthorized(msg: impl Into<String>) -> Self {
+        Self::Unauthorized(msg.into())
     }
 
     /// Constructs a `403 Forbidden` error.
@@ -69,6 +82,11 @@ impl AppError {
         Self::UnprocessableEntity(msg.into())
     }
 
+    /// Constructs a `429 Too Many Requests` error.
+    pub fn too_many_requests(msg: impl Into<String>) -> Self {
+        Self::TooManyRequests(msg.into())
+    }
+
     /// Constructs a `500 Internal Server Error`.
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
@@ -78,10 +96,12 @@ impl AppError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -90,10 +110,12 @@ impl AppError {
     pub fn error_code(&self) -> &'static str {
         match self {
             Self::BadRequest(_) => "BAD_REQUEST",
+            Self::Unauthorized(_) => "unauthorized",
             Self::Forbidden(_) => "FORBIDDEN",
             Self::NotFound(_) => "NOT_FOUND",
             Self::PayloadTooLarge(_) => "PAYLOAD_TOO_LARGE",
             Self::UnprocessableEntity(_) => "UNPROCESSABLE_ENTITY",
+            Self::TooManyRequests(_) => "too_many_requests",
             Self::Internal(_) => "INTERNAL_ERROR",
         }
     }
@@ -158,6 +180,12 @@ mod tests {
                 "missing zip field",
             ),
             (
+                AppError::unauthorized("invalid admin key"),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "invalid admin key",
+            ),
+            (
                 AppError::forbidden("cross-site origin rejected"),
                 StatusCode::FORBIDDEN,
                 "FORBIDDEN",
@@ -180,6 +208,12 @@ mod tests {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "UNPROCESSABLE_ENTITY",
                 "invalid manifest.json",
+            ),
+            (
+                AppError::too_many_requests("rate limit exceeded"),
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_requests",
+                "rate limit exceeded",
             ),
             (
                 AppError::internal("disk I/O failure"),

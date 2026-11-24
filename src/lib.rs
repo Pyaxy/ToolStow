@@ -5,8 +5,10 @@
 //! HTTP routing.
 
 pub mod archive;
+pub mod auth;
 pub mod config;
 pub mod error;
 pub mod manifest;
 pub mod registry;
 pub mod routes;
+pub mod settings;

@@ -173,14 +173,28 @@ impl ToolRegistry {
         Ok(count)
     }
 
-    /// Lists registered tools filtered by optional keyword (`q`), `category`, and `tag`.
+    /// Lists registered non-draft tools filtered by optional keyword (`q`), `category`, and `tag`.
     ///
-    /// Results are deterministically sorted by `(category.to_lowercase(), name.to_lowercase(), id)`.
+    /// Delegates to [`ToolRegistry::list_filtered`] with `include_drafts = false`.
     pub fn list(
         &self,
         q: Option<&str>,
         category: Option<&str>,
         tag: Option<&str>,
+    ) -> Vec<ToolEntry> {
+        self.list_filtered(q, category, tag, false)
+    }
+
+    /// Lists registered tools filtered by optional keyword (`q`), `category`, `tag`, and draft visibility.
+    ///
+    /// When `include_drafts` is `false`, entries with `draft == true` are excluded.
+    /// Results are deterministically sorted by `(category.to_lowercase(), name.to_lowercase(), id)`.
+    pub fn list_filtered(
+        &self,
+        q: Option<&str>,
+        category: Option<&str>,
+        tag: Option<&str>,
+        include_drafts: bool,
     ) -> Vec<ToolEntry> {
         let q_norm = q
             .map(str::trim)
@@ -200,6 +214,10 @@ impl ToolRegistry {
             guard
                 .values()
                 .filter(|entry| {
+                    if !include_drafts && entry.draft {
+                        return false;
+                    }
+
                     if let Some(ref expected_cat) = category_norm
                         && entry.category.trim().to_lowercase() != *expected_cat
                     {
@@ -672,5 +690,54 @@ mod tests {
             attrs: Default::default(),
         };
         assert!(is_relevant_event(&tool_event, &root, &canonical));
+    }
+
+    #[test]
+    fn list_and_list_filtered_handle_draft_visibility() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+        let registry = ToolRegistry::new(tools_dir.clone());
+
+        create_tool(
+            &tools_dir,
+            "public-tool",
+            r#"{"id":"public-tool","name":"Public Tool","category":"Dev","tags":["util"]}"#,
+            "<h1>Public</h1>",
+        );
+        create_tool(
+            &tools_dir,
+            "draft-tool",
+            r#"{"id":"draft-tool","name":"Draft Tool","category":"Dev","tags":["util"],"draft":true}"#,
+            "<h1>Draft</h1>",
+        );
+
+        assert_eq!(registry.scan_all().unwrap(), 2);
+
+        // `get` returns both published and draft entries
+        assert!(registry.get("public-tool").is_some());
+        assert!(registry.get("draft-tool").is_some_and(|e| e.draft));
+
+        // `list` and `list_filtered(..., false)` exclude drafts
+        let public_ids: Vec<String> = registry
+            .list(None, None, None)
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(public_ids, vec!["public-tool"]);
+
+        let filtered_no_drafts: Vec<String> = registry
+            .list_filtered(Some("tool"), Some("dev"), Some("util"), false)
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(filtered_no_drafts, vec!["public-tool"]);
+
+        // `list_filtered(..., true)` includes drafts in deterministic sort order
+        let filtered_with_drafts: Vec<String> = registry
+            .list_filtered(Some("tool"), Some("dev"), Some("util"), true)
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(filtered_with_drafts, vec!["draft-tool", "public-tool"]);
     }
 }

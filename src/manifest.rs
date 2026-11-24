@@ -73,6 +73,9 @@ pub struct RawManifest {
     /// Requested `iframe sandbox` tokens (filtered against [`SANDBOX_ALLOWLIST`]).
     #[serde(default)]
     pub sandbox: Option<Vec<String>>,
+    /// Whether this tool is a draft (hidden from public listing and anonymous access).
+    #[serde(default)]
+    pub draft: bool,
 }
 
 /// Validated and normalized tool metadata exposed by the registry and HTTP API.
@@ -108,6 +111,8 @@ pub struct ToolEntry {
     pub theme_aware: bool,
     /// Sanitized `iframe sandbox` tokens guaranteed to be a subset of [`SANDBOX_ALLOWLIST`].
     pub sandbox: Vec<String>,
+    /// Whether this tool is marked as a draft (hidden from public listing and anonymous access).
+    pub draft: bool,
 }
 
 impl ToolEntry {
@@ -396,6 +401,7 @@ pub fn load_and_validate_manifest(
         runtime: runtime.to_string(),
         theme_aware,
         sandbox,
+        draft: raw.draft,
     })
 }
 
@@ -825,5 +831,35 @@ mod tests {
         assert_eq!(entry.runtime, DEFAULT_RUNTIME);
         assert!(entry.sandbox.is_empty());
         assert_eq!(entry.csp_sandbox_header(), "sandbox;");
+        assert!(!entry.draft);
+    }
+
+    #[test]
+    fn load_manifest_draft_defaults_false_and_parses_true() {
+        let dir_default = TempDir::new().unwrap();
+        write_file(
+            dir_default.path(),
+            "manifest.json",
+            r#"{"id": "pub-tool", "name": "Published Tool"}"#,
+        );
+        write_file(dir_default.path(), "index.html", "<h1>Published</h1>");
+
+        let published = load_and_validate_manifest(dir_default.path(), Some("pub-tool")).unwrap();
+        assert!(!published.draft);
+        let pub_json = serde_json::to_value(&published).unwrap();
+        assert_eq!(pub_json["draft"], false);
+
+        let dir_draft = TempDir::new().unwrap();
+        write_file(
+            dir_draft.path(),
+            "manifest.json",
+            r#"{"id": "wip-tool", "name": "WIP Tool", "draft": true}"#,
+        );
+        write_file(dir_draft.path(), "index.html", "<h1>WIP</h1>");
+
+        let draft = load_and_validate_manifest(dir_draft.path(), Some("wip-tool")).unwrap();
+        assert!(draft.draft);
+        let draft_json = serde_json::to_value(&draft).unwrap();
+        assert_eq!(draft_json["draft"], true);
     }
 }

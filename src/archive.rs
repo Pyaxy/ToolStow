@@ -205,6 +205,91 @@ pub fn delete_tool_dir(tools_dir: &Path, id: &str) -> Result<bool, AppError> {
     Ok(true)
 }
 
+/// Atomically updates `"draft"` in `tools_dir/{id}/manifest.json` and returns the reloaded [`ToolEntry`].
+///
+/// Validates `id`, checks that `manifest.json` exists and is a regular file (returning `404` if missing),
+/// preserves all other JSON fields in `manifest.json`, writes atomically via a temporary file in the tool
+/// directory + rename, and reloads via [`manifest::load_and_validate_manifest`].
+pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEntry, AppError> {
+    manifest::validate_id(id)?;
+
+    let tool_dir = tools_dir.join(id);
+    let dir_meta = fs::symlink_metadata(&tool_dir).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found(format!("tool '{id}' not found"))
+        } else {
+            AppError::internal(format!(
+                "failed to inspect tool directory '{}': {err}",
+                tool_dir.display()
+            ))
+        }
+    })?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return Err(AppError::unprocessable(format!(
+            "tool path '{}' must be a regular directory",
+            tool_dir.display()
+        )));
+    }
+
+    let manifest_path = tool_dir.join("manifest.json");
+    let manifest_meta = fs::symlink_metadata(&manifest_path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found(format!("tool '{id}' manifest.json not found"))
+        } else {
+            AppError::internal(format!(
+                "failed to inspect manifest '{}': {err}",
+                manifest_path.display()
+            ))
+        }
+    })?;
+    if manifest_meta.file_type().is_symlink() || !manifest_meta.file_type().is_file() {
+        return Err(AppError::unprocessable(
+            "manifest.json must be a regular file (symlinks are not allowed)",
+        ));
+    }
+
+    let raw_bytes = fs::read(&manifest_path).map_err(|err| {
+        AppError::internal(format!(
+            "failed to read manifest '{}': {err}",
+            manifest_path.display()
+        ))
+    })?;
+
+    let mut value: serde_json::Value = serde_json::from_slice(&raw_bytes)
+        .map_err(|err| AppError::unprocessable(format!("invalid manifest.json: {err}")))?;
+
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| AppError::unprocessable("manifest.json must be a JSON object"))?;
+    obj.insert("draft".to_string(), serde_json::Value::Bool(draft));
+
+    let mut pretty = serde_json::to_vec_pretty(&value)
+        .map_err(|err| AppError::internal(format!("failed to serialize manifest.json: {err}")))?;
+    pretty.push(b'\n');
+
+    let mut tmp = tempfile::NamedTempFile::new_in(&tool_dir).map_err(|err| {
+        AppError::internal(format!(
+            "failed to create temporary manifest file in '{}': {err}",
+            tool_dir.display()
+        ))
+    })?;
+    tmp.write_all(&pretty).map_err(|err| {
+        AppError::internal(format!("failed to write temporary manifest.json: {err}"))
+    })?;
+    tmp.flush().map_err(|err| {
+        AppError::internal(format!("failed to flush temporary manifest.json: {err}"))
+    })?;
+    tmp.persist(&manifest_path).map_err(|err| {
+        AppError::internal(format!(
+            "failed to atomically replace manifest '{}': {}",
+            manifest_path.display(),
+            err.error
+        ))
+    })?;
+
+    manifest::load_and_validate_manifest(&tool_dir, Some(id))
+}
+
 /// Inspects every entry in the zip archive for symlinks, unsafe paths, and macOS junk.
 fn inspect_archive_entries(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
@@ -1003,5 +1088,46 @@ mod tests {
             "original"
         );
         assert!(staging_is_empty(&tools_dir));
+    }
+
+    #[test]
+    fn set_tool_draft_toggles_flag_preserves_fields_and_rejects_missing_or_invalid_id() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"draft-demo","name":"Draft Demo","version":"1.2.0","tags":["alpha"],"customField":"keep"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>Demo</h1>"),
+        ]);
+        let installed = install_zip_bytes(&tools_dir, &zip, ArchiveLimits::default()).unwrap();
+        assert!(!installed.entry.draft);
+
+        // Toggle draft -> true
+        let updated_draft = set_tool_draft(&tools_dir, "draft-demo", true).unwrap();
+        assert!(updated_draft.draft);
+        assert_eq!(updated_draft.version, "1.2.0");
+        assert_eq!(updated_draft.tags, vec!["alpha"]);
+
+        // Existing fields (including extra JSON fields) remain preserved on disk
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tools_dir.join("draft-demo/manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(raw["draft"], true);
+        assert_eq!(raw["customField"], "keep");
+
+        // Toggle draft -> false
+        let republished = set_tool_draft(&tools_dir, "draft-demo", false).unwrap();
+        assert!(!republished.draft);
+
+        // Missing tool -> 404
+        let err = set_tool_draft(&tools_dir, "no-such-tool", true).unwrap_err();
+        assert_eq!(err.error_code(), "NOT_FOUND");
+
+        // Invalid ID -> 422
+        let err = set_tool_draft(&tools_dir, "../escape", true).unwrap_err();
+        assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
     }
 }
