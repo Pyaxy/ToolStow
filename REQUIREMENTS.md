@@ -1,4 +1,4 @@
-# ToolStow 项目需求与技术规格书
+# ToolStow 项目需求与技术规格书（v0.2）
 
 ## 1. 项目背景与定位
 
@@ -10,83 +10,109 @@
 
 当前痛点在于：这些工具散落在各个 AI 会话记录与本地临时目录中，每次复用都要翻找 `index.html`；而传统工具站（如 [IT-Tools](https://github.com/corentinth/it-tools)、[OmniTools](https://github.com/iib0011/omni-tools)）属于单体前端项目，每新增一个工具都需要修改源码并重新构建。
 
-**ToolStow 定位**：打造一个**单二进制、零数据库、零构建热插拔**的自托管个人微工具宿主。核心思路是通过一份轻量统一的 `manifest.json` 协议解耦“AI 生产工具”与“宿主运行工具”——任何符合规范的工具目录放入 `tools/`（或通过网页拖拽 / HTTP API / MCP 上传 `.zip`），无需重新编译或重启服务，即可立即在统一的工具箱界面（桌面与移动端自适应）中检索、沙箱隔离运行，并自动同步主站明暗主题与强调色。
+**ToolStow 定位**：打造一个**面向纯 VPS 自托管场景的单二进制、零数据库、零构建热插拔动态微工具宿主**。不向 Cloudflare Workers / Vercel 等纯静态托管形态妥协，充分利用 VPS 本地文件系统与常驻进程优势：通过一份轻量统一的 `manifest.json` 协议解耦“AI 生产工具”与“宿主运行工具”——任何符合规范的工具目录放入 `data/tools/`（或通过 `/admin` 拖拽上传 / 携带 API Key 调用 HTTP API / 未来 MCP 发布 `.zip`），无需重新编译或重启服务，即可在极简黑白风格的工具箱界面中检索、沙箱隔离运行，并自动同步明暗主题与强调色。
 
-### 1.1 与现有开源方案的差异化
+### 1.1 与现有开源方案的差异化与灵感来源
 
-| 参考项目 | 现有定位 | ToolStow 的差异化切入点 |
+| 参考项目 | 现有定位 | ToolStow 的差异化与借鉴 |
 | :--- | :--- | :--- |
-| [canvas-drop](https://github.com/markpasternak/canvas-drop) | 面向团队协作与权限管理的静态产物发布台 | 去除多租户与管理后台复杂度，专注极简个人 IT-Tools 风格导航与统一设计语言 |
-| [artifact-site](https://github.com/lexmount/artifact-site) | 面向页面/PDF 归档分享的静态工作台 | 强化“工具箱”交互（`Cmd+K` 唤起、分类与标签筛选、主站与子工具动态强调色联动），采用 Rust 单二进制零依赖部署 |
-| [smallweb](https://github.com/pomdtr/smallweb) | 基于泛域名与 Deno 的多站点运行底座 | 无需泛域名配置，开箱自带统一工具画廊与目录热扫描，同时保留未来扩展轻后端的协议位 |
+| [monitor-probe/monitor](https://github.com/monitor-probe/monitor) | 极简黑白自托管探针面板，支持轻量化单二进制部署与干净的界面语言 | 借鉴其**极简黑白（Monochrome B&W）高对比美学**与纯 VPS 动态自托管思路，支持外置静态主题覆盖而无需重编后端 |
+| [canvas-drop](https://github.com/markpasternak/canvas-drop) | 面向团队协作与权限管理的静态产物发布台 | 去除多租户与复杂账号体系，专注个人工具箱导航与零数据库文件系统事实源 |
+| [artifact-site](https://github.com/lexmount/artifact-site) | 面向页面/PDF 归档分享的静态工作台 | 强化“工具箱”交互（`Cmd+K` 唤起、分类与标签筛选、主站与子工具动态强调色联动、草稿预览），采用 Rust 单二进制零依赖部署 |
+| [smallweb](https://github.com/pomdtr/smallweb) | 基于泛域名与 Deno 的多站点运行底座 | 无需泛域名配置，开箱自带统一工具画廊、内置单密钥管理台与目录热扫描，同时保留未来扩展轻后端的协议位 |
 
 ---
 
 ## 2. 功能范围与演进阶段
 
-### 2.1 Phase 1 · MVP（当前开发目标）
+### 2.1 v0.2 · 纯 VPS 动态宿主（当前基线）
 
-1. **目录自动扫描与热更新**
-   - 启动时扫描指定目录（默认 `./tools`，不存在则自动创建）下所有非隐藏子目录，解析合法的 `manifest.json` 构建内存索引。
-   - 通过文件监听自动感知目录变更（新增、修改、删除工具目录或 `manifest.json`），防抖后热刷新内存索引，无需重启宿主。
-   - 容错隔离：单个工具目录缺失文件或 `manifest.json` 校验失败时，仅记录结构化警告日志并跳过该工具，绝不阻塞或中断整个服务。
-2. **静态资源托管与双重沙箱隔离**
-   - 通过独立路径 `/t/{id}/{*path}` 托管对应工具目录下的静态文件（HTML / CSS / JS / SVG / 图片等），直接修改磁盘上的工具文件后刷新页面即可生效。
-   - 前端外壳通过 `<iframe sandbox="...">` 加载子工具，且后端对静态工具页面同步下发 `Content-Security-Policy: sandbox ...` 响应头，确保无论在导航壳内打开还是通过直链单独打开，子工具均处于不透明源（Opaque Origin）隔离环境中。
-3. **极简个人工具箱前端外壳**
-   - 编译期内嵌进 Rust 单二进制，无需独立前端构建链或 Node.js 环境，兼顾桌面端与手机浏览器访问体验。
-   - 支持左侧分类导航（移动端收起为抽屉）、标签筛选、全局即时搜索（支持 `Cmd+K` / `Ctrl+K` 快捷唤起，匹配名称、描述、标签、ID）。
-   - 支持 URL 状态联动（如通过 Hash/Query 记录当前打开的工具 ID），支持一键刷新当前子工具、在新标签页打开独立地址。
-   - 内置明暗模式切换（Light / Dark）与自定义强调色（Accent Color），并通过 `postMessage` 实时同步给声明 `themeAware: true` 的子工具。
-4. **ZIP 工具包上传、覆盖更新与删除管理**
-   - 提供 HTTP API 与前端拖拽上传入口，支持上传包含 `manifest.json` 和入口 HTML 的 `.zip` 工具包。
-   - **支持同 ID 覆盖更新**：AI 高频迭代修补工具时，重新上传同 `id` 的 `.zip` 即可在校验通过后原子替换旧目录并刷新索引。
-   - 支持通过前端管理操作或 `DELETE` 接口删除指定工具。
-5. **配套 AI 生产规范与示例工具**
-   - 提供一份可直接作为 Agent Skill / Prompt 使用的工具生成规范文档（`docs/ai-tool-skill.md`），明确目录结构、`manifest.json` 字段、沙箱限制（如无 `localStorage` 同源存储）与主题联动代码模板。
-   - 仓库附带开箱即用的示例工具（如命令速查页、动态强调色 Favicon 生成器），用于功能演示与回归验收。
+1. **统一 `--data-dir` 数据目录与外置主题热覆盖**
+   - 统一通过 `--data-dir`（默认 `./data`，环境变量 `TOOLSTOW_DATA_DIR`）组织所有运行时持久化状态，依然**零数据库**：
+     - `data/tools/`：存放已安装微工具及同盘暂存目录 `.staging/`（可由 `--tools-dir` / `TOOLSTOW_TOOLS_DIR` 单独覆盖）。
+     - `data/theme/`（可选）：外置自定义公共前端静态文件目录（可由 `--theme-dir` / `TOOLSTOW_THEME_DIR` 单独覆盖）。当该目录存在对应文件时，自动覆盖 Rust 内嵌默认公共前端，**无需重新编译二进制**即可深度定制公开站点外观；`/admin*`、`/api/*`、`/t/*` 路由始终由后端强制锁定，外置主题无法覆盖或劫持。
+     - `data/settings.json`：持久化站点标题（`siteTitle`）、站点副标题描述（`siteDescription`）与默认强调色（`defaultAccent`），文件缺失或损坏时自动回退至安全默认值。
+2. **目录自动扫描与热更新**
+   - 启动时扫描工具目录（不存在则自动创建）下所有非隐藏子目录，解析合法的 `manifest.json` 构建内存索引。
+   - 通过 `notify` 监听文件系统事件（新增、修改、删除工具目录或 `manifest.json`），防抖后热刷新内存索引，无需重启宿主。
+   - 容错隔离：单个工具目录缺失入口或 `manifest.json` 校验失败时，仅记录结构化警告日志并跳过该工具，绝不阻塞或中断整个服务。
+3. **Hugo 风格草稿可见性（`draft: true / false`）**
+   - `manifest.json` 支持可选字段 `"draft": false`（默认 `false` 即已发布）。
+   - 标记为 `"draft": true` 的工具对匿名公网访客完全不可见：自动从公开 `GET /api/tools` 过滤，直接访问 `/t/{id}/*` 时返回 `404 Not Found`（不泄露草稿工具是否存在）。
+   - 仅当访问者持有**已登录的 Admin Session Cookie**（用于在管理台预览未发布工具），或本地开发调试显式开启 `--include-drafts` / `TOOLSTOW_INCLUDE_DRAFTS=true` 时可见。
+4. **双密钥 fail-closed 鉴权体系（人类 Session 与机器 API 分离）**
+   - 全部密钥通过 `.env` 文件或系统环境变量注入；**未设置对应密钥时默认 fail-closed（关闭该鉴权通道）**，确保裸跑公网时不会暴露无保护的写入或管理入口。
+   - **`TOOLSTOW_ADMIN_KEY`（人类管理员单密钥）**：
+     - 访问 `/admin` 提供单密钥登录卡片（无用户名输入，参考 CPA `management.html` 极简交互）。
+     - `POST /api/admin/login` 使用常量时间比较校验密钥，并执行单客户端/单 IP 失败限流（5 分钟内失败 5 次触发 `429 Too Many Requests`）。
+     - 登录成功后在服务端内存签发 256-bit 随机十六进制 Session Token，通过 `toolstow_admin_session` Cookie 下发（`HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`，在 HTTPS 或 `TOOLSTOW_COOKIE_SECURE=true` 时附加 `Secure`；24 小时 TTL）。
+     - 拥有完整管理权限：上传/覆盖 `.zip` 工具包、切换工具 `draft` 状态、预览草稿工具、删除工具，以及读写站点设置（`GET/PUT /api/admin/settings`）。
+   - **`TOOLSTOW_API_KEY`（机器 / AI / `curl` / 未来 MCP 专用密钥）**：
+     - 通过标准请求头 `Authorization: Bearer <token>` 认证，仅授权操作 `/api/admin/tools*`（列出全部含草稿工具、上传/覆盖 `.zip`、切换 `draft`、删除工具）。
+     - **职责严格隔离**：`TOOLSTOW_API_KEY` **不能**登录 `/admin`、**不能**换取浏览器 Session、**不能**读取或修改站点设置（`/api/admin/settings`）；反之 `TOOLSTOW_ADMIN_KEY` 也不能作为 Bearer Token 使用。
+5. **极简黑白公共只读前端与内嵌管理面板**
+   - **公共前端（`/`）**：采用参考 `monitor-probe/monitor` 的极简黑白（Monochrome B&W）美学，**100% 只读**，不包含任何上传或删除操作。支持分类侧边栏（移动端抽屉）、标签筛选、`Cmd+K` / `Ctrl+K` 全局搜索、URL Hash 状态联动、明暗模式切换与强调色 `postMessage` 联动。
+   - 公共前端启动时请求 `GET /api/me`（返回 `siteTitle`、`siteDescription`、`defaultAccent`、`isAdmin`、`adminEnabled`、`themeSource`），动态渲染站点标题与默认强调色，且**仅当 `isAdmin === true` 时**在顶栏渲染简洁的「管理 / 设置」链接指向 `/admin`；匿名访客界面保持绝对纯净。
+   - **内嵌管理面板（`/admin`）**：独立编译进单二进制，与公共前端共享同一极简黑白设计语言，包含单密钥登录、拖拽/选择上传 `.zip`、工具列表管理（全部/已发布/草稿筛选、切换草稿/发布、新标签页预览、删除确认）、站点设置表单以及 AI API 速查卡片。
+6. **静态资源托管与双重沙箱隔离**
+   - 通过 `/t/{id}/{*path}` 托管已注册工具静态资源，修改磁盘文件后刷新即生效。
+   - 前端外壳通过 `<iframe sandbox="...">` 加载子工具，且后端同步下发 `Content-Security-Policy: sandbox ...` 响应头，保证壳内与直链访问均处于不透明源（Opaque Origin）隔离环境。
+7. **配套 AI 生产规范与示例工具**
+   - 提供 `docs/ai-tool-skill.md` 作为 Agent Skill / Prompt 规范，涵盖目录结构、`manifest.json`（含 `draft` 字段）、沙箱约束、主题联动模板以及基于 `Authorization: Bearer $TOOLSTOW_API_KEY` 的发布与草稿切换命令。
+   - 仓库附带开箱即用的示例工具（`docker-cheatsheet`、`dynamic-favicon`）与配置模板 `.env.example`。
 
 ### 2.2 Phase 2 · AI 原生 MCP 发布流（后续阶段）
 
-基于官方 Rust MCP SDK（[rmcp](https://github.com/modelcontextprotocol/rust-sdk)），直接复用同一套工具注册表与归档落盘模块，暴露 MCP 工具供本地或远程 AI 客户端无缝调用：
+基于官方 Rust MCP SDK（[rmcp](https://github.com/modelcontextprotocol/rust-sdk)），直接复用同一套工具注册表、归档落盘模块与 `TOOLSTOW_API_KEY` 权限边界，暴露 MCP 工具供本地或远程 AI 客户端无缝调用：
 
-- `list_tools`：查询已有工具列表与功能描述，避免 AI 重复造轮子。
+- `list_tools`：查询已有工具列表（含 `draft` 状态）与功能描述，避免 AI 重复造轮子。
 - `get_tool_spec`：返回 `manifest.json` 协议规范与 `postMessage` 主题同步模板，供 AI 生成前按需读取。
-- `publish_tool`：直接提交工具文件树或 `.zip` 完成校验发布/覆盖更新并即时生效。
+- `publish_tool`：提交工具文件树或 `.zip` 完成校验发布/覆盖更新并即时生效（可先以 `draft: true` 发布预览）。
+- `set_tool_draft`：切换指定工具的草稿/发布状态。
 - `delete_tool`：删除指定工具。
 
-### 2.3 Phase 3 · 轻后端扩展（远期预留，Phase 1 不实现）
+### 2.3 Phase 3 · 轻后端扩展（远期预留，当前不实现）
 
 - **受控 API 代理**：在 `manifest.json` 中声明受控代理标识，敏感 API Key 保存在宿主服务端环境变量中，子工具前端通过 `/api/proxy/{tool_id}/...` 安全转发请求。
 - **轻量沙箱计算脚本**：激活 `runtime: "script"`，由宿主在受限子进程或沙箱中执行短生命周期脚本并返回 JSON。
 
 ### 2.4 明确的非目标（Non-Goals）
 
-为防止过度设计与偏离个人工具箱定位，以下内容**明确不做**：
+为防止过度设计与偏离个人 VPS 工具箱定位，以下内容**明确不做**：
 
-- **不引入外部数据库**（无 SQLite / Postgres / MySQL）：文件系统 `tools/` 目录即唯一事实来源（Source of Truth）。
+- **不引入外部数据库**（无 SQLite / Postgres / MySQL）：文件系统 `data/` 目录（`tools/` + `settings.json` + 可选 `theme/`）即唯一事实来源（Source of Truth）。
+- **不做静态托管平台妥协**：不为了兼容 Cloudflare Workers / Vercel 等纯静态或无本地磁盘环境而阉割热监听、原子落盘与动态管理能力，专注纯 VPS / 家庭服务器常驻运行。
 - **不内置通用工具全家桶**：宿主本身是空壳与运行时，不复刻 IT-Tools 的数十个通用内置工具。
-- **不做多用户、RBAC 与复杂内置鉴权体系**：默认监听本地回环地址（`127.0.0.1`）；若部署在公网或家庭服务器，访问认证统一交由前置反向代理（如 Caddy BasicAuth / Authelia / Cloudflare Access）或组网工具（Tailscale）处理。
-- **Phase 1 不做多历史版本树与修订号锁，也不实现后端脚本执行器或工作流编排**。
+- **不做多用户账号体系、注册流程与复杂 RBAC**：仅提供面向个人的双密钥模型（`TOOLSTOW_ADMIN_KEY` 人类单密钥 + `TOOLSTOW_API_KEY` 机器密钥）；若需额外接入外围网关认证，仍可前置 Caddy / Nginx / Cloudflare Access / Tailscale。
+- **当前不做多历史版本树、修订号锁或后端脚本执行器 / 工作流编排**。
 
 ---
 
 ## 3. 核心协议与接口契约
 
-### 3.1 工具目录与 ZIP 包结构
+### 3.1 统一数据目录（`--data-dir`）与 ZIP 包结构
 
-磁盘上每个工具自包含于 `tools/{id}/` 目录中；`.` 开头的目录或文件（如 `tools/.staging/`、`.DS_Store`）视为系统保留或临时项，扫描与静态托管一律忽略：
+默认数据目录为 `./data`（可通过 `--data-dir` 或 `TOOLSTOW_DATA_DIR` 指定），结构如下：
 
 ```text
-tools/
-├── docker-cheatsheet/
-│   ├── manifest.json
-│   └── index.html
-└── dynamic-favicon/
-    ├── manifest.json
-    ├── index.html
-    └── assets/
+data/
+├── settings.json             # 站点设置（siteTitle / siteDescription / defaultAccent）
+├── theme/                    # [可选] 外置公共前端静态文件，覆盖内嵌默认前端（无需重编 Rust）
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+└── tools/                    # 工具注册与静态托管根目录
+    ├── .staging/             # 内部同盘上传暂存目录（自动忽略，禁止外部访问）
+    ├── docker-cheatsheet/
+    │   ├── manifest.json
+    │   └── index.html
+    └── dynamic-favicon/
+        ├── manifest.json
+        ├── index.html
+        └── assets/
 ```
+
+磁盘上每个工具自包含于 `tools/{id}/` 目录中；`.` 开头的目录或文件（如 `.staging/`、`.DS_Store`）视为系统保留或临时项，扫描与静态托管一律忽略。
 
 **ZIP 打包兼容约定**：
 - 标准格式为压缩包根目录直接包含 `manifest.json` 与入口文件（如 `index.html`）。
@@ -95,7 +121,7 @@ tools/
 
 ### 3.2 `manifest.json` 字段规范
 
-设计原则为**“最小必填、合理默认”**：已有单文件 `index.html` 只需补充仅含 `id` 和 `name` 的两行 `manifest.json` 即可接入；需要深度集成时再按需声明分类、主题感知或沙箱权限。
+设计原则为**“最小必填、合理默认”**：已有单文件 `index.html` 只需补充仅含 `id` 和 `name` 的两行 `manifest.json` 即可接入；需要深度集成时再按需声明分类、草稿状态、主题感知或沙箱权限。
 
 ```json
 {
@@ -108,6 +134,7 @@ tools/
   "icon": "🎨",
   "entry": "index.html",
   "runtime": "static",
+  "draft": false,
   "themeAware": true,
   "sandbox": ["allow-scripts", "allow-downloads", "allow-forms"]
 }
@@ -123,7 +150,8 @@ tools/
 | `tags` | `string[]` | 否 | `[]` | 搜索与筛选标签数组（自动去重、忽略空串） |
 | `icon` | `string` | 否 | `"🛠️"` | Emoji 字符，或工具目录内的安全相对图片路径（如 `"assets/icon.svg"`） |
 | `entry` | `string` | 否 | `"index.html"` | 入口 HTML 的安全相对路径，禁止 `/` 开头、`..`、`\` 或协议头，且目标普通文件必须存在 |
-| `runtime` | `"static" \| "script"` | 否 | `"static"` | 运行模式；Phase 1 仅支持 `"static"`，声明为 `"script"` 时拒绝加载并给出明确提示 |
+| `runtime` | `"static" \| "script"` | 否 | `"static"` | 运行模式；当前仅支持 `"static"`，声明为 `"script"` 时拒绝加载并给出明确提示 |
+| `draft` | `boolean` | 否 | `false` | Hugo 风格草稿标记；`true` 时对匿名公开列表隐藏且 `/t/{id}/*` 返回 `404`，仅已登录 Admin Session 或本地 `--include-drafts` 可见 |
 | `themeAware` | `boolean` | 否 | `false` | 是否订阅主站的明暗模式与强调色 `postMessage` 同步消息 |
 | `sandbox` | `string[]` | 否 | `["allow-scripts", "allow-downloads", "allow-forms"]` | 申请的 `iframe sandbox` 权限列表，由宿主按安全白名单过滤后生效 |
 
@@ -135,23 +163,46 @@ tools/
      "type": "toolstow:theme",
      "payload": {
        "mode": "dark",
-       "accent": "#2563EB"
+       "accent": "#18181b"
      }
    }
    ```
-   *注：由于沙箱子工具运行在不透明源（`"null"`），按 HTML 规范 `targetOrigin` 必须传 `"*"`。*
+   *注：由于沙箱子工具运行在不透明源（`"null"`），按 HTML 规范 `targetOrigin` 必须传 `"*"`。默认强调色源自站点设置 `defaultAccent`（默认 `#18181b`），用户可在主站自定义并持久化到主站 `localStorage`。*
 2. **子工具可选握手**：子工具脚本初始化完成后，可向父窗口发送 `{ "type": "toolstow:ready" }`，主站收到后立即重发一次当前主题状态，消除慢速资源加载导致的时序竞态。
 3. **子工具样式约定**：子工具应在 `:root` 中预设默认 `--accent` 等 CSS 变量（确保直接访问 `/t/{id}/index.html` 时样式依然完好），并在 `window.addEventListener("message", ...)` 收到 `type === "toolstow:theme"` 时更新 `--accent` 与 `data-theme`。
 
 ### 3.4 HTTP 路由与 API 契约
 
-| 方法与路径 | 说明 |
-| :--- | :--- |
-| `GET /`（及前端静态资源） | 返回内嵌的工具箱前端外壳页面与脚本样式 |
-| `GET /api/tools` | 返回当前所有可用工具的元数据 JSON 数组（按分类与名称稳定排序），支持可选查询参数 `?q=关键词&category=分类&tag=标签`；每项包含归一化清单字段及 `entryUrl`（如 `"/t/dynamic-favicon/index.html"`） |
-| `POST /api/tools/upload` | `multipart/form-data`（字段 `file`）上传 `.zip` 工具包；校验通过后原子写入/覆盖 `tools/{id}/`，立即同步内存索引并返回该工具元数据（新建返回 `201`，覆盖更新返回 `200`）；校验失败返回结构化错误 JSON（`400` / `413` / `422`） |
-| `DELETE /api/tools/{id}` | 删除指定工具目录并同步移除内存索引，成功返回 `204 No Content`，不存在返回 `404` |
-| `GET /t/{id}/{*path}` | 托管已注册工具 `{id}` 目录下的静态文件（访问 `/t/{id}` 或 `/t/{id}/` 重定向至 `/t/{id}/{entry}`） |
+#### 公开与工具运行路由
+
+| 方法与路径 | 鉴权要求 | 说明 |
+| :--- | :--- | :--- |
+| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳；若 `<data-dir>/theme/` 下存在对应静态文件则优先返回外置主题，否则回退至编译期内嵌的极简黑白默认前端。`/admin*`、`/api/*`、`/t/*` 始终由后端锁定，不可被外置主题覆盖 |
+| `GET /api/me` | 无（读取当前 Cookie 状态） | 返回 `{ siteTitle, siteDescription, defaultAccent, isAdmin, adminEnabled, themeSource }`；`themeSource` 为 `"custom"` 或 `"embedded"`；公共前端仅当 `isAdmin === true` 时显示「管理 / 设置」入口 |
+| `GET /api/tools` | 无 | 返回公开已发布工具（`draft: false`）的元数据 JSON 数组（按分类与名称稳定排序），支持 `?q=关键词&category=分类&tag=标签`；每项包含归一化清单字段（含 `draft`）及 `entryUrl`（如 `"/t/dynamic-favicon/index.html"`）。仅当本地显式开启 `--include-drafts` 时包含草稿 |
+| `GET /t/{id}/{*path}` | 公开工具无需鉴权；草稿工具需 Admin Session 或 `--include-drafts` | 托管已注册工具 `{id}` 目录下的静态文件（访问 `/t/{id}` 或 `/t/{id}/` 重定向至 `/t/{id}/{entry}`）。若目标工具为 `draft: true` 且访客无权限，返回 `404` |
+
+#### 管理台与会话认证路由
+
+| 方法与路径 | 鉴权要求 | 说明 |
+| :--- | :--- | :--- |
+| `GET /admin`（及 `/admin/*`） | 无（页面内校验会话；需配置 `TOOLSTOW_ADMIN_KEY`） | 当配置 `TOOLSTOW_ADMIN_KEY` 时返回编译期内嵌的极简黑白单密钥管理后台静态资源（始终由后端锁定）；未配置 `TOOLSTOW_ADMIN_KEY` 时 fail-closed 返回 `404` |
+| `GET /api/admin/session` | 无（读取当前 Cookie 状态） | 返回 `{ authenticated, adminEnabled }`，供 `/admin` 判断渲染登录卡片或控制台 |
+| `POST /api/admin/login` | `TOOLSTOW_ADMIN_KEY` | 提交 JSON `{ "key": "..." }`；未配置 `TOOLSTOW_ADMIN_KEY` 返回 `404`，密钥错误返回 `401`，单 IP 5 分钟内失败 5 次返回 `429`；成功在内存创建 256-bit Session 并下发 `Set-Cookie: toolstow_admin_session=...; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`（HTTPS 或 `TOOLSTOW_COOKIE_SECURE=true` 时附加 `Secure`） |
+| `POST /api/admin/logout` | 无（携带 Cookie 则销毁） | 销毁当前内存 Session 并清除 `toolstow_admin_session` Cookie |
+
+#### 管理写操作 API（工具管理 & 站点设置）
+
+| 方法与路径 | 允许凭证 | 说明 |
+| :--- | :--- | :--- |
+| `GET /api/admin/tools` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 返回全部工具（含 `draft: true` 草稿），支持 `?q=&category=&tag=` |
+| `POST /api/admin/tools/upload` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | `multipart/form-data`（字段 `file`）上传 `.zip` 工具包；校验通过后原子写入/覆盖 `tools/{id}/` 并刷新内存索引（新建 `201`，覆盖更新 `200`）；校验失败返回结构化错误 JSON（`400` / `413` / `422`） |
+| `PATCH /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 提交 JSON `{ "draft": true \| false }`，原子写回 `tools/{id}/manifest.json` 并立即同步内存索引，返回更新后的工具元数据 JSON（不存在返回 `404`） |
+| `DELETE /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 删除指定工具目录并同步移除内存索引，成功返回 `204 No Content`，不存在返回 `404` |
+| `GET /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 读取当前站点设置 `{ siteTitle, siteDescription, defaultAccent }` |
+| `PUT /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 更新站点设置（支持全量或部分字段），校验通过后原子写入 `<data-dir>/settings.json` 并刷新内存状态：`siteTitle` 非空最长 80 字符、`siteDescription` 最长 240 字符、`defaultAccent` 为合法 `#rgb` / `#rrggbb` 十六进制色值 |
+
+> 所有错误响应统一采用 `{ "code": "...", "error": "..." }` JSON 结构，涵盖 `400`（`BAD_REQUEST`）、`401`（`unauthorized`）、`403`（`FORBIDDEN`）、`404`（`NOT_FOUND`）、`413`（`PAYLOAD_TOO_LARGE`）、`422`（`UNPROCESSABLE_ENTITY`）、`429`（`too_many_requests`）、`500`（`INTERNAL_ERROR`）。
 
 ---
 
@@ -160,54 +211,80 @@ tools/
 1. **严格防路径穿越与解包炸弹（Zip Slip & Zip Bomb 防护）**
    - `manifest.id` 严格匹配小写字母、数字与连字符正则；`entry` 与相对路径型 `icon` 禁止任何越界段（`.`、`..`、反斜杠、驱动器前缀）。
    - ZIP 解压在阻塞线程池（`tokio::task::spawn_blocking`）中执行，逐条目使用 `ZipFile::enclosed_name()` 校验路径；**拒绝符号链接（Symlink）**与路径归一化后冲突的重复文件。
-   - 资源配额硬限制：单次上传请求体默认上限 **50 MB**（可通过启动参数调整），解压后总字节数上限 **200 MB**，单包文件总数上限 **1,000 个**。超限立即中止并清理暂存目录。
+   - 资源配额硬限制：单次上传请求体默认上限 **50 MB**（可通过 `--max-upload-mb` 调整），解压后总字节数上限 **200 MB**，单包文件总数上限 **1,000 个**。超限立即中止并清理暂存目录。
 2. **同盘暂存与原子替换**
    - 上传解包统一在 `tools/.staging/{uuid}/`（与 `tools/` 同文件系统）内完成全部文件写出与 `manifest.json` 校验。
-   - 仅当校验 100% 通过后，再执行目录原子就位（若目标 `tools/{id}` 已存在，先将其移至临时备份路径，再将新目录 `rename` 就位，最后清理旧备份；若切换失败则回滚旧目录）。任何坏包或中途失败均不产生半成品，也不破坏已有线上工具。
+   - 仅当校验 100% 通过后，再执行目录原子就位（若目标 `tools/{id}` 已存在，先将其移至临时备份路径，再将新目录 `rename` 就位，最后清理旧备份；若切换失败则回滚旧目录）。`settings.json` 与 `PATCH` 写回 `manifest.json` 同样采用同目录临时文件 + 原子 `rename` 策略。
 3. **沙箱白名单与直链同级隔离**
    - 宿主后端对 `manifest.sandbox` 实施严格白名单过滤，仅允许：`allow-scripts`、`allow-downloads`、`allow-forms`、`allow-modals`、`allow-popups`、`allow-popups-to-escape-sandbox`。
-   - **绝对禁止 `allow-same-origin` 与 `allow-top-navigation*`**：未知或高危权限项一律在后端剥离并记录警告，防止子工具读取主站 `localStorage` / Cookie 或篡改顶层窗口。
-   - `/t/{id}/{*path}` 仅对内存索引中已合法注册的 `{id}` 开放访问（阻断探测 `.staging` 或未通过校验的目录），并返回 `Content-Security-Policy: sandbox <白名单权限>;`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: no-cache`（确保热修改即时可见且直链打开同样受沙箱约束）。
-   - 前端外壳渲染子工具名称、描述、标签及相对路径图标时仅使用纯文本绑定或受控 `<img>` 属性，禁止拼接未转义 `innerHTML`。
+   - **绝对禁止 `allow-same-origin` 与 `allow-top-navigation*`**：未知或高危权限项一律在后端剥离并记录警告，防止子工具读取主站 Cookie / `localStorage` 或篡改顶层窗口。
+   - `/t/{id}/{*path}` 仅对内存索引中已合法注册且当前访问者可见的 `{id}` 开放访问（阻断探测 `.staging`、未通过校验目录与匿名探测 `draft: true` 草稿），并返回 `Content-Security-Policy: sandbox <白名单权限>;`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: no-cache`。
+   - 公共前端与管理后台渲染所有动态字段（工具名称、描述、标签、站点标题、错误提示等）一律使用纯文本绑定（`textContent`）或受控 DOM 属性，严禁拼接未转义 `innerHTML`。
 4. **写接口防沙箱跨源伪造（CSRF 防护）**
-   - 尽管沙箱子工具处于不透明源（`Origin: null`），浏览器仍允许其发起无需预检的 `multipart/form-data` `POST` 请求。
-   - 因此所有状态变更接口（`POST /api/tools/upload`、`DELETE /api/tools/{id}`）必须校验请求来源：拒绝 `Origin: null` 或跨源 `Sec-Fetch-Site: cross-site` 请求（前端外壳统一附带自定义请求头如 `X-ToolStow-Client: 1` 触发浏览器 CORS 预检拦截沙箱请求；无 `Origin` 头的本地 `curl` / Agent CLI 调用正常放行）。
+   - 尽管沙箱子工具处于不透明源（`Origin: null`），浏览器仍允许其发起无需预检的表单或 `POST` 请求。
+   - 所有状态变更接口（`/api/admin/login`、`/api/admin/logout`、`/api/admin/tools/upload`、`PATCH/DELETE /api/admin/tools/{id}`、`PUT /api/admin/settings`）必须校验来源：拒绝 `Origin: null` 或跨源 `Sec-Fetch-Site: cross-site` 请求；浏览器端管理后台统一附带 `X-ToolStow-Client: 1` 请求头触发 CORS 预检；无 `Origin` 头的 `curl` / Agent CLI 请求在携带有效 Bearer API Key 时正常放行。
+5. **双密钥 fail-closed、防爆破与外置主题路由锁定**
+   - `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY` 未配置时分别关闭对应登录/API 通道（fail-closed）；两者均使用常量时间比较函数 `constant_time_eq` 校验，抵御时序侧信道攻击。
+   - 对失败的 Admin 登录与 Bearer 校验实施单客户端/单 IP 滑动窗口限流：**5 分钟内失败 5 次即返回 `429 Too Many Requests`**；登录成功后清除该客户端失败计数。
+   - 若配置的密钥长度不足 16 字符，启动时记录 `WARN` 级提示日志，**任何日志中绝不打印密钥明文或 Session Token**。
+   - 严禁通过 URL Query 参数传递任何密钥；`TOOLSTOW_API_KEY` 仅接受 `Authorization: Bearer` 头且不可访问 `/admin` 登录与站点设置接口。
+   - 外置主题目录（`<data-dir>/theme/`）仅用于匹配公共前端静态资源（禁止路径穿越），`/admin*`、`/api/*`、`/t/*` 路由始终由后端最高优先级锁定，避免自定义主题误配或污染核心控制面。
 
 ---
 
 ## 5. 技术栈与工程架构（Rust 单二进制）
 
-本项目兼顾**个人自托管极简运维**与**清晰的 Rust 工程实践**，坚持依赖克制、模块边界明确、注释友好。
+本项目兼顾**纯 VPS 自托管极简运维**与**清晰的 Rust 工程实践**，坚持依赖克制、零 `unsafe` 配置加载、模块边界明确。
 
-### 5.1 技术选型
+### 5.1 技术选型与配置项
 
 | 模块 | 选型 | 说明 |
 | :--- | :--- | :--- |
 | 语言与异步运行时 | Rust Stable (Edition 2024) + `tokio` | 单 Cargo 工程、单静态资源内嵌二进制，提交 `Cargo.lock` |
 | Web 框架与中间件 | `axum` + `tower-http` | 路由、`Multipart` 上传、`DefaultBodyLimit`、安全响应头与静态文件服务 |
-| 序列化与校验 | `serde` + `serde_json` | `manifest.json` 反序列化与显式业务规则校验 |
-| 前端资源内嵌 | `rust-embed` + `mime_guess` | Debug 模式下直接读取磁盘 `frontend/` 便于联调，Release 模式下编译进单二进制 |
-| 目录热监听 | `notify` | 监听 `tools/` 文件系统事件，配合防抖（Debounce）触发索引热更新 |
-| 归档解压 | `zip` + `tempfile` | 阻塞任务中安全流式解压与同盘暂存目录生命周期管理 |
-| CLI 参数 | `clap` (derive) | 支持 `--host`（默认 `127.0.0.1`）、`--port`（默认 `8080`）、`--tools-dir`（默认 `./tools`）、`--max-upload-mb`（默认 `50`） |
-| 错误与日志 | `anyhow` / `thiserror` + `tracing` / `tracing-subscriber` | 清晰的 HTTP 状态码错误映射与结构化日志输出 |
-| 前端导航壳 | 原生 HTML + CSS + ES Module JS | 零前端打包构建链，轻量易读，桌面与移动端自适应 |
+| 序列化与校验 | `serde` + `serde_json` | `manifest.json`、`settings.json` 反序列化与显式业务规则校验 |
+| 前端资源内嵌 | `rust-embed` + `mime_guess` | 将默认公共前端 `frontend/` 与管理后台 `admin/` 编译进单二进制；公共前端支持 `<data-dir>/theme/` 运行时优先覆盖 |
+| 目录热监听 | `notify` | 监听 `<data-dir>/tools/` 文件系统事件，配合防抖（Debounce）触发索引热更新 |
+| 归档解压 | `zip` + `tempfile` | 阻塞任务中安全流式解压、同盘暂存目录管理与原子替换 |
+| CLI 与 `.env` 配置 | `clap` (derive) + 内置零依赖 `.env` 解析器 | 优先级：`CLI 参数 > 系统环境变量 > .env 文件 > 默认值`（零 `unsafe`） |
+| 错误与日志 | `anyhow` / `thiserror` + `tracing` / `tracing-subscriber` | 统一 HTTP 状态码 JSON 映射与结构化日志输出 |
+| 前端界面 | 原生 HTML + CSS + ES Module JS | 零前端构建链，极简黑白（`monitor-probe/monitor` 风格），桌面与移动端自适应 |
 | MCP Server（Phase 2） | `rmcp` | 官方 Rust MCP SDK |
 
-### 5.2 推荐项目目录结构
+**运行参数与环境变量对照**：
+
+| CLI 参数 | 环境变量 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `--host` | `TOOLSTOW_HOST` | `127.0.0.1` | 监听地址（公网或容器反向代理按需设为 `0.0.0.0`） |
+| `--port` | `TOOLSTOW_PORT` | `8080` | 监听端口 |
+| `--data-dir` | `TOOLSTOW_DATA_DIR` | `./data` | 统一数据目录（含 `tools/`、可选 `theme/`、`settings.json`） |
+| `--tools-dir` | `TOOLSTOW_TOOLS_DIR` | `<data-dir>/tools` | 工具目录独立覆盖路径 |
+| `--theme-dir` | `TOOLSTOW_THEME_DIR` | `<data-dir>/theme` | 外置自定义公共前端目录覆盖路径 |
+| `--max-upload-mb` | `TOOLSTOW_MAX_UPLOAD_MB` | `50` | 单次 `.zip` 上传体积上限（MB） |
+| `--include-drafts` | `TOOLSTOW_INCLUDE_DRAFTS` | `false` | 本地调试时在公开视图直接显示 `draft: true` 草稿工具 |
+| `--cookie-secure` | `TOOLSTOW_COOKIE_SECURE` | `false` | 强制为 Admin Session Cookie 附加 `Secure` 属性（HTTPS 反代推荐开启） |
+| — | `TOOLSTOW_ADMIN_KEY` | 未设置（关闭） | 人类 `/admin` 单密钥登录密钥（仅通过环境变量 / `.env` 注入） |
+| — | `TOOLSTOW_API_KEY` | 未设置（关闭） | 机器 / AI `Authorization: Bearer` 密钥（仅管理 `/api/admin/tools*`） |
+
+### 5.2 项目目录结构
 
 ```text
 toolstow/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── REQUIREMENTS.md
-├── README.md
+├── .env.example              # 环境变量与双密钥生成示例模板
+├── .gitignore                # 忽略 /target, /tools, /data, .env 等运行产物
 ├── docs/
-│   └── ai-tool-skill.md      # 供 AI / Agent 读取的工具开发与打包规范（Skill 模板）
-├── frontend/                 # 零构建前端导航外壳（Release 编译进二进制）
+│   └── ai-tool-skill.md      # 供 AI / Agent 读取的工具开发、草稿与 API 发布规范
+├── frontend/                 # 极简黑白只读公共前端（内嵌进二进制，可被 data/theme/ 覆盖）
 │   ├── index.html
 │   ├── app.js
 │   └── style.css
+├── admin/                    # 极简黑白单密钥管理面板（内嵌进二进制，/admin 始终后端锁定）
+│   ├── index.html
+│   ├── admin.js
+│   └── admin.css
 ├── examples/                 # 开箱验证示例工具
 │   ├── docker-cheatsheet/
 │   │   ├── manifest.json
@@ -216,47 +293,47 @@ toolstow/
 │       ├── manifest.json
 │       └── index.html
 └── src/
-    ├── main.rs               # CLI 解析、日志初始化、组装 AppState、启动 Axum 与目录 Watcher
-    ├── config.rs             # 启动参数与运行配置
-    ├── error.rs              # 统一业务错误类型与 Axum IntoResponse JSON 映射
-    ├── manifest.rs           # Manifest 数据结构、默认值填充、路径与沙箱白名单校验
-    ├── registry.rs           # 内存注册表（Arc<RwLock<HashMap<String, ToolEntry>>>）、全量/增量扫描与 notify 防抖监听
-    ├── archive.rs            # ZIP 解包、防穿越/防炸弹检查、单层目录剥离与同盘原子替换
-    └── routes.rs             # API 路由、CSRF/Origin 校验、工具沙箱静态托管与内嵌前端路由
+    ├── main.rs               # CLI/.env 加载、日志初始化、组装 AppState、启动 Axum 与目录 Watcher
+    ├── lib.rs                # 模块导出
+    ├── config.rs             # CLI + 环境变量 + .env 解析与数据目录派生
+    ├── error.rs              # 统一业务错误类型（含 401/429）与 Axum IntoResponse JSON 映射
+    ├── manifest.rs           # Manifest 数据结构（含 draft）、默认值填充、路径与沙箱白名单校验
+    ├── settings.rs           # data/settings.json 持久化读写与校验（SettingsStore）
+    ├── auth.rs               # 双密钥常量时间校验、256-bit 内存 Session、Cookie 构造与失败限流
+    ├── registry.rs           # 内存注册表、草稿过滤查询、全量扫描与 notify 防抖监听
+    ├── archive.rs            # ZIP 解包、防穿越/防炸弹、同盘原子替换与 draft 原子更新
+    └── routes.rs             # 公开/主题覆盖/管理 API 路由、双密钥鉴权、CSRF 防护与沙箱托管
 ```
 
 ### 5.3 并发与工程硬约束
 
-1. **锁作用域最小化**：内存注册表使用 `Arc<std::sync::RwLock<...>>`，任何读写锁守卫（Guard）**严禁跨越 `.await` 点**；读取时克隆所需快照后立即释放锁，磁盘 I/O 与解包全部在锁外完成。
-2. **写操作串行化与双通道一致性**：同一时刻针对同一 `id` 的上传/删除通过细粒度互斥或写协调避免竞争；HTTP 上传与删除落盘成功后**立即同步更新内存注册表**（确保紧随其后的 `GET /api/tools` 强一致），同时 `notify` 监听器负责兜底捕获外部直接对 `tools/` 目录的手工增删改。
+1. **锁作用域最小化**：内存注册表、站点设置与认证会话表使用 `std::sync::RwLock` / `Mutex`，任何锁守卫（Guard）**严禁跨越 `.await` 点**；读取时克隆快照后立即释放锁，磁盘 I/O 与解包全部在锁外完成。
+2. **写操作串行化与双通道一致性**：针对工具目录的上传、草稿切换与删除通过写锁串行协调；HTTP 管理操作落盘成功后**立即同步更新内存注册表**（确保紧随其后的查询强一致），同时 `notify` 监听器负责兜底捕获外部直接对 `tools/` 目录的手工增删改。
 
 ---
 
 ## 6. 渐进式实施里程碑与验收标准
 
-按以下 4 个里程碑渐进交付，每一步均保证 `cargo test` 与 `cargo run` 可独立编译验证：
+### 6.1 演进里程碑
 
-### 6.1 实施里程碑
+1. **v0.1（已完成）· 核心单二进制闭环**
+   - 完成 `manifest.rs` 校验与白名单过滤、`registry.rs` 扫描与 `notify` 热监听、`archive.rs` 安全解包与同盘原子替换、双重沙箱托管、基础前端壳与示例工具。
+2. **v0.2（当前目标）· 纯 VPS 动态宿主升级**
+   - 落地统一 `--data-dir`（`tools/` + 可选 `theme/` + `settings.json`）与 `.env` 零依赖配置加载。
+   - 落地双密钥 fail-closed 鉴权（`TOOLSTOW_ADMIN_KEY` 人类 Session + `TOOLSTOW_API_KEY` 机器 Bearer）、5 次 / 5 分钟 `429` 限流与职责隔离。
+   - 落地 Hugo 风格 `draft` 草稿可见性控制与 `PATCH /api/admin/tools/{id}` 原子切换。
+   - 重构公共只读前端与内嵌管理台为 `monitor-probe/monitor` 极简黑白美学，公共前端根据 `GET /api/me` 仅对管理员展示「管理 / 设置」入口。
+3. **Phase 2 · AI 原生 MCP 发布流**
+   - 接入 `rmcp`，复用注册表、归档模块与 API Key 权限模型实现 AI 客户端直连发布与草稿管理。
 
-1. **Milestone 1 · 最小可运行闭环**
-   - 完成 `clap` 参数解析、`manifest.rs` 解析与白名单校验、`registry.rs` 启动扫描、`GET /api/tools` 过滤查询与 `GET /t/{id}/{*path}` 沙箱静态托管。
-   - **阶段结果**：将示例工具放入 `./tools`，启动服务后 `/api/tools` 返回正确 JSON，访问 `/t/{id}/index.html` 可正常使用且携带 `CSP: sandbox` 响应头。
-2. **Milestone 2 · 内嵌前端导航外壳**
-   - 完成 `frontend/` 响应式工具箱界面（侧边栏分类、标签筛选、`Cmd+K` 全局搜索、沙箱 `iframe` 容器、明暗模式与强调色 `postMessage` 联动），并通过 `rust-embed` 内嵌。
-   - **阶段结果**：`cargo build --release` 产出独立单二进制，复制到任意目录运行即可在桌面和手机浏览器中检索打开工具、实时切换主题与强调色。
-3. **Milestone 3 · 目录热更新与 ZIP 上传管理**
-   - 接入 `notify` 防抖监听实现手工改目录自动刷新；完成 `archive.rs` 安全解包与同盘原子替换；打通 `POST /api/tools/upload`、`DELETE /api/tools/{id}` 及前端拖拽上传与删除交互。
-   - **阶段结果**：运行期往 `tools/` 放入新目录或通过网页/`curl` 上传 `.zip`（含同名覆盖更新），无需重启服务即可立即生效。
-4. **Milestone 4 · AI 生产闭环与示例打磨**
-   - 编写完善的 `docs/ai-tool-skill.md` 规范文档，补齐两个代表性示例工具（速查页 + 主题联动 Favicon 生成器）与集成测试；为后续接入 `rmcp`（Phase 2）预留清晰接口。
-
-### 6.2 Phase 1 核心验收矩阵
+### 6.2 v0.2 核心验收矩阵
 
 | 验收场景 | 通过条件 |
 | :--- | :--- |
-| **单二进制零配置启动** | `cargo build --release` 生成单一可执行文件，在空目录启动自动创建 `./tools` 并正常打开前端空状态引导页 |
-| **网页拖拽与 AI 上传闭环** | 将 `docs/ai-tool-skill.md` 提供给 AI 生成工具包，通过网页拖拽和 `POST /api/tools/upload` 均可发布；上传同 `id` 新包可原子覆盖更新 |
-| **桌面与移动端检索使用** | 在桌面端（含 `Cmd+K` / `Ctrl+K`）与手机浏览器中，按分类、标签、名称、描述或 ID 均能检索到工具；速查页复制与 Favicon 生成下载均正常 |
-| **主题与强调色实时同步** | 主站切换明暗模式或修改强调色时，`themeAware: true` 的子工具实时同步配色，无需刷新 `iframe` |
-| **磁盘手工热修改与容错** | 运行期间手工新增/删除 `tools/{id}` 目录自动更新列表；修改工具内 HTML/CSS/JS 刷新即见新内容；放入损坏的 `manifest.json` 仅打印警告，不影响其它工具 |
-| **安全边界与坏包隔离** | 含 `..` 路径穿越、符号链接、超限体积、非法 `id` 或缺失入口的 `.zip` 上传被拒绝且不留残余文件；子工具 `iframe` 及直链均无 `allow-same-origin`，且从沙箱内发起的伪造上传请求被服务端拒绝 |
+| **纯 VPS 零数据库启动** | `cargo build --release` 生成单一可执行文件，空目录启动自动创建 `./data/tools`，加载 `.env`（若存在），打开公共前端即见极简黑白界面 |
+| **Fail-Closed 默认安全** | 未配置 `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY` 时：`GET /admin`（及 `/admin/*`）、`/api/admin/login`、`/api/admin/tools*` 与 `/api/admin/settings` 均 fail-closed 返回 `404`，公共前端不显示管理入口 |
+| **双密钥职责隔离与防爆破** | `TOOLSTOW_ADMIN_KEY` 可登录 `/admin` 换取 `HttpOnly; SameSite=Strict` Cookie 并管理工具与站点设置，但作为 Bearer Token 被拒绝；`TOOLSTOW_API_KEY` 可经 `Authorization: Bearer` 读写 `/api/admin/tools*`，但无法登录 `/admin` 或访问 `/api/admin/settings`；连续 5 次错误凭证后第 6 次触发 `429` |
+| **Hugo 风格草稿可见性** | `draft: true` 工具在公开 `GET /api/tools` 中隐藏且匿名访问 `/t/{id}/*` 返回 `404`；登录 `/admin` 后可在列表看到、通过「预览」打开并通过 `PATCH /api/admin/tools/{id}` 一键发布上线；本地启动加 `--include-drafts` 时公开视图直接可见 |
+| **外置静态主题热覆盖与路由锁定** | 在 `data/theme/` 放置自定义 `index.html` 后无需重编 Rust，访问 `/` 立即生效且 `/api/me` 返回 `themeSource: "custom"`；访问 `/admin`、`/api/tools`、`/t/{id}/*` 仍由后端强制接管不被覆盖 |
+| **公共只读前端与条件管理入口** | 公共前端完全只读无上传/删除按钮；未登录时无任何管理入口；登录 `/admin` 后返回 `/` 顶栏展示「管理 / 设置」链接；站点标题/描述/默认强调色修改后实时反映到 `/api/me` 与公共页 |
+| **AI 生产闭环与沙箱安全边界** | 按 `docs/ai-tool-skill.md` 使用 `Authorization: Bearer $TOOLSTOW_API_KEY` 完成上传、覆写、草稿切换与删除；坏包/越界/符号链接/超限包被拒绝且无残留；子工具双重沙箱剥离 `allow-same-origin`，沙箱内伪造写请求被拦截 |

@@ -1,4 +1,6 @@
 /target
 /tools
+/data
+.env
 .DS_Store
 *.swp

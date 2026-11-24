@@ -1,20 +1,21 @@
 # ToolStow AI Tool Development & Publishing Skill
 
-Use this specification whenever generating, packaging, or publishing a self-contained static web micro-tool for **ToolStow**.
+Use this specification whenever generating, packaging, or publishing a self-contained static web micro-tool for **ToolStow** (v0.2+).
 
 ---
 
 ## 1. Core Principles
 
-- **Zero-build & self-contained**: Output plain HTML, CSS, and vanilla JS (single `index.html` is ideal for small utilities; split local relative assets only when needed). Avoid external CDN dependencies so the tool works offline and inside strict sandboxes.
+- **Zero-build & self-contained**: Output plain HTML, CSS, and vanilla JS (a single `index.html` is ideal for small utilities; split local relative assets only when needed). Avoid external CDN dependencies so the tool works offline and inside strict sandboxes.
 - **Opaque-origin safe**: Every tool runs inside a dual sandbox (`<iframe sandbox="...">` + `Content-Security-Policy: sandbox ...`) with an opaque origin (`Origin: null`). Never assume same-origin browser storage is available.
 - **Standalone-ready & theme-aware**: Provide default `:root` CSS variables so the tool looks complete when opened directly at `/t/{id}/index.html`, and subscribe to `toolstow:theme` to mirror the host's Light/Dark mode and accent color in real time.
+- **Draft-friendly publishing**: Tools support a Hugo-style `"draft": true` flag so AI agents can publish work-in-progress tools for admin preview before making them public.
 
 ---
 
 ## 2. Directory & ZIP Packaging
 
-On disk, each tool lives in `tools/{manifest.id}/`:
+On disk, each tool lives inside the host's data directory at `<data-dir>/tools/{manifest.id}/` (default `./data/tools/{manifest.id}/`):
 
 ```text
 my-tool/
@@ -29,14 +30,14 @@ my-tool/
    ```bash
    (cd my-tool && zip -r ../my-tool.zip .)
    ```
-2. **Single-root-folder ZIP**: A single top-level directory contains `manifest.json` (ToolStow automatically ignores `__MACOSX/` and `.DS_Store`, strips the single wrapper folder, and installs into `tools/{manifest.id}/`):
+2. **Single-root-folder ZIP**: A single top-level directory contains `manifest.json` (ToolStow automatically ignores `__MACOSX/` and `.DS_Store`, strips the single wrapper folder, and installs into `<data-dir>/tools/{manifest.id}/`):
    ```bash
    zip -r my-tool.zip my-tool/
    ```
 
 ### Packaging Limits & Security Rules
 
-- **Max upload size**: 50 MB default (configurable on host via `--max-upload-mb`).
+- **Max upload size**: 50 MB default (configurable on host via `--max-upload-mb` / `TOOLSTOW_MAX_UPLOAD_MB`).
 - **Max uncompressed size**: 200 MB total.
 - **Max file count**: 1,000 files per archive.
 - **Forbidden entries**: No symlinks, no `..` path traversal, no absolute paths (`/`), no Windows drive prefixes or backslashes (`\`), no duplicate normalized paths. Dot-prefixed entries at the top level (e.g. `.DS_Store`) are ignored/reserved.
@@ -67,6 +68,7 @@ Full example:
   "icon": "🎨",
   "entry": "index.html",
   "runtime": "static",
+  "draft": false,
   "themeAware": true,
   "sandbox": ["allow-scripts", "allow-downloads", "allow-forms"]
 }
@@ -84,7 +86,8 @@ Full example:
 | `tags` | `string[]` | No | `[]` | Search and filter tags (deduplicated; empty strings ignored). |
 | `icon` | `string` | No | `"🛠️"` | Emoji string, or a safe relative image path inside the tool directory (e.g. `"assets/icon.svg"`). Must exist if path-like. |
 | `entry` | `string` | No | `"index.html"` | Safe relative path to an existing regular HTML file (no leading `/`, `..`, `\`, or URL scheme). |
-| `runtime` | `"static"` | No | `"static"` | Phase 1 only supports `"static"`. Declaring `"script"` is rejected. |
+| `runtime` | `"static"` | No | `"static"` | Only `"static"` is currently supported. Declaring `"script"` is rejected. |
+| `draft` | `boolean` | No | `false` | Hugo-style visibility flag. When `true`, the tool is hidden from public `GET /api/tools` and returns `404` on `/t/{id}/*` for anonymous visitors; visible only to an authenticated Admin session or when the host runs with `--include-drafts`. |
 | `themeAware` | `boolean` | No | `false` | Set `true` if the tool listens for `toolstow:theme` messages. |
 | `sandbox` | `string[]` | No | `["allow-scripts", "allow-downloads", "allow-forms"]` | Requested iframe sandbox tokens, filtered by the host allowlist. |
 
@@ -114,8 +117,8 @@ Because tools run in an opaque origin (`Origin: null`):
    - `navigator.clipboard.writeText()` may reject inside a sandboxed iframe or non-HTTPS origin. Always provide a fallback using a temporary `<textarea>` + `document.execCommand("copy")`, and degrade gracefully if both are blocked.
 3. **File downloads**
    - Include `"allow-downloads"` in `manifest.json`'s `sandbox` array, and export files via `Blob` + `URL.createObjectURL()` + `<a download="filename">`.
-4. **No calls to ToolStow host write APIs**
-   - The host rejects `Origin: null` and cross-site requests on `POST /api/tools/upload` and `DELETE /api/tools/{id}`. Tools must not attempt to mutate host state.
+4. **No calls to ToolStow host admin APIs**
+   - All management endpoints under `/api/admin/*` require authentication and reject `Origin: null` and cross-site requests. Tools must not attempt to mutate host state or embed secrets.
 5. **Safe DOM rendering**
    - Prefer `textContent` and DOM element builders over `innerHTML` to avoid XSS when rendering user input.
 
@@ -133,20 +136,21 @@ When `themeAware: true` is declared in `manifest.json`:
 ```html
 <style>
   :root {
-    --accent: #2563eb;
-    --bg: #f8fafc;
-    --surface: #ffffff;
-    --text: #0f172a;
-    --muted: #64748b;
-    --border: #e2e8f0;
+    --accent: #18181b;
+    --bg: #ffffff;
+    --surface: #fafafa;
+    --text: #09090b;
+    --muted: #71717a;
+    --border: #e5e5e5;
   }
 
   :root[data-theme="dark"] {
-    --bg: #0f172a;
-    --surface: #1e293b;
-    --text: #f1f5f9;
-    --muted: #94a3b8;
-    --border: #334155;
+    --accent: #fafafa;
+    --bg: #09090b;
+    --surface: #111113;
+    --text: #fafafa;
+    --muted: #a1a1aa;
+    --border: #27272a;
   }
 
   body {
@@ -188,46 +192,85 @@ When `themeAware: true` is declared in `manifest.json`:
 
 ---
 
-## 6. Publishing & Updating via HTTP API (`curl`)
+## 6. Publishing & Managing Tools via HTTP API (`curl`)
 
-ToolStow defaults to `http://127.0.0.1:8080`. Local CLI / Agent requests without an `Origin` header are accepted directly (browser frontend requests additionally send `X-ToolStow-Client: 1`).
+ToolStow separates human administration from machine/AI automation using two distinct keys configured on the server:
 
-### Upload or Overwrite a Tool
+- **Always authenticate with `TOOLSTOW_API_KEY`** via the `Authorization: Bearer` header:
+  ```bash
+  export TOOLSTOW_URL="http://127.0.0.1:8080"
+  export TOOLSTOW_API_KEY="<your-api-key>"
+  ```
+- **NEVER** pass the API key in URL query parameters.
+- **NEVER** use `TOOLSTOW_ADMIN_KEY` in API scripts or `Authorization: Bearer` headers — `TOOLSTOW_ADMIN_KEY` is strictly for human login at `/admin` and is rejected as a Bearer token. Conversely, `TOOLSTOW_API_KEY` cannot log into `/admin` or modify site settings (`/api/admin/settings`).
+- If `TOOLSTOW_API_KEY` is unset on the host, Bearer authentication is disabled by default (fail-closed: returns `401` when `TOOLSTOW_ADMIN_KEY` is set, or `404` when both `TOOLSTOW_ADMIN_KEY` and `TOOLSTOW_API_KEY` are unset). Failed attempts are rate-limited (5 failures / 5 minutes -> `429`).
 
-Re-uploading a ZIP with the same `manifest.id` atomically replaces the existing tool and refreshes the registry immediately (no restart required):
+### List All Installed Tools (Including Drafts)
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  "$TOOLSTOW_URL/api/admin/tools"
+
+# Optional filtering by keyword, category, or tag:
+curl -sS \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  "$TOOLSTOW_URL/api/admin/tools?q=docker&category=运维&tag=cli"
+```
+
+*(Note: Public unauthenticated `GET /api/tools` returns only published tools with `draft: false`.)*
+
+### Upload or Overwrite a Tool (`.zip`)
+
+Re-uploading a ZIP with the same `manifest.id` atomically replaces the existing tool directory and refreshes the registry immediately (no restart required):
 
 ```bash
 # Package
 zip -r my-tool.zip my-tool/
 
 # Upload (returns HTTP 201 on create, HTTP 200 on overwrite update)
-curl -i -X POST http://127.0.0.1:8080/api/tools/upload \
+curl -i -X POST "$TOOLSTOW_URL/api/admin/tools/upload" \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
   -F "file=@my-tool.zip"
 ```
 
-### List / Filter Installed Tools
+### Toggle Draft / Published Status
+
+Atomically updates `"draft"` inside `manifest.json` on disk and refreshes the live registry immediately (returns HTTP `200` with the updated tool metadata, or `404` if not found):
 
 ```bash
-curl -s "http://127.0.0.1:8080/api/tools"
-curl -s "http://127.0.0.1:8080/api/tools?q=docker&category=运维&tag=cli"
+# Hide tool as draft
+curl -i -X PATCH "$TOOLSTOW_URL/api/admin/tools/my-tool" \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"draft": true}'
+
+# Publish tool publicly
+curl -i -X PATCH "$TOOLSTOW_URL/api/admin/tools/my-tool" \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"draft": false}'
 ```
 
 ### Delete a Tool
 
 ```bash
 # Returns HTTP 204 No Content on success, 404 if not found
-curl -i -X DELETE http://127.0.0.1:8080/api/tools/my-tool
+curl -i -X DELETE "$TOOLSTOW_URL/api/admin/tools/my-tool" \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY"
 ```
 
 ---
 
 ## 7. Pre-Flight Checklist for AI Agents
 
-Before packaging and uploading a generated tool, verify:
+Before packaging and publishing a generated tool, verify:
 
 - [ ] `manifest.json` is valid JSON, `id` matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, and `runtime` is `"static"`.
+- [ ] `"draft"` is set appropriately (`false` to publish immediately, or `true` to stage for admin review first).
 - [ ] `entry` exists inside the tool folder (e.g. `index.html`) and uses no external CDN URLs unless strictly required.
 - [ ] Zero unguarded `localStorage`, `sessionStorage`, or `document.cookie` calls.
 - [ ] If `themeAware: true`, default `:root` variables are defined, `toolstow:theme` is handled, and `toolstow:ready` is posted to `window.parent`.
 - [ ] If the tool exports files, `"allow-downloads"` is included in `sandbox`.
 - [ ] If the tool copies text, a clipboard fallback is implemented.
+- [ ] API calls use `/api/admin/tools*` with `-H "Authorization: Bearer $TOOLSTOW_API_KEY"` (never query params, never `TOOLSTOW_ADMIN_KEY`).
