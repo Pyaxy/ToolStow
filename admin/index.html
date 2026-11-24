@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ToolStow Admin</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <!-- Initial Session Boot Loading -->
+  <div id="boot-view" class="boot-view" aria-live="polite">
+    <div class="boot-spinner" aria-hidden="true"></div>
+    <span>正在检查会话状态...</span>
+  </div>
+
+  <!-- Single-Key Login View (CPA management.html inspired) -->
+  <main id="login-view" class="login-shell" hidden>
+    <div class="login-topbar">
+      <a href="/" class="btn btn-sm">← 返回站点</a>
+      <button id="login-theme-toggle" class="btn btn-sm" type="button" aria-label="切换明暗模式">暗色</button>
+    </div>
+
+    <section class="login-card" aria-labelledby="login-heading">
+      <div class="login-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">ToolStow</span>
+        <span class="mono-badge">ADMIN</span>
+      </div>
+
+      <h1 id="login-heading" class="login-title">管理员登录</h1>
+      <p class="login-subtitle">单密钥认证，输入环境变量中配置的 <code>TOOLSTOW_ADMIN_KEY</code>。</p>
+
+      <div id="login-disabled-notice" class="alert alert-muted" hidden>
+        管理后台当前未启用。请在服务端配置 <code>TOOLSTOW_ADMIN_KEY</code> 后重启服务。
+      </div>
+
+      <div id="login-error" class="alert alert-error" role="alert" hidden></div>
+
+      <form id="login-form" class="login-form" novalidate>
+        <div class="field">
+          <label for="admin-key-input" class="field-label">Admin Key</label>
+          <div class="password-wrap">
+            <input
+              id="admin-key-input"
+              name="key"
+              type="password"
+              class="input"
+              placeholder="输入 Admin Key..."
+              autocomplete="current-password"
+              spellcheck="false"
+              required
+            >
+            <button
+              id="toggle-key-visibility"
+              class="password-toggle"
+              type="button"
+              aria-label="显示或隐藏密钥"
+              aria-pressed="false"
+            >显示</button>
+          </div>
+        </div>
+
+        <button id="login-submit-btn" class="btn btn-primary btn-block" type="submit">登录后台</button>
+      </form>
+
+      <div class="login-footer">
+        <span class="muted-note">会话通过 HttpOnly Cookie 维持，24 小时后过期</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- Authenticated Admin Dashboard -->
+  <div id="dashboard-view" class="dashboard-shell" hidden>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-left">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">ToolStow Admin</span>
+          <span class="mono-badge">CONSOLE</span>
+        </div>
+
+        <div class="topbar-actions">
+          <a href="/" class="btn btn-sm">查看站点 ↗</a>
+          <button id="dash-theme-toggle" class="btn btn-sm" type="button" aria-label="切换明暗模式">暗色</button>
+          <button id="logout-btn" class="btn btn-sm" type="button">退出登录</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="global-toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <main class="container">
+      <!-- Monochrome Metric Strip -->
+      <section class="stats-grid" aria-label="工具概览">
+        <div class="stat-card">
+          <span class="stat-label">全部工具</span>
+          <span id="stat-total" class="stat-value">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">已发布</span>
+          <span id="stat-published" class="stat-value">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">草稿</span>
+          <span id="stat-draft" class="stat-value">0</span>
+        </div>
+      </section>
+
+      <!-- Upload Zone Card -->
+      <section class="card" aria-labelledby="upload-card-title">
+        <div class="card-header">
+          <div>
+            <h2 id="upload-card-title" class="card-title">上传工具包</h2>
+            <p class="card-desc">拖入或选择包含 <code>manifest.json</code> 的 <code>.zip</code> 压缩包（相同 <code>id</code> 自动覆盖更新）。</p>
+          </div>
+          <button id="upload-pick-btn" class="btn btn-primary btn-sm" type="button">选择 .zip 文件</button>
+        </div>
+
+        <input id="upload-file-input" type="file" accept=".zip,application/zip" hidden>
+
+        <div
+          id="upload-dropzone"
+          class="dropzone"
+          tabindex="0"
+          role="button"
+          aria-label="拖拽或点击上传 .zip 工具包"
+        >
+          <div class="dropzone-title">拖拽 <code>.zip</code> 到此处，或点击选择文件</div>
+          <div class="dropzone-sub">后端自动校验 manifest、路径安全与解压限额</div>
+        </div>
+
+        <div id="upload-status" class="inline-feedback" role="status" aria-live="polite" hidden></div>
+      </section>
+
+      <!-- Tools Manager Card -->
+      <section class="card" aria-labelledby="tools-card-title">
+        <div class="card-header card-header-wrap">
+          <div>
+            <h2 id="tools-card-title" class="card-title">工具管理</h2>
+            <p class="card-desc">控制工具发布状态、在线预览草稿或移除已安装工具。</p>
+          </div>
+
+          <div class="tools-controls">
+            <div class="filter-tabs" role="tablist" aria-label="状态筛选">
+              <button
+                type="button"
+                class="filter-tab active"
+                data-filter="all"
+                role="tab"
+                aria-selected="true"
+              >
+                <span>全部</span>
+                <span id="tab-count-all" class="tab-count">0</span>
+              </button>
+              <button
+                type="button"
+                class="filter-tab"
+                data-filter="published"
+                role="tab"
+                aria-selected="false"
+              >
+                <span>已发布</span>
+                <span id="tab-count-published" class="tab-count">0</span>
+              </button>
+              <button
+                type="button"
+                class="filter-tab"
+                data-filter="draft"
+                role="tab"
+                aria-selected="false"
+              >
+                <span>草稿</span>
+                <span id="tab-count-draft" class="tab-count">0</span>
+              </button>
+            </div>
+
+            <div class="tools-search-row">
+              <input
+                id="tools-search-input"
+                type="search"
+                class="input input-sm"
+                placeholder="筛选名称、ID、分类..."
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="筛选工具"
+              >
+              <button id="refresh-tools-btn" class="btn btn-sm" type="button">刷新</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="tools-table-wrap" class="table-wrap">
+          <table class="tools-table">
+            <thead>
+              <tr>
+                <th>工具</th>
+                <th>ID</th>
+                <th>版本</th>
+                <th>分类</th>
+                <th>状态</th>
+                <th class="col-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tools-tbody"></tbody>
+          </table>
+        </div>
+
+        <div id="tools-empty" class="empty-box" hidden>暂无符合条件的工具。</div>
+      </section>
+
+      <!-- Two-Column Lower Grid: Site Settings + AI API Reference -->
+      <div class="lower-grid">
+        <!-- Site Settings Card -->
+        <section class="card" aria-labelledby="settings-card-title">
+          <div class="card-header">
+            <div>
+              <h2 id="settings-card-title" class="card-title">站点设置</h2>
+              <p class="card-desc">持久化至 <code>settings.json</code>，立即生效于公开站点。</p>
+            </div>
+          </div>
+
+          <form id="settings-form" class="settings-form" novalidate>
+            <div class="field">
+              <label for="setting-site-title" class="field-label">站点标题</label>
+              <input
+                id="setting-site-title"
+                type="text"
+                class="input"
+                maxlength="80"
+                placeholder="ToolStow"
+                required
+              >
+            </div>
+
+            <div class="field">
+              <label for="setting-site-desc" class="field-label">站点描述</label>
+              <textarea
+                id="setting-site-desc"
+                class="input textarea"
+                rows="3"
+                maxlength="240"
+                placeholder="Personal Micro-App Toolbox"
+              ></textarea>
+            </div>
+
+            <div class="field">
+              <label for="setting-accent-text" class="field-label">默认强调色（子工具主题同步）</label>
+              <div class="accent-row">
+                <label class="color-swatch-box" title="选择颜色">
+                  <span id="setting-accent-preview" class="color-swatch-dot" aria-hidden="true"></span>
+                  <input id="setting-accent-picker" type="color" value="#18181b" aria-label="选择默认强调色">
+                </label>
+                <input
+                  id="setting-accent-text"
+                  type="text"
+                  class="input input-mono"
+                  maxlength="7"
+                  placeholder="#18181b"
+                  spellcheck="false"
+                  required
+                >
+                <div class="accent-presets" aria-label="常用色值">
+                  <button type="button" class="preset-dot" data-color="#18181b" title="#18181b" aria-label="#18181b"></button>
+                  <button type="button" class="preset-dot" data-color="#52525b" title="#52525b" aria-label="#52525b"></button>
+                  <button type="button" class="preset-dot" data-color="#2563eb" title="#2563eb" aria-label="#2563eb"></button>
+                  <button type="button" class="preset-dot" data-color="#0f766e" title="#0f766e" aria-label="#0f766e"></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-footer">
+              <button id="save-settings-btn" class="btn btn-primary" type="submit">保存设置</button>
+              <span id="settings-feedback" class="inline-status" role="status" aria-live="polite"></span>
+            </div>
+          </form>
+        </section>
+
+        <!-- AI API Reference Card -->
+        <section class="card" aria-labelledby="api-ref-title">
+          <div class="card-header">
+            <div>
+              <h2 id="api-ref-title" class="card-title">AI / 自动化 API 参考</h2>
+              <p class="card-desc">使用 <code>Authorization: Bearer $TOOLSTOW_API_KEY</code> 访问（不可用于登录后台或修改站点设置）。</p>
+            </div>
+          </div>
+
+          <ul class="api-list">
+            <li class="api-item">
+              <div class="api-sig">
+                <span class="http-method">GET</span>
+                <code class="api-path">/api/admin/tools</code>
+              </div>
+              <span class="api-desc">列出所有工具（包含草稿）</span>
+            </li>
+            <li class="api-item">
+              <div class="api-sig">
+                <span class="http-method">POST</span>
+                <code class="api-path">/api/admin/tools/upload</code>
+              </div>
+              <span class="api-desc"><code>multipart/form-data</code> 字段 <code>file</code> 上传或覆盖 .zip</span>
+            </li>
+            <li class="api-item">
+              <div class="api-sig">
+                <span class="http-method">PATCH</span>
+                <code class="api-path">/api/admin/tools/{id}</code>
+              </div>
+              <span class="api-desc">JSON <code>{"draft": true | false}</code> 切换发布状态</span>
+            </li>
+            <li class="api-item">
+              <div class="api-sig">
+                <span class="http-method">DELETE</span>
+                <code class="api-path">/api/admin/tools/{id}</code>
+              </div>
+              <span class="api-desc">删除指定工具及其目录</span>
+            </li>
+          </ul>
+
+          <div class="code-box">
+            <div class="code-box-head">
+              <span class="code-box-label">cURL 示例</span>
+              <button id="copy-curl-btn" class="btn-ghost" type="button">复制</button>
+            </div>
+            <pre id="curl-example" class="code-pre">curl -X POST \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  -F "file=@my-tool.zip" \
+  http://127.0.0.1:8080/api/admin/tools/upload</pre>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Monochrome Delete Confirmation Dialog -->
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title">
+    <div class="dialog-body">
+      <h3 id="confirm-title" class="dialog-title">确认删除工具</h3>
+      <p id="confirm-message" class="dialog-message"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel-btn" class="btn btn-sm" type="button">取消</button>
+        <button id="confirm-ok-btn" class="btn btn-danger btn-sm" type="button">确认删除</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="/admin/admin.js"></script>
+</body>
+</html>

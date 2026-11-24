@@ -10,31 +10,51 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="topbar-left">
-        <button id="sidebar-toggle" class="btn icon-btn mobile-only" type="button" aria-label="切换导航栏" aria-expanded="false">☰</button>
-        <a href="#" id="brand-link" class="brand">ToolStow</a>
+        <button
+          id="sidebar-toggle"
+          class="btn icon-btn mobile-only"
+          type="button"
+          aria-label="切换导航栏"
+          aria-expanded="false"
+          aria-controls="sidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        <a href="#" id="brand-link" class="brand" aria-label="返回工具箱首页">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span id="brand-title">ToolStow</span>
+        </a>
       </div>
 
       <div class="search-wrap">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
         <input
           id="search-input"
           type="search"
-          placeholder="搜索工具（名称、描述、标签、ID）..."
+          placeholder="搜索工具名称、描述、标签或 ID..."
           autocomplete="off"
+          spellcheck="false"
           aria-label="搜索工具"
         >
         <kbd class="search-kbd" aria-hidden="true">⌘K</kbd>
       </div>
 
       <div class="topbar-actions">
-        <button id="upload-trigger" class="btn btn-primary" type="button">上传 .zip</button>
-        <input id="upload-input" type="file" accept=".zip,application/zip" hidden>
-
-        <label class="accent-picker" title="选择强调色">
-          <span class="sr-only">强调色</span>
-          <input id="accent-input" type="color" value="#2563eb" aria-label="强调色">
+        <label class="accent-picker" title="子工具主题强调色">
+          <span class="sr-only">子工具强调色</span>
+          <span id="accent-swatch" class="accent-swatch" aria-hidden="true"></span>
+          <input id="accent-input" type="color" value="#18181b" aria-label="子工具强调色">
         </label>
 
-        <button id="theme-toggle" class="btn" type="button" aria-label="切换明暗模式">暗色</button>
+        <button id="theme-toggle" class="btn btn-sm" type="button" aria-label="切换明暗模式">暗色</button>
+
+        <a id="admin-link" class="btn btn-primary btn-sm" href="/admin" hidden>管理 / 设置</a>
       </div>
     </header>
 
@@ -47,7 +67,7 @@
         <section class="sidebar-section">
           <div class="section-header">
             <h2>分类</h2>
-            <button id="refresh-list-btn" class="btn btn-sm" type="button" title="重新加载列表">刷新</button>
+            <button id="refresh-list-btn" class="btn-ghost" type="button" title="重新加载列表">刷新</button>
           </div>
           <ul id="category-list" class="nav-list"></ul>
         </section>
@@ -55,7 +75,7 @@
         <section class="sidebar-section">
           <div class="section-header">
             <h2>标签</h2>
-            <button id="clear-filters-btn" class="btn btn-sm" type="button" hidden>重置筛选</button>
+            <button id="clear-filters-btn" class="btn-ghost" type="button" hidden>重置</button>
           </div>
           <div id="tag-list" class="tag-list"></div>
         </section>
@@ -63,47 +83,50 @@
         <section class="sidebar-section tools-section">
           <div class="section-header">
             <h2>工具列表</h2>
-            <span id="tools-count" class="muted">0</span>
+            <span id="tools-count" class="mono-badge">0</span>
           </div>
           <ul id="tool-list" class="tool-list"></ul>
-        </section>
-
-        <section class="sidebar-section">
-          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="拖拽或点击上传 ZIP 工具包">
-            拖拽 <code>.zip</code> 到此处或点击上传
-          </div>
         </section>
       </aside>
 
       <main class="main-pane">
         <section id="empty-state" class="empty-state">
-          <h1 id="empty-title">选择一个工具开始使用</h1>
-          <p id="empty-desc" class="muted">
-            从左侧列表选择已安装的工具，或将符合规范的 <code>.zip</code> 工具包拖入窗口上传（支持同 ID 覆盖更新）。
-          </p>
-          <div class="empty-actions">
-            <button id="empty-upload-btn" class="btn btn-primary" type="button">上传 .zip 工具包</button>
+          <div class="empty-hero">
+            <div class="empty-hero-top">
+              <h1 id="empty-title">ToolStow</h1>
+              <span id="empty-count" class="mono-badge">0 tools</span>
+            </div>
+            <p id="empty-desc" class="empty-desc">
+              从左侧列表选择一个工具，或按 <kbd class="inline-kbd">⌘K</kbd> 快速检索。
+            </p>
           </div>
+          <div id="empty-grid" class="tool-grid" aria-label="可用工具"></div>
         </section>
 
         <section id="tool-view" class="tool-view" hidden>
           <div class="tool-toolbar">
             <div class="tool-meta">
-              <span id="active-tool-icon" class="tool-icon"></span>
+              <button
+                id="mobile-back-btn"
+                class="btn btn-sm mobile-only"
+                type="button"
+                aria-label="返回工具列表"
+              >← 列表</button>
+              <span id="active-tool-icon" class="tool-icon tool-icon-lg"></span>
               <div class="tool-meta-text">
                 <div class="tool-title-row">
                   <h1 id="active-tool-name"></h1>
-                  <span id="active-tool-version" class="badge"></span>
-                  <span id="active-tool-theme-badge" class="badge badge-accent" hidden>主题同步</span>
+                  <span id="active-tool-id" class="mono-badge"></span>
+                  <span id="active-tool-version" class="mono-badge"></span>
+                  <span id="active-tool-theme-badge" class="mono-badge mono-badge-accent" hidden>theme-sync</span>
                 </div>
-                <p id="active-tool-desc" class="muted"></p>
+                <p id="active-tool-desc" class="tool-meta-desc"></p>
               </div>
             </div>
 
             <div class="tool-actions">
-              <button id="reload-tool-btn" class="btn" type="button">刷新</button>
-              <a id="standalone-link" class="btn" href="#" target="_blank" rel="noopener noreferrer">独立打开</a>
-              <button id="delete-tool-btn" class="btn btn-danger" type="button">删除</button>
+              <button id="reload-tool-btn" class="btn btn-sm" type="button">刷新</button>
+              <a id="standalone-link" class="btn btn-sm" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
             </div>
           </div>
 
@@ -112,10 +135,6 @@
         </section>
       </main>
     </div>
-  </div>
-
-  <div id="drop-overlay" class="drop-overlay" hidden>
-    <div class="drop-overlay-box">松开以上传 <code>.zip</code> 工具包</div>
   </div>
 
   <script type="module" src="./app.js"></script>
