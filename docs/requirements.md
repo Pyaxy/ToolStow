@@ -1,4 +1,4 @@
-# ToolStow 项目需求与技术规格书（v0.2）
+# ToolStow 项目需求与技术规格书（v0.2.1）
 
 ## 1. 项目背景与定位
 
@@ -270,12 +270,15 @@ data/
 
 ```text
 toolstow/
-├── Cargo.toml
+├── Cargo.toml                # Crate 清单（v0.2.1，Rust Edition 2024）
 ├── Cargo.lock
-├── REQUIREMENTS.md
+├── README.md                 # 项目总览与快速开始
+├── CHANGELOG.md              # 版本变更记录
 ├── .env.example              # 环境变量与双密钥生成示例模板
 ├── .gitignore                # 忽略 /target, /tools, /data, .env 等运行产物
 ├── docs/
+│   ├── requirements.md       # 完整项目需求与技术规格书
+│   ├── deployment.md         # VPS 部署、反代 HTTPS 与自定义主题指南
 │   └── ai-tool-skill.md      # 供 AI / Agent 读取的工具开发、草稿与 API 发布规范
 ├── frontend/                 # 极简黑白只读公共前端（内嵌进二进制，可被 data/theme/ 覆盖）
 │   ├── index.html
