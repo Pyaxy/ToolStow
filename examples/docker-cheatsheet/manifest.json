@@ -1,0 +1,13 @@
+{
+  "id": "docker-cheatsheet",
+  "name": "Docker 常用命令速查",
+  "version": "1.0.0",
+  "description": "Docker 容器、镜像、Compose、日志排查与空间清理常用命令，支持即时搜索与一键复制",
+  "category": "运维",
+  "tags": ["docker", "devops", "cli", "cheatsheet"],
+  "icon": "🐳",
+  "entry": "index.html",
+  "runtime": "static",
+  "themeAware": true,
+  "sandbox": ["allow-scripts", "allow-forms"]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "dynamic-favicon",
+  "name": "动态强调色 Favicon 生成器",
+  "version": "1.0.0",
+  "description": "随主站主题实时同步强调色，支持文字/Emoji 与背景定制并一键导出 SVG / PNG 图标",
+  "category": "设计",
+  "tags": ["icon", "favicon", "svg", "png"],
+  "icon": "🎨",
+  "entry": "index.html",
+  "runtime": "static",
+  "themeAware": true,
+  "sandbox": ["allow-scripts", "allow-downloads", "allow-forms"]
+}
