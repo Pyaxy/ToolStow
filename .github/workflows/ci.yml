@@ -8,30 +8,33 @@ on:
   pull_request:
     branches: [main]
 
-# 3. 并发控制：同一个分支连续快速 push 时，自动取消上一次还没跑完的旧任务，省时间
+# 3. 最小权限：CI 只需要只读仓库代码
+permissions:
+  contents: read
+
+# 4. 并发控制：同一个分支连续快速 push 时，自动取消上一次还没跑完的旧任务，省时间
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 4. 具体要执行的任务
+# 5. 具体要执行的任务
 jobs:
   check:
     name: Test & Clippy
-    # 向 GitHub 申请一台最新的 Ubuntu 虚拟机
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      # 步骤 1：把你仓库的代码拉进这台虚拟机（否则里面是空的）
+      # 步骤 1：拉取仓库代码
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # 步骤 2：安装最新稳定版 Rust 工具链（因为 ToolStow 用了 Edition 2024），并附带 clippy 组件
+      # 步骤 2：安装最新稳定版 Rust 工具链（Edition 2024），并附带 clippy 组件
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
-      # 步骤 3：缓存 Cargo 依赖和 target 编译产物（第二次跑能快几倍）
+      # 步骤 3：缓存 Cargo 依赖和 target 编译产物
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
 
@@ -43,8 +46,13 @@ jobs:
       - name: Run clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
-      # 步骤 6：使用 Skill 配套脚本校验所有内置示例工具与示例主题
-      - name: Validate example tools and themes
+      # 步骤 6：检查内置前端 JS 与全部 Skill/打包 Python 脚本语法
+      - name: Check built-in JS and Python scripts
         run: |
-          python3 skills/toolstow-tool/scripts/validate.py --strict --strict-dir-name examples/docker-cheatsheet examples/dynamic-favicon
-          python3 skills/toolstow-theme/scripts/validate.py --strict --strict-dir-name examples/themes/*
+          node --version
+          node --check frontend/app.js admin/admin.js ui/v1/theme.js
+          python3 -m py_compile skills/toolstow-tool/scripts/*.py skills/toolstow-theme/scripts/*.py scripts/bundle_examples.py
+
+      # 步骤 7：与 Release 共用同一打包入口，自动发现并校验/打包全部示例主题与工具合集
+      - name: Validate and bundle example tools and themes
+        run: python3 scripts/bundle_examples.py --require-node --out-dir /tmp/toolstow-ci-bundles
