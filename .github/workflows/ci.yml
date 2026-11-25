@@ -23,7 +23,7 @@ jobs:
     steps:
       # 步骤 1：把你仓库的代码拉进这台虚拟机（否则里面是空的）
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # 步骤 2：安装最新稳定版 Rust 工具链（因为 ToolStow 用了 Edition 2024），并附带 clippy 组件
       - name: Install Rust toolchain
