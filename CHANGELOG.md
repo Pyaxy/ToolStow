@@ -2,6 +2,25 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.3.1] - 2026-11-26
+
+### Added
+- **Self-contained Agent Skills (`skills/toolstow-tool/`, `skills/toolstow-theme/`)**:
+  - Packaged ToolStow's tool and theme specifications as portable Agent Skill folders (`SKILL.md` + zero-dependency Python 3.9+ `scripts/validate.py`, `pack.py`, and `publish.py`) covering manifest/theme schema validation, sandbox/XSS/SVG safety checks, optional `node --check`, clean flat `.zip` packaging, and `409`-safe Bearer API publishing.
+- **Unified CI & Release bundling (`scripts/bundle_examples.py`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/release.yml`)**:
+  - Auto-discovers bundled example themes and plugins to validate and package `toolstow-themes.zip` and `toolstow-plugins.zip` identically across PR CI and Release builds.
+  - Added CI syntax checks for built-in frontend JS (`frontend/app.js`, `admin/admin.js`, `ui/v1/theme.js`) and all skill/bundling Python scripts.
+  - Hardened Release pipeline with a `preflight` tag-vs-`Cargo.toml` version check, unpacked single-binary smoke tests (`--version`, `/`, `/ui/v1/theme.js`) across all 4 native platforms, artifact completeness checks, narrowed `GITHUB_TOKEN` permissions, automatic `prerelease` detection, and categorized GitHub Release notes (`.github/release.yml`).
+
+### Changed
+- **Smaller release binaries (`Cargo.toml`)**: Added `[profile.release]` (`strip = true`, `lto = "thin"`, `codegen-units = 1`) to shrink single-binary distribution size.
+- **Documentation (`README.md`)**: Rewrote `README.md` to highlight AI autonomous tool/theme creation via Agent Skills and prioritize direct GitHub Releases installation.
+- Bumped crate version to `0.3.1` (`toolstow --version`).
+
+### Fixed
+- **Full-viewport background height (`/ui/v1/toolstow.css`)**: Set `body { min-height: 100vh; min-height: 100dvh; }` so themes and short embedded plugins with `body` background textures fill the entire viewport without exposing a solid bottom band.
+- **Narrow mobile default shell (`frontend/style.css`)**: Wrapped `.topbar` cleanly onto a second row below `640px` so the search bar gets full width even when the authenticated admin link is shown, aligned the mobile sidebar drawer cleanly beneath `.topbar`, and prevented long unbroken categories/tags from overflowing.
+
 ## [0.3.0] - 2026-11-25
 
 ### Added
