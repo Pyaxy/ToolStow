@@ -13,6 +13,35 @@ const STORAGE_KEY_ACCENT = "toolstow:accent";
 const FALLBACK_ACCENT = "#18181b";
 const DEFAULT_SITE_TITLE = "ToolStow";
 const DEFAULT_SITE_DESC = "Personal Micro-App Toolbox";
+const SYNCED_TOKEN_NAMES = [
+  "--ts-canvas",
+  "--ts-surface",
+  "--ts-surface-hover",
+  "--ts-border",
+  "--ts-border-strong",
+  "--ts-ink",
+  "--ts-ink-secondary",
+  "--ts-ink-muted",
+  "--ts-inverted-bg",
+  "--ts-inverted-bg-hover",
+  "--ts-inverted-ink",
+  "--ts-accent",
+  "--ts-danger",
+  "--ts-danger-bg",
+  "--ts-danger-border",
+  "--ts-success",
+  "--ts-code-bg",
+  "--ts-code-ink",
+  "--ts-radius-sm",
+  "--ts-radius-md",
+  "--ts-space-1",
+  "--ts-space-2",
+  "--ts-space-3",
+  "--ts-space-4",
+  "--ts-space-5",
+  "--ts-font-sans",
+  "--ts-font-mono",
+];
 
 const state = {
   site: {
@@ -27,6 +56,7 @@ const state = {
   filteredTools: [],
   selectedId: null,
   activeIframe: null,
+  activeIframeReady: false,
   filters: {
     q: "",
     category: "",
@@ -131,7 +161,7 @@ function initTheme() {
 
 function applyThemeToHost() {
   document.documentElement.dataset.theme = state.theme.mode;
-  document.documentElement.style.setProperty("--accent", state.theme.accent);
+  document.documentElement.style.setProperty("--ts-accent", state.theme.accent);
   els.accentInput.value = state.theme.accent;
   els.accentSwatch.style.backgroundColor = state.theme.accent;
   els.themeToggle.textContent = state.theme.mode === "dark" ? "亮色" : "暗色";
@@ -188,9 +218,22 @@ function getSelectedTool() {
   );
 }
 
+function collectThemeTokens() {
+  const computed = window.getComputedStyle(document.documentElement);
+  const tokens = {};
+  for (const name of SYNCED_TOKEN_NAMES) {
+    const val = computed.getPropertyValue(name).trim();
+    if (val) {
+      tokens[name] = val;
+    }
+  }
+  return tokens;
+}
+
 function postThemeToActiveIframe() {
   const tool = getSelectedTool();
-  if (!tool || !tool.themeAware) return;
+  const shouldSync = Boolean((tool && tool.themeAware === true) || state.activeIframeReady);
+  if (!shouldSync) return;
   const iframe = state.activeIframe;
   if (!iframe || !iframe.contentWindow) return;
 
@@ -200,6 +243,7 @@ function postThemeToActiveIframe() {
       payload: {
         mode: state.theme.mode,
         accent: state.theme.accent,
+        tokens: collectThemeTokens(),
       },
     },
     "*"
@@ -624,7 +668,7 @@ function renderActiveToolHeader(tool) {
   els.activeToolId.textContent = tool.id;
   els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
   els.activeToolVersion.hidden = !tool.version;
-  els.activeToolThemeBadge.hidden = !tool.themeAware;
+  els.activeToolThemeBadge.hidden = !(tool.themeAware || state.activeIframeReady);
   els.activeToolDesc.textContent = tool.description || "";
   els.activeToolDesc.hidden = !tool.description;
 
@@ -653,11 +697,24 @@ function renderActiveToolHeader(tool) {
   els.activeToolTags.replaceChildren(tagFrag);
 }
 
+function buildIframeUrl(entryUrl, cacheBust = false) {
+  const url = new URL(entryUrl, window.location.origin);
+  url.searchParams.set("theme", state.theme.mode);
+  url.searchParams.set("accent", state.theme.accent);
+  if (cacheBust) {
+    url.searchParams.set("_ts", String(Date.now()));
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 function mountToolIframe(tool, cacheBust = false) {
   if (!isSafeToolUrl(tool.entryUrl)) {
     showStatus(`工具入口路径无效：${tool.id}`, "error");
     return;
   }
+
+  state.activeIframeReady = false;
+  els.activeToolThemeBadge.hidden = !tool.themeAware;
 
   const iframe = document.createElement("iframe");
   iframe.className = "tool-iframe";
@@ -671,10 +728,7 @@ function mountToolIframe(tool, cacheBust = false) {
     }
   });
 
-  const targetUrl = cacheBust
-    ? `${tool.entryUrl}${tool.entryUrl.includes("?") ? "&" : "?"}_ts=${Date.now()}`
-    : tool.entryUrl;
-  iframe.src = targetUrl;
+  iframe.src = buildIframeUrl(tool.entryUrl, cacheBust);
 
   state.activeIframe = iframe;
   els.iframeHost.replaceChildren(iframe);
@@ -715,6 +769,7 @@ function selectTool(id, { updateHash = true, forceReload = false } = {}) {
 function clearSelection(updateHash = true) {
   state.selectedId = null;
   state.activeIframe = null;
+  state.activeIframeReady = false;
   els.iframeHost.replaceChildren();
   els.toolView.hidden = true;
   els.emptyState.hidden = false;
@@ -832,10 +887,12 @@ function bindEvents() {
     if (tool) mountToolIframe(tool, true);
   });
 
-  // Handshake from theme-aware child tool iframe
+  // Handshake from child tool iframe (works with or without manifest themeAware: true)
   window.addEventListener("message", (event) => {
     if (!state.activeIframe || event.source !== state.activeIframe.contentWindow) return;
     if (event.data && event.data.type === "toolstow:ready") {
+      state.activeIframeReady = true;
+      els.activeToolThemeBadge.hidden = false;
       postThemeToActiveIframe();
     }
   });
