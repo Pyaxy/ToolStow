@@ -1,21 +1,64 @@
 name: Release
 
-# 1. 只在推送 v 开头的版本 Tag 时触发（例如 v0.3.0）
+# 1. 只在推送 v 开头的版本 Tag 时触发（例如 v0.3.0 或 v0.4.0-rc.1）
 on:
   push:
     tags:
       - "v*"
 
-# 2. 赋予内置 GITHUB_TOKEN 创建 Release 和上传附件的权限
+# 2. 最小权限：全局只读，仅在最终发布 Release 的 job 上开启 contents: write
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # =========================================================
-  # 任务 1：多平台矩阵并行编译 Rust 单二进制
+  # 任务 0：发版前校验（校验 Tag 格式且必须与 Cargo.toml 版本号一致）
+  # =========================================================
+  preflight:
+    name: Verify Tag & Version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check tag matches Cargo.toml version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          from pathlib import Path
+
+          tag = os.environ["TAG_NAME"]
+          if not re.match(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$", tag):
+              print(f"ERROR: invalid release tag '{tag}' (expected vX.Y.Z or vX.Y.Z-pre)", file=sys.stderr)
+              sys.exit(1)
+
+          cargo_toml = Path("Cargo.toml").read_text(encoding="utf-8")
+          m = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', cargo_toml)
+          if not m:
+              print("ERROR: could not find package version in Cargo.toml", file=sys.stderr)
+              sys.exit(1)
+
+          cargo_ver = m.group(1)
+          tag_ver = tag[1:]
+          if tag_ver != cargo_ver:
+              print(
+                  f"ERROR: git tag '{tag}' (version '{tag_ver}') does not match "
+                  f"Cargo.toml version '{cargo_ver}'",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          print(f"OK: tag '{tag}' matches Cargo.toml version '{cargo_ver}'")
+          PY
+
+  # =========================================================
+  # 任务 1：多平台矩阵并行编译 Rust 单二进制 + 解压冒烟验收
   # =========================================================
   build-binaries:
     name: Build (${{ matrix.name }})
+    needs: [preflight]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -37,7 +80,6 @@ jobs:
             target: aarch64-apple-darwin
             install_musl: false
 
-          # 新增：Windows x64 (.exe)
           - name: windows-amd64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -77,6 +119,52 @@ jobs:
           cp README.md LICENSE .env.example staging/
           tar -czf "dist/toolstow-${{ github.ref_name }}-${{ matrix.name }}.tar.gz" -C staging .
 
+      # Linux / macOS：在干净空临时目录解压并验证 --version 与单二进制内嵌前端
+      - name: Smoke-test unpacked binary (Unix)
+        if: runner.os != 'Windows'
+        env:
+          ARCHIVE: dist/toolstow-${{ github.ref_name }}-${{ matrix.name }}.tar.gz
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          expected_ver="${TAG_NAME#v}"
+          smoke_dir="$(mktemp -d)"
+          pid=""
+          cleanup() {
+            if [ -n "$pid" ]; then
+              kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+            fi
+            rm -rf "$smoke_dir"
+          }
+          trap cleanup EXIT
+
+          tar -xzf "$ARCHIVE" -C "$smoke_dir"
+          ver_out="$("$smoke_dir/toolstow" --version)"
+          echo "Binary version: $ver_out"
+          [[ "$ver_out" == *"$expected_ver"* ]]
+
+          (cd "$smoke_dir" && ./toolstow --host 127.0.0.1 --port 18080 --data-dir "$smoke_dir/data" >"$smoke_dir/server.log" 2>&1) &
+          pid=$!
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/ >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "ERROR: toolstow failed to start:" >&2
+            cat "$smoke_dir/server.log" >&2 || true
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:18080/ | grep -qi "<html"
+          curl -fsS http://127.0.0.1:18080/ui/v1/theme.js | grep -q "ToolStow"
+          echo "Smoke test passed for $ARCHIVE"
+
       # Windows 打包成 .zip（二进制叫 toolstow.exe）
       - name: Package binary archive (Windows)
         if: runner.os == 'Windows'
@@ -87,48 +175,107 @@ jobs:
           Copy-Item README.md, LICENSE, .env.example staging/
           Compress-Archive -Path staging\* -DestinationPath "dist/toolstow-${{ github.ref_name }}-${{ matrix.name }}.zip"
 
-      # 同时匹配 .tar.gz 和 .zip
+      # Windows：在干净空临时目录解压并验证 --version 与单二进制内嵌前端
+      - name: Smoke-test unpacked binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ARCHIVE: dist/toolstow-${{ github.ref_name }}-${{ matrix.name }}.zip
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedVer = $env:TAG_NAME.TrimStart("v")
+          $smokeDir = Join-Path ([System.IO.Path]::GetTempPath()) ("toolstow-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+          $proc = $null
+          try {
+            Expand-Archive -Path $env:ARCHIVE -DestinationPath $smokeDir -Force
+            $bin = Join-Path $smokeDir "toolstow.exe"
+            $verOut = (& $bin --version) -join "`n"
+            Write-Host "Binary version: $verOut"
+            if ($verOut -notmatch [regex]::Escape($expectedVer)) {
+              throw "Expected version '$expectedVer' in '$verOut'"
+            }
+
+            $dataDir = Join-Path $smokeDir "data"
+            $proc = Start-Process -FilePath $bin -WorkingDirectory $smokeDir -ArgumentList @("--host", "127.0.0.1", "--port", "18080", "--data-dir", $dataDir) -PassThru -NoNewWindow
+
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              if ($proc.HasExited) {
+                throw "toolstow.exe exited prematurely with code $($proc.ExitCode)"
+              }
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/" -TimeoutSec 2
+                if ($r.StatusCode -eq 200) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $ready) {
+              throw "toolstow.exe did not become ready on http://127.0.0.1:18080/"
+            }
+
+            $rootResp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/" -TimeoutSec 5
+            if ($rootResp.StatusCode -ne 200 -or $rootResp.Content -notmatch "(?i)<html") {
+              throw "Unexpected root response from toolstow.exe"
+            }
+
+            $themeJsResp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/ui/v1/theme.js" -TimeoutSec 5
+            if ($themeJsResp.StatusCode -ne 200 -or $themeJsResp.Content -notmatch "ToolStow") {
+              throw "Unexpected /ui/v1/theme.js response from toolstow.exe"
+            }
+
+            Write-Host "Smoke test passed for $env:ARCHIVE"
+          } finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item -Recurse -Force -Path $smokeDir -ErrorAction SilentlyContinue
+          }
+
+      # 同时匹配 .tar.gz 和 .zip，漏文件时直接报错
       - name: Upload binary artifact
         uses: actions/upload-artifact@v6
         with:
           name: release-bin-${{ matrix.name }}
           path: dist/*
+          if-no-files-found: error
+
   # =========================================================
-  # 任务 2：自动把仓库里的示例插件 & 4 套主题打成可直接上传的 .zip
+  # 任务 2：与 CI 共用脚本，校验并打包 2 个合集压缩包
+  # （toolstow-themes.zip 与 toolstow-plugins.zip 内含单个可直接上传的 .zip）
   # =========================================================
   package-assets:
     name: Package Themes & Example Plugins
+    needs: [preflight]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Validate and zip themes and example plugins
-        run: |
-          mkdir -p dist
-          for dir in examples/themes/*; do
-            name=$(basename "$dir")
-            python3 skills/toolstow-theme/scripts/pack.py --strict --strict-dir-name "$dir" -o "dist/toolstow-theme-${name}.zip"
-          done
-          for dir in examples/docker-cheatsheet examples/dynamic-favicon; do
-            name=$(basename "$dir")
-            python3 skills/toolstow-tool/scripts/pack.py --strict --strict-dir-name "$dir" -o "dist/toolstow-plugin-${name}.zip"
-          done
+      - name: Validate and bundle themes and example plugins
+        run: python3 scripts/bundle_examples.py --require-node --out-dir dist
 
       - name: Upload asset archives
         uses: actions/upload-artifact@v6
         with:
           name: release-assets-zips
           path: dist/*.zip
+          if-no-files-found: error
 
   # =========================================================
-  # 任务 3：汇总所有产物 + 生成校验码 + 创建 GitHub Release
+  # 任务 3：核对 6 个附件齐全 + 生成有序校验码 + 发布 GitHub Release
   # =========================================================
   release:
     name: Publish GitHub Release
-    # 关键：必须等上面两个任务（共 4 个并行 Job）全部成功才开始
     needs: [build-binaries, package-assets]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v7
@@ -136,12 +283,36 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Verify expected release assets are complete
+        working-directory: artifacts
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          expected=(
+            "toolstow-${TAG_NAME}-linux-amd64.tar.gz"
+            "toolstow-${TAG_NAME}-linux-arm64.tar.gz"
+            "toolstow-${TAG_NAME}-macos-arm64.tar.gz"
+            "toolstow-${TAG_NAME}-windows-amd64.zip"
+            "toolstow-themes.zip"
+            "toolstow-plugins.zip"
+          )
+          for file in "${expected[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "ERROR: missing or empty release asset: $file" >&2
+              ls -la >&2
+              exit 1
+            fi
+          done
+          echo "All ${#expected[@]} expected release assets verified."
+
       - name: Generate SHA256 checksums
         working-directory: artifacts
-        run: sha256sum * > SHA256SUMS.txt
+        run: LC_ALL=C sha256sum * | sort -k2 > SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: artifacts/*
