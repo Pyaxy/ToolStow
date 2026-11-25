@@ -6,12 +6,14 @@ const state = {
   authenticated: false,
   adminEnabled: true,
   tools: [],
+  themes: [],
   filter: "all", // "all" | "published" | "draft"
   search: "",
   themeMode: "light",
   pendingConfirmAction: null,
   toastTimer: null,
   dragDepth: 0,
+  themeDragDepth: 0,
 };
 
 const els = {
@@ -54,6 +56,16 @@ const els = {
   toolsTableWrap: document.getElementById("tools-table-wrap"),
   toolsTbody: document.getElementById("tools-tbody"),
   toolsEmpty: document.getElementById("tools-empty"),
+
+  // Theme Management
+  themesCountBadge: document.getElementById("themes-count-badge"),
+  themeUploadPickBtn: document.getElementById("theme-upload-pick-btn"),
+  refreshThemesBtn: document.getElementById("refresh-themes-btn"),
+  themeUploadFileInput: document.getElementById("theme-upload-file-input"),
+  themeUploadDropzone: document.getElementById("theme-upload-dropzone"),
+  themeUploadStatus: document.getElementById("theme-upload-status"),
+  themesGrid: document.getElementById("themes-grid"),
+  themesEmpty: document.getElementById("themes-empty"),
 
   // Settings
   settingsForm: document.getElementById("settings-form"),
@@ -110,6 +122,22 @@ function normalizeHexColor(value) {
 
 function isSafeToolUrl(url) {
   return typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//");
+}
+
+function isSafeThemePreviewUrl(url) {
+  return typeof url === "string" && url.startsWith("/api/admin/themes/") && !url.startsWith("//");
+}
+
+function isSafeExternalUrl(url) {
+  if (typeof url !== "string") return false;
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 function initTheme() {
@@ -172,6 +200,17 @@ function setUploadStatus(message, kind = "info") {
   els.uploadStatus.hidden = false;
 }
 
+function setThemeUploadStatus(message, kind = "info") {
+  if (!message) {
+    els.themeUploadStatus.textContent = "";
+    els.themeUploadStatus.hidden = true;
+    return;
+  }
+  els.themeUploadStatus.textContent = message;
+  els.themeUploadStatus.dataset.kind = kind;
+  els.themeUploadStatus.hidden = false;
+}
+
 function setSettingsFeedback(message, kind = "info") {
   els.settingsFeedback.textContent = message || "";
   els.settingsFeedback.dataset.kind = kind;
@@ -232,6 +271,8 @@ function showDashboardView() {
 
 function handleUnauthorized() {
   state.tools = [];
+  state.themes = [];
+  setThemeUploadStatus("");
   showLoginView("管理员会话已过期，请重新输入 Admin Key 登录。");
 }
 
@@ -738,6 +779,404 @@ async function executeDeleteTool(tool) {
   }
 }
 
+function getThemeModeLabel(theme) {
+  if (theme.builtin === true) return "内置默认";
+  if (theme.hasCustomShell && theme.hasUiCss) return "完整主题 + 皮肤";
+  if (theme.hasCustomShell) return "完整主题";
+  if (theme.hasUiCss) return "纯皮肤覆盖";
+  return "自定义主题";
+}
+
+function getThemePreviewTag(theme) {
+  if (theme.builtin === true) return "BUILTIN";
+  if (theme.hasCustomShell && theme.hasUiCss) return "SHELL + UI.CSS";
+  if (theme.hasCustomShell) return "CUSTOM SHELL";
+  if (theme.hasUiCss) return "UI.CSS SKIN";
+  return "THEME";
+}
+
+function renderThemeFallbackPreview(previewBox, theme) {
+  const wrap = document.createElement("div");
+  wrap.className = "theme-preview-fallback";
+
+  const shortBadge = document.createElement("span");
+  shortBadge.className = "theme-preview-short";
+  shortBadge.textContent = theme.short || "theme";
+
+  const tag = document.createElement("span");
+  tag.className = "theme-preview-tag";
+  tag.textContent = getThemePreviewTag(theme);
+
+  wrap.append(shortBadge, tag);
+  previewBox.replaceChildren(wrap);
+}
+
+function renderThemePreview(previewBox, theme) {
+  if (isSafeThemePreviewUrl(theme.previewUrl)) {
+    const img = document.createElement("img");
+    img.src = theme.previewUrl;
+    img.alt = `${theme.name || theme.short || "主题"} 预览`;
+    img.loading = "lazy";
+    img.addEventListener("error", () => {
+      renderThemeFallbackPreview(previewBox, theme);
+    });
+    previewBox.replaceChildren(img);
+    return;
+  }
+  renderThemeFallbackPreview(previewBox, theme);
+}
+
+function renderThemesGrid() {
+  const count = state.themes.length;
+  const activeTheme = state.themes.find((t) => t && t.active === true);
+  els.themesCountBadge.textContent = activeTheme
+    ? `${count} 个主题 · 当前 ${activeTheme.short}`
+    : `${count} 个主题`;
+
+  if (count === 0) {
+    els.themesGrid.hidden = true;
+    els.themesEmpty.hidden = false;
+    els.themesGrid.replaceChildren();
+    return;
+  }
+
+  els.themesGrid.hidden = false;
+  els.themesEmpty.hidden = true;
+
+  const fragment = document.createDocumentFragment();
+
+  for (const theme of state.themes) {
+    if (!theme || typeof theme !== "object") continue;
+
+    const isActive = theme.active === true;
+    const isBuiltin = theme.builtin === true;
+    const displayName = theme.name || theme.short || "未命名主题";
+
+    const card = document.createElement("article");
+    card.className = isActive ? "theme-card theme-card-active" : "theme-card";
+
+    // Top 16:9 monochrome preview box
+    const previewBox = document.createElement("div");
+    previewBox.className = "theme-preview";
+    renderThemePreview(previewBox, theme);
+
+    // Card body
+    const body = document.createElement("div");
+    body.className = "theme-card-body";
+
+    const head = document.createElement("div");
+    head.className = "theme-card-head";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "theme-card-title-row";
+
+    const titleEl = document.createElement("h3");
+    titleEl.className = "theme-card-title";
+    titleEl.textContent = displayName;
+    titleRow.appendChild(titleEl);
+
+    if (isActive) {
+      const activePill = document.createElement("span");
+      activePill.className = "theme-active-pill";
+      const dot = document.createElement("span");
+      dot.className = "theme-active-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const activeText = document.createElement("span");
+      activeText.textContent = "当前使用";
+      activePill.append(dot, activeText);
+      titleRow.appendChild(activePill);
+    }
+
+    const badgesRow = document.createElement("div");
+    badgesRow.className = "theme-badges";
+    const modeBadge = document.createElement("span");
+    modeBadge.className = "mono-badge";
+    modeBadge.textContent = getThemeModeLabel(theme);
+    badgesRow.appendChild(modeBadge);
+
+    head.append(titleRow, badgesRow);
+    body.appendChild(head);
+
+    // Metadata line: short, version, author, safe external link
+    const metaRow = document.createElement("div");
+    metaRow.className = "theme-meta";
+
+    const shortItem = document.createElement("span");
+    shortItem.className = "theme-meta-item";
+    const shortCode = document.createElement("code");
+    shortCode.className = "mono-text";
+    shortCode.textContent = theme.short || "";
+    shortItem.appendChild(shortCode);
+    metaRow.appendChild(shortItem);
+
+    if (theme.version) {
+      const verItem = document.createElement("span");
+      verItem.className = "theme-meta-item mono-text";
+      verItem.textContent = `v${theme.version}`;
+      metaRow.appendChild(verItem);
+    }
+
+    if (theme.author) {
+      const authorItem = document.createElement("span");
+      authorItem.className = "theme-meta-item";
+      authorItem.textContent = theme.author;
+      metaRow.appendChild(authorItem);
+    }
+
+    if (isSafeExternalUrl(theme.url)) {
+      const extLink = document.createElement("a");
+      extLink.className = "theme-meta-link";
+      extLink.href = theme.url.trim();
+      extLink.target = "_blank";
+      extLink.rel = "noopener noreferrer";
+      extLink.textContent = "主页 ↗";
+      metaRow.appendChild(extLink);
+    }
+
+    body.appendChild(metaRow);
+
+    if (theme.description) {
+      const descEl = document.createElement("p");
+      descEl.className = "theme-card-desc";
+      descEl.title = theme.description;
+      descEl.textContent = theme.description;
+      body.appendChild(descEl);
+    }
+
+    // Actions row
+    const actionsRow = document.createElement("div");
+    actionsRow.className = "theme-card-actions";
+
+    if (isActive) {
+      const enabledBtn = document.createElement("button");
+      enabledBtn.type = "button";
+      enabledBtn.className = "btn btn-xs";
+      enabledBtn.disabled = true;
+      enabledBtn.setAttribute("aria-disabled", "true");
+      enabledBtn.textContent = "已启用";
+      actionsRow.appendChild(enabledBtn);
+    } else {
+      const activateBtn = document.createElement("button");
+      activateBtn.type = "button";
+      activateBtn.className = "btn btn-primary btn-xs";
+      activateBtn.textContent = "启用主题";
+      activateBtn.addEventListener("click", () => {
+        activateTheme(theme, activateBtn);
+      });
+      actionsRow.appendChild(activateBtn);
+    }
+
+    if (!isBuiltin) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "btn btn-danger btn-xs";
+      deleteBtn.textContent = "删除";
+      deleteBtn.addEventListener("click", () => {
+        requestDeleteTheme(theme);
+      });
+      actionsRow.appendChild(deleteBtn);
+    }
+
+    body.appendChild(actionsRow);
+    card.append(previewBox, body);
+    fragment.appendChild(card);
+  }
+
+  els.themesGrid.replaceChildren(fragment);
+}
+
+async function fetchAdminThemes() {
+  try {
+    const res = await apiRequest("/api/admin/themes", { method: "GET" });
+    if (res.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+    if (!res.ok) {
+      const body = await readJsonSafe(res);
+      throw new Error(parseErrorPayload(body, `加载主题列表失败 (HTTP ${res.status})`));
+    }
+    const data = await res.json();
+    state.themes = Array.isArray(data) ? data : [];
+    renderThemesGrid();
+  } catch (err) {
+    showToast(err.message || "加载主题列表失败", "error", 5000);
+  }
+}
+
+function formatThemeOverwritePrompt(body, fileName) {
+  const existing = body && body.existing && typeof body.existing === "object" ? body.existing : null;
+  const incoming = body && body.incoming && typeof body.incoming === "object" ? body.incoming : null;
+  const short = (incoming && incoming.short) || (existing && existing.short) || fileName;
+  const existingName = (existing && existing.name) || short;
+  const existingVer = existing && existing.version ? `v${existing.version}` : "未知版本";
+
+  if (incoming) {
+    const incomingName = incoming.name || short;
+    const incomingVer = incoming.version ? `v${incoming.version}` : "未知版本";
+    return `主题「${existingName}」(${short}) 已存在（当前 ${existingVer}）。确定要用新上传的「${incomingName}」(${incomingVer}) 覆盖替换现有主题吗？`;
+  }
+
+  return `主题「${existingName}」(${short}) 已存在（当前 ${existingVer}）。确定要覆盖替换现有主题目录吗？`;
+}
+
+async function uploadThemeZipFile(file, overwrite = false) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".zip")) {
+    setThemeUploadStatus("仅支持上传 .zip 格式的主题压缩包。", "error");
+    return;
+  }
+
+  setThemeUploadStatus(
+    overwrite ? `正在覆盖更新主题 ${file.name}...` : `正在上传校验主题 ${file.name}...`,
+    "info"
+  );
+  els.themeUploadPickBtn.disabled = true;
+
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+
+  try {
+    const endpoint = overwrite
+      ? "/api/admin/themes/upload?overwrite=true"
+      : "/api/admin/themes/upload?overwrite=false";
+    const res = await apiRequest(endpoint, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (res.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+
+    const body = await readJsonSafe(res);
+
+    if (res.status === 409 && !overwrite && (!body || !body.code || body.code === "THEME_EXISTS")) {
+      const promptMsg = formatThemeOverwritePrompt(body, file.name);
+      const conflictShort =
+        (body && body.incoming && body.incoming.short) ||
+        (body && body.existing && body.existing.short) ||
+        file.name;
+      setThemeUploadStatus(`检测到同名主题「${conflictShort}」已存在，等待确认是否覆盖...`, "info");
+      openConfirmDialog({
+        title: "主题已存在，确认覆盖？",
+        message: promptMsg,
+        confirmLabel: "确认覆盖",
+        confirmKind: "primary",
+        onConfirm: () => {
+          uploadThemeZipFile(file, true);
+        },
+        onCancel: () => {
+          setThemeUploadStatus(`已取消覆盖主题：${conflictShort}`, "info");
+        },
+      });
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error(parseErrorPayload(body, `主题上传失败 (HTTP ${res.status})`));
+    }
+
+    const theme =
+      body && body.short
+        ? body
+        : body && body.theme
+          ? body.theme
+          : body && body.entry
+            ? body.entry
+            : null;
+    const actionLabel = res.status === 201 ? "已安装主题" : "已覆盖更新主题";
+    const verSuffix = theme && theme.version ? ` v${theme.version}` : "";
+    const detail = theme ? `${theme.name || theme.short} (${theme.short})${verSuffix}` : file.name;
+    const msg = `${actionLabel}：${detail}`;
+
+    setThemeUploadStatus(msg, "success");
+    showToast(msg, "info");
+    await fetchAdminThemes();
+  } catch (err) {
+    setThemeUploadStatus(err.message || "主题上传失败", "error");
+  } finally {
+    els.themeUploadPickBtn.disabled = false;
+    els.themeUploadFileInput.value = "";
+  }
+}
+
+async function activateTheme(theme, buttonEl) {
+  buttonEl.disabled = true;
+  const originalLabel = buttonEl.textContent;
+  buttonEl.textContent = "切换中...";
+
+  try {
+    const res = await apiRequest("/api/admin/themes/active", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ short: theme.short }),
+    });
+
+    if (res.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+
+    const body = await readJsonSafe(res);
+    if (!res.ok) {
+      throw new Error(parseErrorPayload(body, `切换主题失败 (HTTP ${res.status})`));
+    }
+
+    showToast(`已切换主题：${theme.name || theme.short}`, "info");
+    await fetchAdminThemes();
+  } catch (err) {
+    showToast(err.message || "切换主题失败", "error", 5000);
+    buttonEl.disabled = false;
+    buttonEl.textContent = originalLabel;
+  }
+}
+
+function requestDeleteTheme(theme) {
+  const displayName = theme.name || theme.short;
+  const message = theme.active
+    ? `确定要删除当前正在使用的主题「${displayName}」(${theme.short}) 吗？删除后公开站点将自动切回内置默认主题 (default)，且该操作无法撤销。`
+    : `确定要删除主题「${displayName}」(${theme.short}) 吗？该操作将移除磁盘上的主题目录且无法撤销。`;
+
+  openConfirmDialog({
+    title: "确认删除主题",
+    message,
+    confirmLabel: "确认删除",
+    confirmKind: "danger",
+    onConfirm: () => {
+      executeDeleteTheme(theme);
+    },
+  });
+}
+
+async function executeDeleteTheme(theme) {
+  try {
+    const res = await apiRequest(`/api/admin/themes/${encodeURIComponent(theme.short)}`, {
+      method: "DELETE",
+    });
+
+    if (res.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+
+    if (!res.ok && res.status !== 204) {
+      const body = await readJsonSafe(res);
+      throw new Error(parseErrorPayload(body, `删除主题失败 (HTTP ${res.status})`));
+    }
+
+    const displayName = theme.name || theme.short;
+    const msg = theme.active
+      ? `已删除主题：${displayName} (${theme.short})，已自动切回默认主题`
+      : `已删除主题：${displayName} (${theme.short})`;
+    showToast(msg, "info");
+    await fetchAdminThemes();
+  } catch (err) {
+    showToast(err.message || "删除主题失败", "error", 5000);
+  }
+}
+
 async function handleLoginSubmit(event) {
   event.preventDefault();
   setLoginError("");
@@ -796,14 +1235,16 @@ async function handleLogout() {
   } finally {
     els.logoutBtn.disabled = false;
     state.tools = [];
+    state.themes = [];
     setUploadStatus("");
+    setThemeUploadStatus("");
     setSettingsFeedback("");
     showLoginView();
   }
 }
 
 async function loadDashboardData() {
-  await Promise.all([fetchAdminTools(), fetchAdminSettings()]);
+  await Promise.all([fetchAdminTools(), fetchAdminThemes(), fetchAdminSettings()]);
 }
 
 async function checkSession() {
@@ -927,6 +1368,54 @@ function bindEvents() {
   });
 
   els.refreshToolsBtn.addEventListener("click", fetchAdminTools);
+
+  // Theme upload picker, dropzone & refresh
+  const openThemePicker = () => els.themeUploadFileInput.click();
+  els.themeUploadPickBtn.addEventListener("click", openThemePicker);
+  els.themeUploadDropzone.addEventListener("click", openThemePicker);
+  els.themeUploadDropzone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openThemePicker();
+    }
+  });
+
+  els.themeUploadFileInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) uploadThemeZipFile(file);
+  });
+
+  els.themeUploadDropzone.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    state.themeDragDepth += 1;
+    els.themeUploadDropzone.classList.add("drag-over");
+  });
+
+  els.themeUploadDropzone.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+
+  els.themeUploadDropzone.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    state.themeDragDepth = Math.max(0, state.themeDragDepth - 1);
+    if (state.themeDragDepth === 0) {
+      els.themeUploadDropzone.classList.remove("drag-over");
+    }
+  });
+
+  els.themeUploadDropzone.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    state.themeDragDepth = 0;
+    els.themeUploadDropzone.classList.remove("drag-over");
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) uploadThemeZipFile(file);
+  });
+
+  els.refreshThemesBtn.addEventListener("click", fetchAdminThemes);
 
   // Settings controls
   els.settingAccentPicker.addEventListener("input", (e) => {

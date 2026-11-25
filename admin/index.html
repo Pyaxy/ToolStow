@@ -209,6 +209,43 @@
         <div id="tools-empty" class="empty-box" hidden>暂无符合条件的工具。</div>
       </section>
 
+      <!-- Theme Management Card -->
+      <section class="card" aria-labelledby="themes-card-title">
+        <div class="card-header card-header-wrap">
+          <div>
+            <div class="card-title-row">
+              <h2 id="themes-card-title" class="card-title">主题管理</h2>
+              <span id="themes-count-badge" class="mono-badge">0 个主题</span>
+            </div>
+            <p class="card-desc">上传、切换或删除公开前台主题包（包含 <code>theme.json</code>，支持完整主题或纯 <code>ui.css</code> 皮肤）。</p>
+          </div>
+
+          <div class="card-header-actions">
+            <button id="theme-upload-pick-btn" class="btn btn-primary btn-sm" type="button">选择主题 .zip</button>
+            <button id="refresh-themes-btn" class="btn btn-sm" type="button">刷新</button>
+          </div>
+        </div>
+
+        <input id="theme-upload-file-input" type="file" accept=".zip,application/zip" hidden>
+
+        <div
+          id="theme-upload-dropzone"
+          class="dropzone dropzone-compact"
+          tabindex="0"
+          role="button"
+          aria-label="拖拽或点击上传 .zip 主题包"
+        >
+          <div class="dropzone-title">拖拽主题 <code>.zip</code> 到此处，或点击选择文件</div>
+          <div class="dropzone-sub">自动校验 <code>theme.json</code>、路径安全与解压限额（同名 <code>short</code> 将弹出覆盖确认）</div>
+        </div>
+
+        <div id="theme-upload-status" class="inline-feedback" role="status" aria-live="polite" hidden></div>
+
+        <div id="themes-grid" class="themes-grid" aria-live="polite"></div>
+
+        <div id="themes-empty" class="empty-box" hidden>暂无可用主题。</div>
+      </section>
+
       <!-- Two-Column Lower Grid: Site Settings + AI API Reference -->
       <div class="lower-grid">
         <!-- Site Settings Card -->
