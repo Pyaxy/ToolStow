@@ -1,0 +1,44 @@
+# 1. 工作流名称（会显示在 GitHub 仓库的 Actions 标签页里）
+name: CI
+
+# 2. 触发条件：向 main 分支 push，或者针对 main 发起 Pull Request 时触发
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 3. 并发控制：同一个分支连续快速 push 时，自动取消上一次还没跑完的旧任务，省时间
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 4. 具体要执行的任务
+jobs:
+  check:
+    name: Test & Clippy
+    # 向 GitHub 申请一台最新的 Ubuntu 虚拟机
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步骤 1：把你仓库的代码拉进这台虚拟机（否则里面是空的）
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 步骤 2：安装最新稳定版 Rust 工具链（因为 ToolStow 用了 Edition 2024），并附带 clippy 组件
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # 步骤 3：缓存 Cargo 依赖和 target 编译产物（第二次跑能快几倍）
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # 步骤 4：严格按 Cargo.lock 跑所有单元测试 + 集成测试
+      - name: Run tests
+        run: cargo test --locked
+
+      # 步骤 5：跑 Clippy 静态检查，把任何 warning 当作错误拦截
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
