@@ -42,3 +42,9 @@ jobs:
       # 步骤 5：跑 Clippy 静态检查，把任何 warning 当作错误拦截
       - name: Run clippy
         run: cargo clippy --locked --all-targets -- -D warnings
+
+      # 步骤 6：使用 Skill 配套脚本校验所有内置示例工具与示例主题
+      - name: Validate example tools and themes
+        run: |
+          python3 skills/toolstow-tool/scripts/validate.py --strict --strict-dir-name examples/docker-cheatsheet examples/dynamic-favicon
+          python3 skills/toolstow-theme/scripts/validate.py --strict --strict-dir-name examples/themes/*
