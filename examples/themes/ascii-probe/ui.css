@@ -1,0 +1,112 @@
+/* ==========================================================================
+   ToolStow Theme Cascade: ASCII Probe (ui.css)
+   Appended automatically to /ui/v1/toolstow.css when "ascii-probe" is active.
+   Reskins host shell & every embedded/standalone ToolStow plugin into a TUI.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --ts-canvas: #f5f6f2;
+  --ts-surface: #eceee7;
+  --ts-surface-hover: #e1e6da;
+  --ts-border: #c2cbc0;
+  --ts-border-strong: #899d8f;
+  --ts-ink: #111a16;
+  --ts-ink-secondary: #2a3e35;
+  --ts-ink-muted: #556b61;
+  --ts-inverted-bg: #047857;
+  --ts-inverted-bg-hover: #065f46;
+  --ts-inverted-ink: #f5f6f2;
+  --ts-accent: #047857;
+  --ts-danger: #b91c1c;
+  --ts-danger-bg: #fee2e2;
+  --ts-danger-border: #fca5a5;
+  --ts-success: #047857;
+  --ts-code-bg: #101915;
+  --ts-code-ink: #d1fae5;
+
+  --ts-radius-sm: 2px;
+  --ts-radius-md: 2px;
+
+  --ts-font-sans: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --ts-font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ts-canvas: #0a0e0d;
+  --ts-surface: #0f1614;
+  --ts-surface-hover: #15211d;
+  --ts-border: #1e332b;
+  --ts-border-strong: #2d5144;
+  --ts-ink: #d8f3e8;
+  --ts-ink-secondary: #9ac4b3;
+  --ts-ink-muted: #608577;
+  --ts-inverted-bg: #10b981;
+  --ts-inverted-bg-hover: #34d399;
+  --ts-inverted-ink: #04130d;
+  --ts-accent: #10b981;
+  --ts-danger: #f87171;
+  --ts-danger-bg: #261214;
+  --ts-danger-border: #5c1f24;
+  --ts-success: #10b981;
+  --ts-code-bg: #060908;
+  --ts-code-ink: #a7f3d0;
+}
+
+/* TUI sub-panel & control polish for all ToolStow plugins */
+.ts-card {
+  border-radius: 2px;
+  border-color: var(--ts-border);
+  box-shadow: inset 0 2px 0 0 var(--ts-border);
+}
+
+.ts-section-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ts-accent);
+}
+
+.ts-btn,
+.ts-input,
+.ts-textarea,
+.ts-select,
+.ts-tabs,
+.ts-tab,
+.ts-badge,
+.ts-badge-mono,
+.ts-kbd,
+.ts-code,
+.ts-code-row,
+.ts-toast {
+  border-radius: 2px;
+}
+
+.ts-btn {
+  letter-spacing: 0.02em;
+}
+
+.ts-btn-primary {
+  background: var(--ts-accent);
+  border-color: var(--ts-accent);
+  color: var(--ts-inverted-ink);
+}
+
+.ts-tab.active {
+  background: var(--ts-accent);
+  color: var(--ts-inverted-ink);
+}
+
+.ts-input:focus,
+.ts-textarea:focus,
+.ts-select:focus {
+  border-color: var(--ts-accent);
+}
+
+.ts-btn:focus-visible,
+.ts-tab:focus-visible {
+  outline: 1px solid var(--ts-accent);
+  outline-offset: 1px;
+}

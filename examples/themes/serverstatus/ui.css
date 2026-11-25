@@ -1,0 +1,100 @@
+/* ==========================================================================
+   ToolStow Theme Cascade: ServerStatus Ops (ui.css)
+   Appended automatically to /ui/v1/toolstow.css when "serverstatus" is active.
+   Unifies the host ops-console and all embedded/standalone plugins.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --ts-canvas: #f8fafc;
+  --ts-surface: #ffffff;
+  --ts-surface-hover: #f1f5f9;
+  --ts-border: #e2e8f0;
+  --ts-border-strong: #cbd5e1;
+  --ts-ink: #0f172a;
+  --ts-ink-secondary: #334155;
+  --ts-ink-muted: #64748b;
+  --ts-inverted-bg: #2563eb;
+  --ts-inverted-bg-hover: #1d4ed8;
+  --ts-inverted-ink: #ffffff;
+  --ts-accent: #2563eb;
+  --ts-danger: #dc2626;
+  --ts-danger-bg: #fef2f2;
+  --ts-danger-border: #fecaca;
+  --ts-success: #16a34a;
+  --ts-code-bg: #0f172a;
+  --ts-code-ink: #e2e8f0;
+
+  --ts-radius-sm: 4px;
+  --ts-radius-md: 6px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ts-canvas: #0b1120;
+  --ts-surface: #111a2e;
+  --ts-surface-hover: #17233d;
+  --ts-border: #1e293b;
+  --ts-border-strong: #334155;
+  --ts-ink: #f1f5f9;
+  --ts-ink-secondary: #cbd5e1;
+  --ts-ink-muted: #94a3b8;
+  --ts-inverted-bg: #2563eb;
+  --ts-inverted-bg-hover: #3b82f6;
+  --ts-inverted-ink: #ffffff;
+  --ts-accent: #3b82f6;
+  --ts-danger: #f87171;
+  --ts-danger-bg: #2a1419;
+  --ts-danger-border: #6b212a;
+  --ts-success: #22c55e;
+  --ts-code-bg: #060a14;
+  --ts-code-ink: #e2e8f0;
+}
+
+/* Compact ops-console surface & control polish for plugins */
+.ts-card {
+  border-radius: var(--ts-radius-md);
+  border-color: var(--ts-border);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+:root[data-theme="dark"] .ts-card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.ts-btn {
+  height: 32px;
+  font-size: 12.5px;
+  border-radius: var(--ts-radius-sm);
+}
+
+.ts-btn-primary {
+  background: var(--ts-accent);
+  border-color: var(--ts-accent);
+  color: #ffffff;
+}
+
+.ts-btn-primary:hover:not(:disabled) {
+  opacity: 0.92;
+  background: var(--ts-accent);
+  border-color: var(--ts-accent);
+}
+
+.ts-tab.active {
+  background: var(--ts-accent);
+  color: #ffffff;
+}
+
+.ts-input:focus,
+.ts-textarea:focus,
+.ts-select:focus {
+  border-color: var(--ts-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ts-accent) 18%, transparent);
+}
+
+.ts-badge,
+.ts-badge-mono {
+  border-radius: 4px;
+}

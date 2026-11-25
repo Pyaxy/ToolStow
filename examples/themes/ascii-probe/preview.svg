@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360" role="img" aria-label="ASCII Probe Theme Preview">
+  <rect width="640" height="360" fill="#0a0e0d"/>
+  <!-- Topbar -->
+  <rect x="0" y="0" width="640" height="40" fill="#0f1614"/>
+  <line x1="0" y1="40" x2="640" y2="40" stroke="#1e332b" stroke-width="1"/>
+  <text x="16" y="24" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">$</text>
+  <text x="28" y="24" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">ToolStow</text>
+  <text x="94" y="24" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">--list</text>
+  <rect x="139" y="14" width="6" height="12" fill="#10b981"/>
+  <!-- Search box -->
+  <rect x="190" y="9" width="240" height="22" rx="2" fill="#0a0e0d" stroke="#1e332b" stroke-width="1"/>
+  <text x="198" y="23" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">grep&gt;</text>
+  <text x="234" y="23" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">search tools...</text>
+  <rect x="404" y="13" width="20" height="14" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <text x="407" y="23" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">⌘K</text>
+  <!-- Topbar buttons -->
+  <rect x="518" y="9" width="52" height="22" rx="2" fill="#0a0e0d" stroke="#1e332b"/>
+  <rect x="524" y="15" width="10" height="10" fill="#10b981"/>
+  <text x="540" y="23" fill="#9ac4b3" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">HEX</text>
+  <rect x="576" y="9" width="52" height="22" rx="2" fill="#10b981"/>
+  <text x="583" y="23" fill="#04130d" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">DARK</text>
+
+  <!-- Left Sidebar -->
+  <line x1="168" y1="40" x2="168" y2="334" stroke="#1e332b" stroke-width="1"/>
+  <rect x="10" y="50" width="148" height="108" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <text x="18" y="66" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">┌─ CATEGORIES</text>
+  <line x1="18" y1="73" x2="150" y2="73" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <rect x="18" y="80" width="132" height="20" rx="2" fill="#10b981"/>
+  <text x="24" y="93" fill="#04130d" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">&gt; ALL</text>
+  <text x="130" y="93" fill="#04130d" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">[6]</text>
+  <text x="24" y="116" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">  DevOps</text>
+  <text x="130" y="116" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">[3]</text>
+  <text x="24" y="136" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">  Design</text>
+  <text x="130" y="136" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">[3]</text>
+
+  <rect x="10" y="168" width="148" height="156" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <text x="18" y="184" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">┌─ TOOLS</text>
+  <line x1="18" y1="191" x2="150" y2="191" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <rect x="18" y="198" width="132" height="28" rx="2" fill="#0a0e0d" stroke="#10b981"/>
+  <text x="24" y="211" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">▸ docker-cheat</text>
+  <text x="24" y="222" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="8">ops · v1.0.0</text>
+  <text x="24" y="244" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">  favicon-gen</text>
+  <text x="24" y="255" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="8">design · v1.2.0</text>
+  <text x="24" y="276" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">  cron-parser</text>
+  <text x="24" y="287" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="8">ops · v0.9.0</text>
+
+  <!-- Main Pane Hero -->
+  <rect x="182" y="50" width="446" height="72" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <rect x="182" y="50" width="3" height="72" fill="#10b981"/>
+  <text x="196" y="68" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">root@toolstow:~$</text>
+  <text x="304" y="68" fill="#9ac4b3" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">toolstow --list --all</text>
+  <rect x="556" y="57" width="60" height="16" rx="2" fill="#0a0e0d" stroke="#10b981"/>
+  <text x="564" y="68" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">6 READY</text>
+  <line x1="196" y1="77" x2="616" y2="77" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <text x="196" y="97" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="14" font-weight="700">ToolStow</text>
+  <text x="196" y="113" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">Personal Micro-App Toolbox // Retro-Modern ASCII Terminal UI</text>
+
+  <!-- Cards Grid -->
+  <rect x="182" y="134" width="218" height="90" rx="2" fill="#0f1614" stroke="#10b981"/>
+  <text x="194" y="154" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">Docker Cheatsheet</text>
+  <rect x="348" y="142" width="42" height="15" rx="2" fill="#0a0e0d" stroke="#1e332b"/>
+  <text x="353" y="152" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">v1.0.0</text>
+  <text x="194" y="174" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">Quick command search &amp; copy</text>
+  <line x1="194" y1="196" x2="388" y2="196" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <text x="194" y="213" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">DevOps · docker-cheatsheet</text>
+  <text x="342" y="213" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">[RUN -&gt;]</text>
+
+  <rect x="410" y="134" width="218" height="90" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <text x="422" y="154" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">Dynamic Favicon</text>
+  <rect x="576" y="142" width="42" height="15" rx="2" fill="#0a0e0d" stroke="#1e332b"/>
+  <text x="581" y="152" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">v1.2.0</text>
+  <text x="422" y="174" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">Theme-synced SVG icon builder</text>
+  <line x1="422" y1="196" x2="616" y2="196" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <text x="422" y="213" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">Design · dynamic-favicon</text>
+  <text x="570" y="213" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">[RUN -&gt;]</text>
+
+  <rect x="182" y="234" width="218" height="90" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <text x="194" y="254" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">Cron Expression Lab</text>
+  <rect x="348" y="242" width="42" height="15" rx="2" fill="#0a0e0d" stroke="#1e332b"/>
+  <text x="353" y="252" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">v0.9.0</text>
+  <text x="194" y="274" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">Validate schedules &amp; next runs</text>
+  <line x1="194" y1="296" x2="388" y2="296" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <text x="194" y="313" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">DevOps · cron-lab</text>
+  <text x="342" y="313" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">[RUN -&gt;]</text>
+
+  <rect x="410" y="234" width="218" height="90" rx="2" fill="#0f1614" stroke="#1e332b"/>
+  <text x="422" y="254" fill="#d8f3e8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">JSON Diff Inspector</text>
+  <rect x="576" y="242" width="42" height="15" rx="2" fill="#0a0e0d" stroke="#1e332b"/>
+  <text x="581" y="252" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">v1.1.0</text>
+  <text x="422" y="274" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">Side-by-side structural diff</text>
+  <line x1="422" y1="296" x2="616" y2="296" stroke="#1e332b" stroke-dasharray="3 2"/>
+  <text x="422" y="313" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">Utility · json-diff</text>
+  <text x="570" y="313" fill="#10b981" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9" font-weight="700">[RUN -&gt;]</text>
+
+  <!-- Statusbar -->
+  <rect x="0" y="334" width="640" height="26" fill="#0f1614"/>
+  <line x1="0" y1="334" x2="640" y2="334" stroke="#1e332b"/>
+  <rect x="14" y="344" width="6" height="6" fill="#10b981"/>
+  <text x="26" y="350" fill="#9ac4b3" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">SYS:READY  |  TOOLS:6/6</text>
+  <text x="486" y="350" fill="#608577" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="9">THEME:ASCII-PROBE</text>
+</svg>

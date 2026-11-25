@@ -27,11 +27,11 @@
 
 ### 2.1 v0.2 · 纯 VPS 动态宿主（当前基线）
 
-1. **统一 `--data-dir` 数据目录与外置主题热覆盖**
+1. **统一 `--data-dir` 数据目录与多主题热插拔管理**
    - 统一通过 `--data-dir`（默认 `./data`，环境变量 `TOOLSTOW_DATA_DIR`）组织所有运行时持久化状态，依然**零数据库**：
      - `data/tools/`：存放已安装微工具及同盘暂存目录 `.staging/`（可由 `--tools-dir` / `TOOLSTOW_TOOLS_DIR` 单独覆盖）。
-     - `data/theme/`（可选）：外置自定义公共前端静态文件与共享样式覆盖目录（可由 `--theme-dir` / `TOOLSTOW_THEME_DIR` 单独覆盖）。放置 `index.html` 等静态文件可无重编覆盖公开前台；放置 `ui.css` 可通过 `/ui/v1/toolstow.css` 级联覆盖主站、`/admin` 与所有微工具插件的共享设计变量与基础组件样式。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 路由始终由后端强制锁定，外置主题无法覆盖或劫持。
-     - `data/settings.json`：持久化站点标题（`siteTitle`）、站点副标题描述（`siteDescription`）与默认强调色（`defaultAccent`），文件缺失或损坏时自动回退至安全默认值。
+     - `data/themes/`：多主题包目录（可由 `--themes-dir` / `TOOLSTOW_THEMES_DIR` 单独覆盖），每个子目录 `data/themes/<short>/` 包含 `theme.json` 及可选的 `index.html`（或 `dist/index.html`）、`ui.css`、`preview.svg`；支持在 `/admin` 面板上传 `.zip`（含 `409 THEME_EXISTS` 覆盖确认）、预览、一键切换或删除。同时保留 `data/theme/`（`--theme-dir` / `TOOLSTOW_THEME_DIR`）用于 `activeTheme = "default"` 时的单目录向后兼容。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 路由始终由后端强制锁定，外置主题无法覆盖或劫持。
+     - `data/settings.json`：持久化站点标题（`siteTitle`）、站点副标题描述（`siteDescription`）、默认强调色（`defaultAccent`）与当前启用主题（`activeTheme`，默认 `"default"`），文件缺失或损坏时自动回退至安全默认值。
 2. **目录自动扫描与热更新**
    - 启动时扫描工具目录（不存在则自动创建）下所有非隐藏子目录，解析合法的 `manifest.json` 构建内存索引。
    - 通过 `notify` 监听文件系统事件（新增、修改、删除工具目录或 `manifest.json`），防抖后热刷新内存索引，无需重启宿主。
@@ -46,14 +46,14 @@
      - 访问 `/admin` 提供单密钥登录卡片（无用户名输入，参考 CPA `management.html` 极简交互）。
      - `POST /api/admin/login` 使用常量时间比较校验密钥，并执行单客户端/单 IP 失败限流（5 分钟内失败 5 次触发 `429 Too Many Requests`）。
      - 登录成功后在服务端内存签发 256-bit 随机十六进制 Session Token，通过 `toolstow_admin_session` Cookie 下发（`HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`，在 HTTPS 或 `TOOLSTOW_COOKIE_SECURE=true` 时附加 `Secure`；24 小时 TTL）。
-     - 拥有完整管理权限：上传/覆盖 `.zip` 工具包、切换工具 `draft` 状态、预览草稿工具、删除工具，以及读写站点设置（`GET/PUT /api/admin/settings`）。
+     - 拥有完整管理权限：上传/覆盖 `.zip` 工具包、切换工具 `draft` 状态、预览草稿工具、删除工具、管理多主题（上传/切换/删除 `data/themes/`），以及读写站点设置（`GET/PUT /api/admin/settings`）。
    - **`TOOLSTOW_API_KEY`（机器 / AI / `curl` / 未来 MCP 专用密钥）**：
      - 通过标准请求头 `Authorization: Bearer <token>` 认证，仅授权操作 `/api/admin/tools*`（列出全部含草稿工具、上传/覆盖 `.zip`、切换 `draft`、删除工具）。
-     - **职责严格隔离**：`TOOLSTOW_API_KEY` **不能**登录 `/admin`、**不能**换取浏览器 Session、**不能**读取或修改站点设置（`/api/admin/settings`）；反之 `TOOLSTOW_ADMIN_KEY` 也不能作为 Bearer Token 使用。
+     - **职责严格隔离**：`TOOLSTOW_API_KEY` **不能**登录 `/admin`、**不能**换取浏览器 Session、**不能**读取或修改站点设置（`/api/admin/settings`），也**不能**访问多主题管理接口（`/api/admin/themes*`）；反之 `TOOLSTOW_ADMIN_KEY` 也不能作为 Bearer Token 使用。
 5. **极简黑白公共只读前端与内嵌管理面板**
    - **公共前端（`/`）**：采用参考 `monitor-probe/monitor` 的极简黑白（Monochrome B&W）美学，**100% 只读**，不包含任何上传或删除操作。支持分类侧边栏（移动端抽屉）、标签筛选、`Cmd+K` / `Ctrl+K` 全局搜索、URL Hash 状态联动、明暗模式切换与强调色 `postMessage` 联动。
-   - 公共前端启动时请求 `GET /api/me`（返回 `siteTitle`、`siteDescription`、`defaultAccent`、`isAdmin`、`adminEnabled`、`themeSource`），动态渲染站点标题与默认强调色，且**仅当 `isAdmin === true` 时**在顶栏渲染简洁的「管理 / 设置」链接指向 `/admin`；匿名访客界面保持绝对纯净。
-   - **内嵌管理面板（`/admin`）**：独立编译进单二进制，与公共前端共享同一极简黑白设计语言，包含单密钥登录、拖拽/选择上传 `.zip`、工具列表管理（全部/已发布/草稿筛选、切换草稿/发布、新标签页预览、删除确认）、站点设置表单以及 AI API 速查卡片。
+   - 公共前端启动时请求 `GET /api/me`（返回 `siteTitle`、`siteDescription`、`defaultAccent`、`isAdmin`、`adminEnabled`、`activeTheme`、`themeSource`），动态渲染站点标题与默认强调色，且**仅当 `isAdmin === true` 时**在顶栏渲染简洁的「管理 / 设置」链接指向 `/admin`；匿名访客界面保持绝对纯净。
+   - **内嵌管理面板（`/admin`）**：独立编译进单二进制，与公共前端共享同一极简黑白设计语言，包含单密钥登录、拖拽/选择上传 `.zip`、工具列表管理（全部/已发布/草稿筛选、切换草稿/发布、新标签页预览、删除确认）、**多主题管理卡片**（上传 `.zip` 主题包与 `409` 覆盖确认、预览卡片、一键启用切换、删除回退）、站点设置表单以及 AI API 速查卡片。
 6. **静态资源托管与双重沙箱隔离**
    - 通过 `/t/{id}/{*path}` 托管已注册工具静态资源，修改磁盘文件后刷新即生效。
    - 前端外壳通过 `<iframe sandbox="...">` 加载子工具，且后端同步下发 `Content-Security-Policy: sandbox ...` 响应头，保证壳内与直链访问均处于不透明源（Opaque Origin）隔离环境。
@@ -96,12 +96,15 @@
 
 ```text
 data/
-├── settings.json             # 站点设置（siteTitle / siteDescription / defaultAccent）
-├── theme/                    # [可选] 外置自定义主题目录（无需重编 Rust）
-│   ├── ui.css                # [可选] 级联追加至 /ui/v1/toolstow.css，一次覆盖主站与所有插件皮肤
-│   ├── index.html            # [可选] 自定义公开前台入口，覆盖内嵌默认前端
-│   ├── style.css
-│   └── app.js
+├── settings.json             # 站点设置（siteTitle / siteDescription / defaultAccent / activeTheme）
+├── themes/                   # 多主题管理目录（无需重编 Rust，可在 /admin 上传/切换/删除）
+│   ├── .staging/             # 内部同盘上传暂存目录（自动忽略）
+│   ├── ascii-probe/          # 示例：完整主题 + ui.css（含 theme.json / index.html / ui.css / preview.svg）
+│   ├── serverstatus/         # 示例：高密度表格完整主题 + ui.css
+│   └── paper-warm/           # 示例：纯皮肤主题（仅 theme.json / ui.css / preview.svg，无 index.html）
+├── theme/                    # [可选，向后兼容] activeTheme="default" 时的单目录覆盖
+│   ├── ui.css
+│   └── index.html
 └── tools/                    # 工具注册与静态托管根目录
     ├── .staging/             # 内部同盘上传暂存目录（自动忽略，禁止外部访问）
     ├── docker-cheatsheet/
@@ -156,17 +159,33 @@ data/
 | `themeAware` | `boolean` | 否 | `false` | 是否订阅主站的明暗模式与强调色 `postMessage` 同步消息 |
 | `sandbox` | `string[]` | 否 | `["allow-scripts", "allow-downloads", "allow-forms"]` | 申请的 `iframe sandbox` 权限列表，由宿主按安全白名单过滤后生效 |
 
-### 3.3 共享 UI SDK（`/ui/v1/*`）与主题同步协议
+### 3.3 多主题包规范（`theme.json`）、共享 UI SDK（`/ui/v1/*`）与主题同步协议
 
-ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理面板及所有沙箱微工具提供统一的设计系统与主题桥接脚本：
-
-1. **共享样式表（`GET /ui/v1/toolstow.css`）与 `data/theme/ui.css` 级联覆盖**：
+1. **多主题包规范（`data/themes/<short>/theme.json`）**：
+   - 每个安装在 `data/themes/<short>/` 的主题包均包含 `theme.json`：
+     ```json
+     {
+       "short": "ascii-probe",
+       "name": "ASCII Probe",
+       "version": "1.0.0",
+       "description": "Retro-modern terminal TUI theme",
+       "author": "ToolStow",
+       "url": "https://github.com/monitor-probe/themes",
+       "preview": "preview.svg"
+     }
+     ```
+   - `short` 须匹配 `^[a-z0-9]+(?:-[a-z0-9]+)*$`（1–64 字符）且禁止为保留值 `"default"`；`name` 非空；`url` 为空或 `http(s)://`；`preview` 为包内安全相对普通文件路径。
+   - 主题包至少须包含 `index.html`（优先探测 `dist/index.html`，其次根目录 `index.html`）或 `ui.css` 之一（否则 `422`）：
+     - **完整主题**：含 `index.html`（及可选 `ui.css`），激活后覆盖 `/` 公开前台；若有 `ui.css` 则同步追加至 `/ui/v1/toolstow.css`。
+     - **纯皮肤主题**：仅含 `ui.css`（无 `index.html`），激活后保留内嵌默认公开前台壳，仅将 `ui.css` 追加至 `/ui/v1/toolstow.css` 统一换肤主站与插件。
+   - 仓库 `examples/themes/` 内置 3 套参考主题：`ascii-probe`（终端 TUI 完整主题）、`serverstatus`（高密度表格完整主题）、`paper-warm`（羊皮纸纯皮肤主题）。
+2. **共享样式表（`GET /ui/v1/toolstow.css`）与主题 `ui.css` 级联覆盖**：
    - 始终先输出内嵌的极简黑白基础设计令牌（`--ts-*`）与基础组件原语（`.ts-*`）。
-   - 若 `<data-dir>/theme/ui.css` 存在且通过规范路径 Containment 校验（位于 `theme_dir` 内的普通文件；若为逃逸出 `theme_dir` 的符号链接则返回 `403 Forbidden`），后端自动将 `data/theme/ui.css` 追加拼接在基础样式末尾输出，实现**单文件同时换肤主站、管理台与所有遵循 SDK 的插件**。
-2. **主题桥接与辅助脚本（`GET /ui/v1/theme.js`）**：
+   - 解析当前激活主题（`settings.activeTheme`）：若为已安装命名主题且含合法 `ui.css`，执行规范路径 Containment 校验后自动追加拼接输出（符号链接逃逸返回 `403 Forbidden`）；若该命名主题无 `ui.css`，仅返回基础样式（不混入旧版 `data/theme/ui.css`）；当 `activeTheme` 为 `"default"` 时，保持向后兼容检查 `<data-dir>/theme/ui.css`。
+3. **主题桥接与辅助脚本（`GET /ui/v1/theme.js`）**：
    - 在 `<head>` 中同步加载，检测嵌入态设置 `data-embed="true" | "false"`（配合 `.ts-standalone-only` 避免 iframe 内重复顶栏），同步解析初始 `?theme=&accent=` 查询参数防止暗色首帧闪烁（FOUC），在独立打开时回退跟随系统 `prefers-color-scheme`。
    - 自动完成 `toolstow:ready` 握手与 `toolstow:theme` 监听（同步 `data-theme`、`--ts-accent` 及主站下发的安全 `--ts-*` 计算快照），并暴露 `window.ToolStow`（`getTheme()`、`onThemeChange(fn)`、`copy(text, fallbackEl?)`、`toast(msg, durationMs?)`）。
-3. **底层 `postMessage` 协议**：
+4. **底层 `postMessage` 协议**：
    - 当子工具声明 `themeAware: true` 或主动发送 `{ "type": "toolstow:ready" }` 时，主站调用 `iframe.contentWindow.postMessage(message, "*")` 发送：
      ```json
      {
@@ -188,11 +207,11 @@ ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理�
 
 | 方法与路径 | 鉴权要求 | 说明 |
 | :--- | :--- | :--- |
-| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳；若 `<data-dir>/theme/` 下存在对应静态文件则优先返回外置主题，否则回退至编译期内嵌的极简黑白默认前端。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定，不可被外置主题覆盖 |
-| `GET /ui/v1/toolstow.css`（及 `HEAD`） | 无 | 返回内嵌共享基础样式（`text/css; charset=utf-8`，`Cache-Control: no-cache`，`X-Content-Type-Options: nosniff`）；若 `<data-dir>/theme/ui.css` 存在且路径合法，自动在其末尾追加拼接以级联覆盖主站与所有插件；符号链接逃逸返回 `403` |
+| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳：优先解析 `activeTheme` 对应 `data/themes/<short>/` 的 `web_root`（`dist/` 或根目录 `index.html`）；若当前主题为纯皮肤包（无 `index.html`）则返回内嵌前端；当 `activeTheme="default"` 时兼容旧版 `data/theme/` 或回退内嵌前端。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定 |
+| `GET /ui/v1/toolstow.css`（及 `HEAD`） | 无 | 返回内嵌共享基础样式（`text/css; charset=utf-8`，`Cache-Control: no-cache`，`X-Content-Type-Options: nosniff`）；按当前 `activeTheme` 自动追加该主题 `ui.css`（或 `"default"` 时兼容旧版 `data/theme/ui.css`），符号链接逃逸返回 `403` |
 | `GET /ui/v1/theme.js`（及 `HEAD`） | 无 | 返回内嵌共享主题桥接与辅助脚本（`text/javascript; charset=utf-8`，`Cache-Control: no-cache`，`X-Content-Type-Options: nosniff`） |
-| `GET /ui/{*path}` | 无 | 严格锁定前缀兜底：未知共享资产路径一律返回 `404 Not Found` JSON，永不回退至 `data/theme/` |
-| `GET /api/me` | 无（读取当前 Cookie 状态） | 返回 `{ siteTitle, siteDescription, defaultAccent, isAdmin, adminEnabled, themeSource }`；`themeSource` 为 `"custom"` 或 `"embedded"`；公共前端仅当 `isAdmin === true` 时显示「管理 / 设置」入口 |
+| `GET /ui/{*path}` | 无 | 严格锁定前缀兜底：未知共享资产路径一律返回 `404 Not Found` JSON，永不回退至外置主题目录 |
+| `GET /api/me` | 无（读取当前 Cookie 状态） | 返回 `{ siteTitle, siteDescription, defaultAccent, isAdmin, adminEnabled, activeTheme, themeSource }`；`themeSource` 为 `"custom"` 或 `"embedded"`；公共前端仅当 `isAdmin === true` 时显示「管理 / 设置」入口 |
 | `GET /api/tools` | 无 | 返回公开已发布工具（`draft: false`）的元数据 JSON 数组（按分类与名称稳定排序），支持 `?q=关键词&category=分类&tag=标签`；每项包含归一化清单字段（含 `draft`）及 `entryUrl`（如 `"/t/dynamic-favicon/index.html"`）。仅当本地显式开启 `--include-drafts` 时包含草稿 |
 | `GET /t/{id}/{*path}` | 公开工具无需鉴权；草稿工具需 Admin Session 或 `--include-drafts` | 托管已注册工具 `{id}` 目录下的静态文件（访问 `/t/{id}` 或 `/t/{id}/` 重定向至 `/t/{id}/{entry}`）。若目标工具为 `draft: true` 且访客无权限，返回 `404` |
 
@@ -213,10 +232,15 @@ ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理�
 | `POST /api/admin/tools/upload` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | `multipart/form-data`（字段 `file`）上传 `.zip` 工具包；校验通过后原子写入/覆盖 `tools/{id}/` 并刷新内存索引（新建 `201`，覆盖更新 `200`）；校验失败返回结构化错误 JSON（`400` / `413` / `422`） |
 | `PATCH /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 提交 JSON `{ "draft": true \| false }`，原子写回 `tools/{id}/manifest.json` 并立即同步内存索引，返回更新后的工具元数据 JSON（不存在返回 `404`） |
 | `DELETE /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 删除指定工具目录并同步移除内存索引，成功返回 `204 No Content`，不存在返回 `404` |
-| `GET /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 读取当前站点设置 `{ siteTitle, siteDescription, defaultAccent }` |
+| `GET /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 读取当前站点设置 `{ siteTitle, siteDescription, defaultAccent, activeTheme }` |
 | `PUT /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 更新站点设置（支持全量或部分字段），校验通过后原子写入 `<data-dir>/settings.json` 并刷新内存状态：`siteTitle` 非空最长 80 字符、`siteDescription` 最长 240 字符、`defaultAccent` 为合法 `#rgb` / `#rrggbb` 十六进制色值 |
+| `GET /api/admin/themes` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 返回内置 `default` 与 `data/themes/` 下全部合法已安装主题数组（含 `short`、`name`、`version`、`description`、`author`、`url`、`builtin`、`active`、`hasCustomShell`、`hasUiCss`、`previewUrl`） |
+| `GET /api/admin/themes/{short}/preview` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 读取指定主题声明的 `preview` 文件并附带 `Content-Security-Policy: sandbox;`、`X-Content-Type-Options: nosniff`、`Cache-Control: no-cache` 返回 |
+| `POST /api/admin/themes/upload` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | `multipart/form-data`（字段 `file`）上传 `.zip` 主题包；支持 `?overwrite=false\|true`（默认 `true`，`false` 时同名冲突返回 `409 Conflict` `THEME_EXISTS` 含 `existing`/`incoming`）；同盘 `.staging/` 安全解包校验并原子替换（新建 `201`，覆盖 `200`） |
+| `PUT /api/admin/themes/active` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 提交 JSON `{ "short": "<short>" }` 切换当前激活主题（`"default"` 或已安装合法主题，否则 `404`/`422`），原子持久化至 `settings.json`，返回 `200 { "activeTheme": "<short>" }` |
+| `DELETE /api/admin/themes/{short}` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 删除指定已安装主题目录（禁止删除 `"default"` 返回 `400`，不存在返回 `404`）；若删除的恰为当前激活主题则自动回退 `activeTheme` 至 `"default"`，成功返回 `204 No Content` |
 
-> 所有错误响应统一采用 `{ "code": "...", "error": "..." }` JSON 结构，涵盖 `400`（`BAD_REQUEST`）、`401`（`unauthorized`）、`403`（`FORBIDDEN`）、`404`（`NOT_FOUND`）、`413`（`PAYLOAD_TOO_LARGE`）、`422`（`UNPROCESSABLE_ENTITY`）、`429`（`too_many_requests`）、`500`（`INTERNAL_ERROR`）。
+> 所有错误响应统一采用 `{ "code": "...", "error": "..." }` JSON 结构，涵盖 `400`（`BAD_REQUEST`）、`401`（`unauthorized`）、`403`（`FORBIDDEN`）、`404`（`NOT_FOUND`）、`409`（`TOOL_EXISTS` / `THEME_EXISTS`）、`413`（`PAYLOAD_TOO_LARGE`）、`422`（`UNPROCESSABLE_ENTITY`）、`429`（`too_many_requests`）、`500`（`INTERNAL_ERROR`）。
 
 ---
 
@@ -236,13 +260,13 @@ ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理�
    - 公共前端与管理后台渲染所有动态字段（工具名称、描述、标签、站点标题、错误提示等）一律使用纯文本绑定（`textContent`）或受控 DOM 属性，严禁拼接未转义 `innerHTML`。
 4. **写接口防沙箱跨源伪造（CSRF 防护）**
    - 尽管沙箱子工具处于不透明源（`Origin: null`），浏览器仍允许其发起无需预检的表单或 `POST` 请求。
-   - 所有状态变更接口（`/api/admin/login`、`/api/admin/logout`、`/api/admin/tools/upload`、`PATCH/DELETE /api/admin/tools/{id}`、`PUT /api/admin/settings`）必须校验来源：拒绝 `Origin: null` 或跨源 `Sec-Fetch-Site: cross-site` 请求；浏览器端管理后台统一附带 `X-ToolStow-Client: 1` 请求头触发 CORS 预检；无 `Origin` 头的 `curl` / Agent CLI 请求在携带有效 Bearer API Key 时正常放行。
+   - 所有状态变更接口（`/api/admin/login`、`/api/admin/logout`、`/api/admin/tools/upload`、`PATCH/DELETE /api/admin/tools/{id}`、`PUT /api/admin/settings`、`POST /api/admin/themes/upload`、`PUT /api/admin/themes/active`、`DELETE /api/admin/themes/{short}`）必须校验来源：拒绝 `Origin: null` 或跨源 `Sec-Fetch-Site: cross-site` 请求；浏览器端管理后台统一附带 `X-ToolStow-Client: 1` 请求头触发 CORS 预检；无 `Origin` 头的 `curl` / Agent CLI 请求在携带有效 Bearer API Key 时正常放行。
 5. **双密钥 fail-closed、防爆破与外置主题路由锁定**
    - `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY` 未配置时分别关闭对应登录/API 通道（fail-closed）；两者均使用常量时间比较函数 `constant_time_eq` 校验，抵御时序侧信道攻击。
    - 对失败的 Admin 登录与 Bearer 校验实施单客户端/单 IP 滑动窗口限流：**5 分钟内失败 5 次即返回 `429 Too Many Requests`**；登录成功后清除该客户端失败计数。
    - 若配置的密钥长度不足 16 字符，启动时记录 `WARN` 级提示日志，**任何日志中绝不打印密钥明文或 Session Token**。
-   - 严禁通过 URL Query 参数传递任何密钥；`TOOLSTOW_API_KEY` 仅接受 `Authorization: Bearer` 头且不可访问 `/admin` 登录与站点设置接口。
-   - 外置主题目录（`<data-dir>/theme/`）仅用于匹配公共前端静态资源及可选的 `ui.css` 级联覆盖（两者均强制执行规范路径 Containment 校验，符号链接逃逸返回 `403`）；`/admin*`、`/api/*`、`/t/*`、`/ui/*` 路由始终由后端最高优先级锁定，避免自定义主题误配或污染核心控制面与共享 SDK。
+   - 严禁通过 URL Query 参数传递任何密钥；`TOOLSTOW_API_KEY` 仅接受 `Authorization: Bearer` 头且不可访问 `/admin` 登录、站点设置接口与 `/api/admin/themes*` 多主题管理接口。
+   - 外置主题目录（`<data-dir>/themes/<short>/` 与向后兼容的 `<data-dir>/theme/`）仅用于匹配公共前端静态资源及可选的 `ui.css` 级联覆盖（均强制执行规范路径 Containment 校验，符号链接逃逸返回 `403`）；`/admin*`、`/api/*`、`/t/*`、`/ui/*` 路由始终由后端最高优先级锁定，避免自定义主题误配或污染核心控制面与共享 SDK。
 
 ---
 
@@ -257,7 +281,7 @@ ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理�
 | 语言与异步运行时 | Rust Stable (Edition 2024) + `tokio` | 单 Cargo 工程、单静态资源内嵌二进制，提交 `Cargo.lock` |
 | Web 框架与中间件 | `axum` + `tower-http` | 路由、`Multipart` 上传、`DefaultBodyLimit`、安全响应头与静态文件服务 |
 | 序列化与校验 | `serde` + `serde_json` | `manifest.json`、`settings.json` 反序列化与显式业务规则校验 |
-| 前端资源内嵌 | `rust-embed` + `mime_guess` | 将共享 UI SDK `ui/`、默认公共前端 `frontend/` 与管理后台 `admin/` 编译进单二进制；公共前端与 `/ui/v1/toolstow.css` 支持 `<data-dir>/theme/` 运行时覆盖与级联追加 |
+| 前端资源内嵌 | `rust-embed` + `mime_guess` | 将共享 UI SDK `ui/`、默认公共前端 `frontend/` 与管理后台 `admin/` 编译进单二进制；公共前端与 `/ui/v1/toolstow.css` 支持 `<data-dir>/themes/<short>/` 多主题热切换与 `ui.css` 级联追加 |
 | 目录热监听 | `notify` | 监听 `<data-dir>/tools/` 文件系统事件，配合防抖（Debounce）触发索引热更新 |
 | 归档解压 | `zip` + `tempfile` | 阻塞任务中安全流式解压、同盘暂存目录管理与原子替换 |
 | CLI 与 `.env` 配置 | `clap` (derive) + 内置零依赖 `.env` 解析器 | 优先级：`CLI 参数 > 系统环境变量 > .env 文件 > 默认值`（零 `unsafe`） |
@@ -273,7 +297,8 @@ ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理�
 | `--port` | `TOOLSTOW_PORT` | `8080` | 监听端口 |
 | `--data-dir` | `TOOLSTOW_DATA_DIR` | `./data` | 统一数据目录（含 `tools/`、可选 `theme/`、`settings.json`） |
 | `--tools-dir` | `TOOLSTOW_TOOLS_DIR` | `<data-dir>/tools` | 工具目录独立覆盖路径 |
-| `--theme-dir` | `TOOLSTOW_THEME_DIR` | `<data-dir>/theme` | 外置自定义公共前端目录覆盖路径 |
+| `--themes-dir` | `TOOLSTOW_THEMES_DIR` | `<data-dir>/themes` | 多主题包目录独立覆盖路径 |
+| `--theme-dir` | `TOOLSTOW_THEME_DIR` | `<data-dir>/theme` | 向后兼容单主题覆盖目录路径 |
 | `--max-upload-mb` | `TOOLSTOW_MAX_UPLOAD_MB` | `50` | 单次 `.zip` 上传体积上限（MB） |
 | `--include-drafts` | `TOOLSTOW_INCLUDE_DRAFTS` | `false` | 本地调试时在公开视图直接显示 `draft: true` 草稿工具 |
 | `--cookie-secure` | `TOOLSTOW_COOKIE_SECURE` | `false` | 强制为 Admin Session Cookie 附加 `Secure` 属性（HTTPS 反代推荐开启） |
@@ -306,24 +331,29 @@ toolstow/
 │   ├── index.html
 │   ├── admin.js
 │   └── admin.css
-├── examples/                 # 开箱验证示例工具
+├── examples/                 # 开箱验证示例工具与内置主题包
 │   ├── docker-cheatsheet/
 │   │   ├── manifest.json
 │   │   └── index.html
-│   └── dynamic-favicon/
-│       ├── manifest.json
-│       └── index.html
+│   ├── dynamic-favicon/
+│   │   ├── manifest.json
+│   │   └── index.html
+│   └── themes/
+│       ├── ascii-probe/      # 复古终端 TUI 完整主题 + ui.css
+│       ├── serverstatus/     # 高密度运维表格完整主题 + ui.css
+│       └── paper-warm/       # 温润羊皮纸纯皮肤主题（仅 ui.css）
 └── src/
     ├── main.rs               # CLI/.env 加载、日志初始化、组装 AppState、启动 Axum 与目录 Watcher
     ├── lib.rs                # 模块导出
     ├── config.rs             # CLI + 环境变量 + .env 解析与数据目录派生
-    ├── error.rs              # 统一业务错误类型（含 401/429）与 Axum IntoResponse JSON 映射
+    ├── error.rs              # 统一业务错误类型（含 401/409/429）与 Axum IntoResponse JSON 映射
     ├── manifest.rs           # Manifest 数据结构（含 draft）、默认值填充、路径与沙箱白名单校验
-    ├── settings.rs           # data/settings.json 持久化读写与校验（SettingsStore）
+    ├── settings.rs           # data/settings.json 持久化读写与校验（含 activeTheme）
+    ├── themes.rs             # data/themes/ 多主题校验、列表、预览解析、安全 ZIP 解包与删除
     ├── auth.rs               # 双密钥常量时间校验、256-bit 内存 Session、Cookie 构造与失败限流
     ├── registry.rs           # 内存注册表、草稿过滤查询、全量扫描与 notify 防抖监听
     ├── archive.rs            # ZIP 解包、防穿越/防炸弹、同盘原子替换与 draft 原子更新
-    └── routes.rs             # 公开/主题覆盖/管理 API 路由、双密钥鉴权、CSRF 防护与沙箱托管
+    └── routes.rs             # 公开/多主题解析/管理 API 路由、双密钥鉴权、CSRF 防护与沙箱托管
 ```
 
 ### 5.3 并发与工程硬约束

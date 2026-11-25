@@ -1,0 +1,9 @@
+{
+  "short": "ascii-probe",
+  "name": "ASCII Probe",
+  "version": "1.0.0",
+  "description": "Retro-modern terminal TUI theme inspired by monitor-theme-ascii-probe, featuring monospace typography, sharp 2px box chrome, and phosphor emerald accents.",
+  "author": "ToolStow",
+  "url": "https://github.com/monitor-probe/themes",
+  "preview": "preview.svg"
+}

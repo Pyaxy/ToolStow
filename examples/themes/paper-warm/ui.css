@@ -1,0 +1,81 @@
+/* ==========================================================================
+   ToolStow Skin-Only Theme: Paper Warm (ui.css)
+   No index.html needed! Appended to /ui/v1/toolstow.css to reskin BOTH
+   ToolStow's built-in shell and every embedded/standalone plugin at once.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --ts-canvas: #faf7f2;
+  --ts-surface: #f3ede2;
+  --ts-surface-hover: #ebe2d3;
+  --ts-border: #e7e0d6;
+  --ts-border-strong: #d2c6b6;
+  --ts-ink: #292524;
+  --ts-ink-secondary: #57534e;
+  --ts-ink-muted: #78716c;
+  --ts-inverted-bg: #b45309;
+  --ts-inverted-bg-hover: #92400e;
+  --ts-inverted-ink: #faf7f2;
+  --ts-accent: #b45309;
+  --ts-danger: #b91c1c;
+  --ts-danger-bg: #fef2f2;
+  --ts-danger-border: #fecaca;
+  --ts-success: #15803d;
+  --ts-code-bg: #292524;
+  --ts-code-ink: #faf7f2;
+
+  --ts-radius-sm: 10px;
+  --ts-radius-md: 12px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ts-canvas: #1c1917;
+  --ts-surface: #24201d;
+  --ts-surface-hover: #2e2926;
+  --ts-border: #2e2926;
+  --ts-border-strong: #443e3a;
+  --ts-ink: #f5f0e8;
+  --ts-ink-secondary: #d6cfc4;
+  --ts-ink-muted: #a89f93;
+  --ts-inverted-bg: #f59e0b;
+  --ts-inverted-bg-hover: #fbbf24;
+  --ts-inverted-ink: #1c1917;
+  --ts-accent: #f59e0b;
+  --ts-danger: #f87171;
+  --ts-danger-bg: #2e1817;
+  --ts-danger-border: #6b2926;
+  --ts-success: #4ade80;
+  --ts-code-bg: #141210;
+  --ts-code-ink: #f5f0e8;
+}
+
+/* Editorial serif accents & softer tactile cards across shell and plugins */
+.brand,
+.empty-hero h1,
+.tool-title-row h1,
+.ts-standalone-header h1,
+.ts-section-title {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", serif;
+  letter-spacing: -0.01em;
+}
+
+.ts-card,
+.tool-card {
+  box-shadow: 0 2px 8px rgba(41, 37, 36, 0.05);
+}
+
+:root[data-theme="dark"] .ts-card,
+:root[data-theme="dark"] .tool-card {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+
+.ts-input:focus,
+.ts-textarea:focus,
+.ts-select:focus,
+.search-wrap input:focus {
+  border-color: var(--ts-accent);
+}

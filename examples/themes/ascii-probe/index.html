@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ToolStow :: ASCII Probe</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="tui-shell">
+    <header class="tui-topbar">
+      <div class="tui-topbar-left">
+        <button
+          id="sidebar-toggle"
+          class="tui-btn tui-mobile-only"
+          type="button"
+          aria-label="切换侧边栏"
+          aria-expanded="false"
+          aria-controls="sidebar"
+        >[MENU]</button>
+
+        <a href="#" id="brand-link" class="tui-brand" aria-label="返回工具索引">
+          <span class="tui-prompt-sigil" aria-hidden="true">$</span>
+          <span id="brand-title">ToolStow</span>
+          <span class="tui-brand-flag" aria-hidden="true">--list</span>
+          <span class="tui-cursor" aria-hidden="true"></span>
+        </a>
+      </div>
+
+      <div class="tui-search-wrap">
+        <span class="tui-search-prefix" aria-hidden="true">grep&gt;</span>
+        <input
+          id="search-input"
+          class="tui-search-input"
+          type="search"
+          placeholder="搜索工具名 / 描述 / 标签 / ID..."
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="搜索工具"
+        >
+        <kbd class="tui-kbd" aria-hidden="true">⌘K</kbd>
+      </div>
+
+      <div class="tui-topbar-actions">
+        <label class="tui-accent-picker" title="子工具主题强调色">
+          <span class="ts-sr-only">子工具强调色</span>
+          <span id="accent-swatch" class="tui-accent-swatch" aria-hidden="true"></span>
+          <span class="tui-accent-label" aria-hidden="true">HEX</span>
+          <input id="accent-input" type="color" value="#10b981" aria-label="子工具强调色">
+        </label>
+
+        <button id="theme-toggle" class="tui-btn" type="button" aria-label="切换明暗模式">MODE:DARK</button>
+
+        <a id="admin-link" class="tui-btn tui-btn-accent" href="/admin" hidden>管理 / 设置</a>
+      </div>
+    </header>
+
+    <div id="status-banner" class="tui-status-banner" role="status" aria-live="polite" hidden></div>
+
+    <div class="tui-workspace">
+      <div id="sidebar-backdrop" class="tui-backdrop" hidden></div>
+
+      <aside id="sidebar" class="tui-sidebar" aria-label="终端导航">
+        <section class="tui-box">
+          <div class="tui-box-head">
+            <h2 class="tui-box-title">┌─ CATEGORIES</h2>
+            <button id="refresh-list-btn" class="tui-link-btn" type="button" title="重新加载列表">[SYNC]</button>
+          </div>
+          <ul id="category-list" class="tui-nav-list"></ul>
+        </section>
+
+        <section class="tui-box">
+          <div class="tui-box-head">
+            <h2 class="tui-box-title">┌─ TAGS</h2>
+            <button id="clear-filters-btn" class="tui-link-btn" type="button" hidden>[RESET]</button>
+          </div>
+          <div id="tag-list" class="tui-tag-list"></div>
+        </section>
+
+        <section class="tui-box tui-box-grow">
+          <div class="tui-box-head">
+            <h2 class="tui-box-title">┌─ TOOLS</h2>
+            <span id="tools-count" class="tui-mono-pill">0</span>
+          </div>
+          <ul id="tool-list" class="tui-tool-list"></ul>
+        </section>
+      </aside>
+
+      <main class="tui-main">
+        <section id="empty-state" class="tui-landing">
+          <div class="tui-hero-frame">
+            <div class="tui-hero-cmd">
+              <span class="tui-prompt-sigil" aria-hidden="true">root@toolstow:~$</span>
+              <span id="hero-cmd-text">toolstow --list --all</span>
+              <span id="empty-count" class="tui-mono-pill">0 READY</span>
+            </div>
+            <h1 id="empty-title" class="tui-hero-title">ToolStow</h1>
+            <p id="empty-desc" class="tui-hero-desc">
+              选择工具启动沙箱实例，或按 <kbd class="tui-inline-kbd">⌘K</kbd> 实时过滤。
+            </p>
+          </div>
+
+          <div id="empty-grid" class="tui-card-grid" aria-label="可用工具目录"></div>
+        </section>
+
+        <section id="tool-view" class="tui-tool-view" hidden>
+          <div class="tui-tool-bar">
+            <div class="tui-tool-meta">
+              <button
+                id="mobile-back-btn"
+                class="tui-btn tui-mobile-only"
+                type="button"
+                aria-label="返回列表"
+              >&lt;- LIST</button>
+
+              <span id="active-tool-icon" class="tui-tool-icon tui-tool-icon-lg"></span>
+
+              <div class="tui-tool-text">
+                <div class="tui-tool-title-row">
+                  <span class="tui-exec-tag" aria-hidden="true">EXEC</span>
+                  <h1 id="active-tool-name"></h1>
+                  <span id="active-tool-id" class="tui-mono-pill"></span>
+                  <span id="active-tool-version" class="tui-mono-pill"></span>
+                  <span id="active-tool-theme-badge" class="tui-mono-pill tui-pill-accent" hidden>THEME:SYNC</span>
+                </div>
+                <p id="active-tool-desc" class="tui-tool-desc"></p>
+              </div>
+            </div>
+
+            <div class="tui-tool-actions">
+              <button id="reload-tool-btn" class="tui-btn" type="button">刷新</button>
+              <a id="standalone-link" class="tui-btn" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
+              <button id="close-tool-btn" class="tui-btn" type="button" aria-label="关闭当前工具">× 关闭</button>
+            </div>
+          </div>
+
+          <div id="active-tool-tags" class="tui-active-tags"></div>
+          <div id="iframe-host" class="tui-iframe-host"></div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="tui-statusbar" aria-label="状态栏">
+      <div class="tui-statusbar-left">
+        <span class="tui-status-dot" aria-hidden="true"></span>
+        <span id="footer-status">SYS:READY</span>
+        <span class="tui-sep" aria-hidden="true">|</span>
+        <span id="footer-tools-stat">TOOLS:0/0</span>
+      </div>
+      <div class="tui-statusbar-right">
+        <span>⌘K SEARCH</span>
+        <span class="tui-sep" aria-hidden="true">·</span>
+        <span>ESC CLEAR</span>
+        <span class="tui-sep" aria-hidden="true">·</span>
+        <span>THEME:ASCII-PROBE</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

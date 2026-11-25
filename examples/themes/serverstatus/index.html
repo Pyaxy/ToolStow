@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ToolStow · ServerStatus Ops</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="ops-shell">
+    <header class="ops-topbar">
+      <div class="ops-brand-group">
+        <a href="#" id="brand-link" class="ops-brand" aria-label="返回工具目录">
+          <span class="ops-status-led" aria-hidden="true"></span>
+          <span id="brand-title">ToolStow</span>
+        </a>
+        <span id="site-desc-pill" class="ops-desc-pill"></span>
+      </div>
+
+      <div class="ops-search-wrap">
+        <svg class="ops-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input
+          id="search-input"
+          class="ops-search-input"
+          type="search"
+          placeholder="检索工具名、ID、描述或标签..."
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="搜索工具"
+        >
+        <kbd class="ops-kbd" aria-hidden="true">⌘K</kbd>
+      </div>
+
+      <div class="ops-topbar-actions">
+        <label class="ops-accent-picker" title="子工具主题强调色">
+          <span class="ts-sr-only">子工具强调色</span>
+          <span id="accent-swatch" class="ops-accent-swatch" aria-hidden="true"></span>
+          <input id="accent-input" type="color" value="#2563eb" aria-label="子工具强调色">
+        </label>
+
+        <button id="theme-toggle" class="ops-btn" type="button" aria-label="切换明暗模式">暗色</button>
+
+        <a id="admin-link" class="ops-btn ops-btn-primary" href="/admin" hidden>管理 / 设置</a>
+      </div>
+    </header>
+
+    <div id="status-banner" class="ops-status-banner" role="status" aria-live="polite" hidden></div>
+
+    <!-- Directory View: Compact Top Filter Strip + High-Density Table -->
+    <main id="directory-view" class="ops-directory">
+      <section class="ops-filter-strip" aria-label="筛选与统计">
+        <div class="ops-filter-top">
+          <div class="ops-metrics" aria-label="运行指标">
+            <span class="ops-metric">
+              <span class="ops-metric-dot" aria-hidden="true"></span>
+              <span>TOTAL</span>
+              <strong id="stat-total">0</strong>
+            </span>
+            <span class="ops-metric">
+              <span>SHOWN</span>
+              <strong id="stat-shown">0</strong>
+            </span>
+            <span class="ops-metric">
+              <span>GROUPS</span>
+              <strong id="stat-cats">0</strong>
+            </span>
+          </div>
+
+          <div id="category-tabs" class="ops-cat-tabs" role="tablist" aria-label="分类筛选"></div>
+
+          <div class="ops-strip-actions">
+            <button id="clear-filters-btn" class="ops-btn ops-btn-xs" type="button" hidden>重置筛选</button>
+            <button id="refresh-list-btn" class="ops-btn ops-btn-xs" type="button" title="刷新列表">刷新</button>
+          </div>
+        </div>
+
+        <div class="ops-tag-bar">
+          <span class="ops-tag-bar-label">TAGS</span>
+          <div id="tag-list" class="ops-tag-list"></div>
+        </div>
+      </section>
+
+      <section class="ops-table-card" aria-label="工具列表">
+        <div class="ops-table-wrap">
+          <table class="ops-table">
+            <thead>
+              <tr>
+                <th scope="col" class="col-tool">工具 / 描述</th>
+                <th scope="col" class="col-id">ID</th>
+                <th scope="col" class="col-cat">分类</th>
+                <th scope="col" class="col-tags">标签</th>
+                <th scope="col" class="col-ver">版本</th>
+                <th scope="col" class="col-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tool-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Active Tool Workspace Pane -->
+    <section id="tool-view" class="ops-workspace" hidden>
+      <div class="ops-workspace-bar">
+        <div class="ops-workspace-left">
+          <button id="back-to-list-btn" class="ops-btn ops-btn-xs" type="button">← 返回列表</button>
+
+          <select id="quick-switcher" class="ops-quick-select" aria-label="快速切换工具"></select>
+
+          <span id="active-tool-icon" class="ops-tool-icon ops-tool-icon-lg"></span>
+
+          <div class="ops-tool-meta">
+            <div class="ops-tool-title-row">
+              <h1 id="active-tool-name"></h1>
+              <code id="active-tool-id" class="ops-code-pill"></code>
+              <span id="active-tool-version" class="ops-code-pill"></span>
+              <span id="active-tool-theme-badge" class="ops-sync-pill" hidden>theme-sync</span>
+            </div>
+            <p id="active-tool-desc" class="ops-tool-desc"></p>
+          </div>
+        </div>
+
+        <div class="ops-workspace-actions">
+          <button id="reload-tool-btn" class="ops-btn ops-btn-xs" type="button">刷新</button>
+          <a id="standalone-link" class="ops-btn ops-btn-xs ops-btn-primary" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
+        </div>
+      </div>
+
+      <div id="active-tool-tags" class="ops-active-tags"></div>
+      <div id="iframe-host" class="ops-iframe-host"></div>
+    </section>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

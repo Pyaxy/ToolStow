@@ -1,0 +1,9 @@
+{
+  "short": "serverstatus",
+  "name": "ServerStatus Ops",
+  "version": "1.0.0",
+  "description": "High-density tabular ops-console theme inspired by monitor-theme-serverstatus, with a compact filter strip, dense tool directory table, and cool slate-blue palette.",
+  "author": "ToolStow",
+  "url": "https://github.com/monitor-probe/themes",
+  "preview": "preview.svg"
+}

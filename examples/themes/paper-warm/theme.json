@@ -1,0 +1,9 @@
+{
+  "short": "paper-warm",
+  "name": "Paper Warm",
+  "version": "1.0.0",
+  "description": "Warm editorial parchment skin-only theme (no custom HTML/JS). Uses a concise ui.css cascade to reskin both ToolStow's built-in shell and every plugin.",
+  "author": "ToolStow",
+  "url": "https://github.com/monitor-probe/themes",
+  "preview": "preview.svg"
+}
