@@ -8,7 +8,8 @@ Use this specification whenever generating, packaging, or publishing a self-cont
 
 - **Zero-build & self-contained**: Output plain HTML, CSS, and vanilla JS (a single `index.html` is ideal for small utilities; split local relative assets only when needed). Avoid external CDN dependencies so the tool works offline and inside strict sandboxes.
 - **Opaque-origin safe**: Every tool runs inside a dual sandbox (`<iframe sandbox="...">` + `Content-Security-Policy: sandbox ...`) with an opaque origin (`Origin: null`). Never assume same-origin browser storage is available.
-- **Standalone-ready & theme-aware**: Provide default `:root` CSS variables so the tool looks complete when opened directly at `/t/{id}/index.html`, and subscribe to `toolstow:theme` to mirror the host's Light/Dark mode and accent color in real time.
+- **Shared UI SDK (`/ui/v1/`)**: Every native ToolStow plugin MUST load `/ui/v1/toolstow.css` and `/ui/v1/theme.js` in `<head>` to inherit the host's minimalist monochrome design system, automatic Light/Dark & accent sync, zero-FOUC first paint, and any `data/theme/ui.css` site-wide reskin automatically.
+- **No duplicate top headers inside iframes**: The ToolStow shell already renders the active tool's icon, title, and description in its top bar. Start directly with functional controls; wrap any standalone header in `.ts-standalone-only`.
 - **Draft-friendly publishing**: Tools support a Hugo-style `"draft": true` flag so AI agents can publish work-in-progress tools for admin preview before making them public.
 
 ---
@@ -88,7 +89,7 @@ Full example:
 | `entry` | `string` | No | `"index.html"` | Safe relative path to an existing regular HTML file (no leading `/`, `..`, `\`, or URL scheme). |
 | `runtime` | `"static"` | No | `"static"` | Only `"static"` is currently supported. Declaring `"script"` is rejected. |
 | `draft` | `boolean` | No | `false` | Hugo-style visibility flag. When `true`, the tool is hidden from public `GET /api/tools` and returns `404` on `/t/{id}/*` for anonymous visitors; visible only to an authenticated Admin session or when the host runs with `--include-drafts`. |
-| `themeAware` | `boolean` | No | `false` | Set `true` if the tool listens for `toolstow:theme` messages. |
+| `themeAware` | `boolean` | No | `false` | Set `true` for plugins using `/ui/v1/theme.js` (the host also syncs automatically once `toolstow:ready` is received). |
 | `sandbox` | `string[]` | No | `["allow-scripts", "allow-downloads", "allow-forms"]` | Requested iframe sandbox tokens, filtered by the host allowlist. |
 
 ### Sandbox Token Allowlist
@@ -113,8 +114,8 @@ Because tools run in an opaque origin (`Origin: null`):
 1. **No unguarded `localStorage` / `sessionStorage` / `document.cookie`**
    - Direct calls like `localStorage.getItem(...)` throw `SecurityError` in sandboxed iframes and will break script initialization.
    - Keep state in memory, URL hash, or file export/import (Blob download / `<input type="file">`). Never call `localStorage` without a `try/catch` (better: omit it completely).
-2. **Clipboard API fallback**
-   - `navigator.clipboard.writeText()` may reject inside a sandboxed iframe or non-HTTPS origin. Always provide a fallback using a temporary `<textarea>` + `document.execCommand("copy")`, and degrade gracefully if both are blocked.
+2. **Use `window.ToolStow.copy()` for clipboard**
+   - `navigator.clipboard.writeText()` may reject inside a sandboxed iframe or non-HTTPS origin. Use `await window.ToolStow.copy(text, fallbackEl)` from `/ui/v1/theme.js`, which handles the 3-tier sandbox-safe fallback (`navigator.clipboard` -> temporary `<textarea>` + `execCommand("copy")` -> optional DOM Range selection) automatically.
 3. **File downloads**
    - Include `"allow-downloads"` in `manifest.json`'s `sandbox` array, and export files via `Blob` + `URL.createObjectURL()` + `<a download="filename">`.
 4. **No calls to ToolStow host admin APIs**
@@ -124,71 +125,153 @@ Because tools run in an opaque origin (`Origin: null`):
 
 ---
 
-## 5. Theme Synchronization (`toolstow:theme` & `toolstow:ready`)
+## 5. Shared UI SDK (`/ui/v1/toolstow.css` + `/ui/v1/theme.js`)
 
-When `themeAware: true` is declared in `manifest.json`:
+ToolStow serves a locked shared UI SDK at `/ui/v1/toolstow.css` and `/ui/v1/theme.js` (also shared by the host shell and `/admin`). When the host operator places an optional `data/theme/ui.css`, ToolStow automatically appends it to `/ui/v1/toolstow.css`, reskinning the host and every plugin in unison.
 
-1. The host posts `{ type: "toolstow:theme", payload: { mode: "light" | "dark", accent: "#rrggbb" } }` whenever the iframe loads, when the tool posts `{ type: "toolstow:ready" }`, and whenever the user toggles Light/Dark mode or changes the accent color.
-2. Because the tool runs in an opaque origin, `window.parent.postMessage({ type: "toolstow:ready" }, "*")` must use `"*"` as `targetOrigin`.
+### Mandatory `<head>` Includes
 
-### Copy-Paste Boilerplate
+Every native ToolStow plugin MUST include both lines in `<head>` (do **NOT** copy-paste `:root` color palettes or manual `postMessage` theme listeners):
 
 ```html
-<style>
-  :root {
-    --accent: #18181b;
-    --bg: #ffffff;
-    --surface: #fafafa;
-    --text: #09090b;
-    --muted: #71717a;
-    --border: #e5e5e5;
-  }
-
-  :root[data-theme="dark"] {
-    --accent: #fafafa;
-    --bg: #09090b;
-    --surface: #111113;
-    --text: #fafafa;
-    --muted: #a1a1aa;
-    --border: #27272a;
-  }
-
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: system-ui, -apple-system, sans-serif;
-  }
-</style>
-
-<script>
-  function applyToolStowTheme(payload) {
-    if (!payload || typeof payload !== "object") return;
-    if (payload.mode === "dark" || payload.mode === "light") {
-      document.documentElement.dataset.theme = payload.mode;
-    }
-    if (typeof payload.accent === "string" && /^#[0-9a-fA-F]{3,8}$/.test(payload.accent)) {
-      document.documentElement.style.setProperty("--accent", payload.accent);
-    }
-  }
-
-  window.addEventListener("message", (event) => {
-    if (event.data && event.data.type === "toolstow:theme") {
-      applyToolStowTheme(event.data.payload);
-    }
-  });
-
-  // Fallback for standalone viewing (/t/{id}/index.html)
-  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    document.documentElement.dataset.theme = "dark";
-  }
-
-  // Handshake so the host immediately sends the current theme
-  if (window.parent && window.parent !== window) {
-    window.parent.postMessage({ type: "toolstow:ready" }, "*");
-  }
-</script>
+<link rel="stylesheet" href="/ui/v1/toolstow.css">
+<script src="/ui/v1/theme.js"></script>
 ```
+
+> Load `<script src="/ui/v1/theme.js"></script>` synchronously in `<head>` (without `defer`/`async`) so it sets `data-embed` and `data-theme` from the initial query parameters (`?theme=...&accent=...`) or OS preference before first paint, eliminating dark-mode white flash (FOUC).
+
+### 3-Layer UI Design Boundary
+
+Follow this strict 3-layer separation so plugins feel native to ToolStow without constraining tool functionality:
+
+1. **Layer 1 — Shared controls & chrome (MUST reuse SDK)**:
+   - Use `.ts-*` primitives for pages, cards, buttons, inputs, selects, textareas, tabs, badges, code blocks, empty states, and toasts.
+   - Reference `var(--ts-*)` tokens for any custom border, surface, text, radius, spacing, or font styling.
+   - **NEVER** hardcode UI chrome hex/rgb colors, decorative background gradients, heavy drop shadows, or custom external web fonts.
+2. **Layer 2 — Functional layout (MAY write minimal scoped CSS)**:
+   - Plugins MAY add a small `<style>` block for tool-specific layout structure: CSS Grid/Flex templates, panel widths, responsive media queries, and spacing using `var(--ts-space-*)`.
+3. **Layer 3 — Domain content visuals (FREE domain colors)**:
+   - Canvas/SVG artwork, color pickers/swatches, image previews, charts, syntax highlighting, and diagram payloads may freely use domain-specific colors.
+
+### No Duplicate Top Headers Inside Iframes
+
+- **FORBIDDEN inside the ToolStow shell**: Do NOT render a persistent top banner/hero/title `<h1>` repeating the tool name already shown in the host shell's top bar. Start directly with functional controls (search bar, toolbar, form inputs, split workspace).
+- **Standalone header pattern**: If you want a page title when the user opens the tool directly in a new tab at `/t/{id}/index.html`, wrap it in `.ts-standalone-only` (optionally paired with `.ts-standalone-header`):
+  ```html
+  <header class="ts-standalone-only ts-standalone-header">
+    <h1>🛠️ 工具名称</h1>
+  </header>
+  ```
+  `/ui/v1/theme.js` automatically sets `data-embed="true"` inside an iframe and `toolstow.css` hides `.ts-standalone-only`.
+
+### Minimal Copy-Paste Starter Template
+
+```html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>示例微工具</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <script src="/ui/v1/theme.js"></script>
+  <style>
+    /* Layer 2: minimal tool-specific layout only */
+    .io-area {
+      min-height: 220px;
+      font-family: var(--ts-font-mono);
+    }
+  </style>
+</head>
+<body>
+  <div class="ts-page">
+    <header class="ts-standalone-only ts-standalone-header">
+      <h1>🛠️ 示例微工具</h1>
+    </header>
+
+    <div class="ts-toolbar">
+      <button id="run-btn" class="ts-btn ts-btn-primary" type="button">转换</button>
+      <button id="copy-btn" class="ts-btn" type="button">复制结果</button>
+      <span id="meta-badge" class="ts-badge ts-badge-mono">0 字符</span>
+    </div>
+
+    <div class="ts-split">
+      <section class="ts-card ts-stack">
+        <div class="ts-card-header">
+          <h2 class="ts-section-title">输入</h2>
+        </div>
+        <textarea id="input" class="ts-textarea io-area" placeholder="在此粘贴内容..."></textarea>
+      </section>
+
+      <section class="ts-card ts-stack">
+        <div class="ts-card-header">
+          <h2 class="ts-section-title">输出</h2>
+        </div>
+        <pre id="output" class="ts-code io-area"></pre>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const inputEl = document.getElementById("input");
+    const outputEl = document.getElementById("output");
+    const metaBadge = document.getElementById("meta-badge");
+
+    function update() {
+      const value = inputEl.value.trim();
+      outputEl.textContent = value;
+      metaBadge.textContent = `${value.length} 字符`;
+    }
+
+    document.getElementById("run-btn").addEventListener("click", update);
+    document.getElementById("copy-btn").addEventListener("click", async () => {
+      const ok = await window.ToolStow.copy(outputEl.textContent, outputEl);
+      window.ToolStow.toast(ok ? "已复制到剪贴板" : "复制受限，已选中文本请按 Cmd/Ctrl+C");
+    });
+
+    // Optional: react to host theme / accent changes for domain visuals (Canvas/SVG)
+    window.ToolStow.onThemeChange(({ mode, accent }) => {
+      // e.g. redraw canvas using mode ("light" | "dark") and accent ("#rrggbb")
+      void mode;
+      void accent;
+    });
+  </script>
+</body>
+</html>
+```
+
+### CSS Tokens Cheat Sheet (`var(--ts-*)`)
+
+| Category | Tokens |
+| :--- | :--- |
+| **Surfaces & Borders** | `--ts-canvas`, `--ts-surface`, `--ts-surface-hover`, `--ts-border`, `--ts-border-strong` |
+| **Text / Ink** | `--ts-ink`, `--ts-ink-secondary`, `--ts-ink-muted` |
+| **Inverted & Semantic** | `--ts-inverted-bg`, `--ts-inverted-ink`, `--ts-accent`, `--ts-danger`, `--ts-success` |
+| **Code Blocks** | `--ts-code-bg`, `--ts-code-ink` |
+| **Radius & Spacing** | `--ts-radius-sm` (`6px`), `--ts-radius-md` (`8px`), `--ts-space-1`..`--ts-space-5` (`4px`..`20px`) |
+| **Typography** | `--ts-font-sans`, `--ts-font-mono` |
+
+### `.ts-*` Component Primitives Cheat Sheet
+
+| Group | Classes |
+| :--- | :--- |
+| **Page & Layout** | `.ts-page`, `.ts-page-narrow`, `.ts-toolbar`, `.ts-row`, `.ts-stack`, `.ts-split`, `.ts-grid` |
+| **Containers & Text** | `.ts-card`, `.ts-card-header`, `.ts-section-title`, `.ts-label`, `.ts-help`, `.ts-muted`, `.ts-empty` |
+| **Standalone Header** | `.ts-standalone-only` (hidden when `data-embed="true"`), `.ts-standalone-header` |
+| **Buttons** | `.ts-btn`, `.ts-btn-primary`, `.ts-btn-accent`, `.ts-btn-ghost`, `.ts-btn-danger`, `.ts-btn-sm` |
+| **Forms** | `.ts-input`, `.ts-textarea`, `.ts-select` |
+| **Tabs, Badges & Code** | `.ts-tabs`, `.ts-tab` (`.active`), `.ts-badge`, `.ts-badge-mono`, `.ts-kbd`, `.ts-code-row`, `.ts-code`, `.ts-toast` |
+
+### `window.ToolStow` JS Helper Cheat Sheet
+
+Provided automatically by `/ui/v1/theme.js` (zero `innerHTML`, zero `localStorage`):
+
+| Method | Signature | Behavior |
+| :--- | :--- | :--- |
+| `getTheme` | `window.ToolStow.getTheme()` | Returns `{ mode: "light" \| "dark", accent: "#rrggbb", embedded: boolean, tokens: Record<string, string> }`. |
+| `onThemeChange` | `window.ToolStow.onThemeChange(fn)` | Subscribes `fn(theme)` to live host `toolstow:theme` updates (and standalone OS theme changes); returns an unsubscribe function. |
+| `copy` | `await window.ToolStow.copy(text, fallbackEl?)` | 3-tier sandbox-safe copy (`navigator.clipboard.writeText` -> temp `<textarea>` + `execCommand("copy")` -> optional DOM Range selection on `fallbackEl`). Returns `Promise<boolean>`. |
+| `toast` | `window.ToolStow.toast(msg, durationMs?)` | Displays a monochrome `.ts-toast` notification using `textContent` (default `1800` ms). |
 
 ---
 
@@ -266,11 +349,11 @@ curl -i -X DELETE "$TOOLSTOW_URL/api/admin/tools/my-tool" \
 
 Before packaging and publishing a generated tool, verify:
 
-- [ ] `manifest.json` is valid JSON, `id` matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, and `runtime` is `"static"`.
+- [ ] `manifest.json` is valid JSON, `id` matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, `runtime` is `"static"`, and `themeAware` is `true`.
 - [ ] `"draft"` is set appropriately (`false` to publish immediately, or `true` to stage for admin review first).
-- [ ] `entry` exists inside the tool folder (e.g. `index.html`) and uses no external CDN URLs unless strictly required.
-- [ ] Zero unguarded `localStorage`, `sessionStorage`, or `document.cookie` calls.
-- [ ] If `themeAware: true`, default `:root` variables are defined, `toolstow:theme` is handled, and `toolstow:ready` is posted to `window.parent`.
+- [ ] `entry` loads `<link rel="stylesheet" href="/ui/v1/toolstow.css">` and `<script src="/ui/v1/theme.js"></script>` in `<head>`, with no external CDN URLs.
+- [ ] UI controls and chrome reuse `.ts-*` classes and `var(--ts-*)` tokens (no hardcoded UI chrome colors, no duplicate top `<h1>` header inside iframe; standalone headers wrapped in `.ts-standalone-only`).
+- [ ] Zero unguarded `localStorage`, `sessionStorage`, `document.cookie`, or raw `innerHTML` usage.
+- [ ] Clipboard actions use `window.ToolStow.copy(text, fallbackEl)` and `window.ToolStow.toast(msg)`.
 - [ ] If the tool exports files, `"allow-downloads"` is included in `sandbox`.
-- [ ] If the tool copies text, a clipboard fallback is implemented.
 - [ ] API calls use `/api/admin/tools*` with `-H "Authorization: Bearer $TOOLSTOW_API_KEY"` (never query params, never `TOOLSTOW_ADMIN_KEY`).

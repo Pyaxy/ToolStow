@@ -1,118 +1,19 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>动态强调色 Favicon 生成器</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <script src="/ui/v1/theme.js"></script>
   <style>
-    :root {
-      --accent: #2563eb;
-      --bg: #f8fafc;
-      --surface: #ffffff;
-      --surface-alt: #f1f5f9;
-      --text: #0f172a;
-      --muted: #64748b;
-      --border: #e2e8f0;
-      --success: #16a34a;
-    }
-
-    :root[data-theme="dark"] {
-      --bg: #0f172a;
-      --surface: #1e293b;
-      --surface-alt: #162033;
-      --text: #f1f5f9;
-      --muted: #94a3b8;
-      --border: #334155;
-      --success: #22c55e;
-    }
-
-    *,
-    *::before,
-    *::after {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      padding: 20px;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .container {
-      max-width: 960px;
-      margin: 0 auto;
-    }
-
-    .header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 18px;
-    }
-
-    .header h1 {
-      margin: 0;
-      font-size: 20px;
-    }
-
-    .sync-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      font-size: 12px;
-      color: var(--muted);
-    }
-
     .sync-dot {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      background: var(--accent);
-    }
-
-    .layout {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-    }
-
-    @media (max-width: 720px) {
-      body {
-        padding: 12px;
-      }
-
-      .layout {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    .panel {
-      padding: 16px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: var(--surface);
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .panel h2 {
-      margin: 0;
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+      background: var(--ts-accent);
+      display: inline-block;
+      flex-shrink: 0;
     }
 
     .field {
@@ -121,54 +22,33 @@
       gap: 6px;
     }
 
-    .field-row {
+    .field-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: var(--ts-space-2);
       flex-wrap: wrap;
     }
 
-    label {
-      font-size: 13px;
-      font-weight: 500;
-    }
-
-    input[type="text"],
-    select {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg);
-      color: var(--text);
-      font: inherit;
-    }
-
-    input[type="range"] {
-      width: 100%;
-      accent-color: var(--accent);
-    }
-
-    input[type="color"] {
+    .color-picker {
       width: 38px;
-      height: 32px;
+      height: 34px;
       padding: 2px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg);
+      border: 1px solid var(--ts-border);
+      border-radius: var(--ts-radius-sm);
+      background: var(--ts-canvas);
       cursor: pointer;
-    }
-
-    .color-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      flex-shrink: 0;
     }
 
     .hex-input {
-      width: 100px !important;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      width: 108px;
+      font-family: var(--ts-font-mono);
+    }
+
+    .range-input {
+      width: 100%;
+      accent-color: var(--ts-accent);
     }
 
     .checkbox-label {
@@ -177,56 +57,29 @@
       gap: 6px;
       cursor: pointer;
       font-size: 13px;
+      color: var(--ts-ink-secondary);
     }
 
     .checkbox-label input {
-      accent-color: var(--accent);
-    }
-
-    .btn-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .btn {
-      padding: 7px 14px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--surface-alt);
-      color: var(--text);
-      font: inherit;
-      font-size: 13px;
-      cursor: pointer;
-    }
-
-    .btn:hover {
-      border-color: var(--accent);
-    }
-
-    .btn-primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #ffffff;
-      font-weight: 600;
+      accent-color: var(--ts-accent);
     }
 
     .preview-stage {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 16px;
-      padding: 20px;
-      border-radius: 8px;
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
+      gap: var(--ts-space-4);
+      padding: var(--ts-space-5);
+      border-radius: var(--ts-radius-md);
+      background: var(--ts-surface-hover);
+      border: 1px solid var(--ts-border);
     }
 
     .preview-sizes {
       display: flex;
       align-items: flex-end;
       justify-content: center;
-      gap: 18px;
+      gap: var(--ts-space-4);
       flex-wrap: wrap;
     }
 
@@ -236,14 +89,15 @@
       align-items: center;
       gap: 6px;
       font-size: 11px;
-      color: var(--muted);
+      font-family: var(--ts-font-mono);
+      color: var(--ts-ink-muted);
     }
 
     .preview-box {
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 6px;
+      border-radius: var(--ts-radius-sm);
     }
 
     .preview-box img {
@@ -255,12 +109,13 @@
       max-width: 280px;
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 8px 8px 0 0;
-      background: var(--surface);
-      border: 1px solid var(--border);
+      gap: var(--ts-space-2);
+      padding: var(--ts-space-2) var(--ts-space-3);
+      border-radius: var(--ts-radius-md) var(--ts-radius-md) 0 0;
+      background: var(--ts-canvas);
+      border: 1px solid var(--ts-border);
       font-size: 12px;
+      color: var(--ts-ink);
     }
 
     .tab-mock img {
@@ -275,65 +130,47 @@
       white-space: nowrap;
       flex: 1;
     }
-
-    .code-preview {
-      margin: 0;
-      padding: 10px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 12px;
-      overflow-x: auto;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-
-    .status-line {
-      min-height: 20px;
-      font-size: 12px;
-      color: var(--success);
-    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <header class="header">
+  <div class="ts-page">
+    <header class="ts-standalone-only ts-standalone-header">
       <h1>🎨 动态强调色 Favicon 生成器</h1>
-      <div class="sync-badge">
-        <span class="sync-dot" aria-hidden="true"></span>
-        <span id="host-theme-label">当前主站强调色：#2563eb</span>
-      </div>
     </header>
 
-    <div class="layout">
-      <section class="panel" aria-label="图标配置">
-        <h2>图标参数</h2>
-
-        <div class="field">
-          <label for="glyph-input">显示文字或 Emoji（建议 1–3 字符）</label>
-          <input id="glyph-input" type="text" maxlength="6" value="TS" placeholder="例如 TS / ⚡ / A">
+    <div class="ts-split">
+      <section class="ts-card" aria-label="图标配置">
+        <div class="ts-card-header">
+          <h2 class="ts-section-title">图标参数</h2>
+          <span class="ts-badge ts-badge-mono">
+            <span class="sync-dot" aria-hidden="true"></span>
+            <span id="host-theme-label">主站：#18181b</span>
+          </span>
         </div>
 
         <div class="field">
-          <div class="field-row">
-            <label for="bg-color-picker">强调色（背景主色）</label>
+          <label class="ts-label" for="glyph-input">显示文字或 Emoji（建议 1–3 字符）</label>
+          <input id="glyph-input" class="ts-input" type="text" maxlength="6" value="TS" placeholder="例如 TS / ⚡ / A">
+        </div>
+
+        <div class="field">
+          <div class="field-head">
+            <label class="ts-label" for="bg-color-picker">强调色（背景主色）</label>
             <label class="checkbox-label">
               <input id="follow-host" type="checkbox" checked>
               跟随主站强调色
             </label>
           </div>
-          <div class="color-row">
-            <input id="bg-color-picker" type="color" value="#2563eb" aria-label="选择背景强调色">
-            <input id="bg-color-hex" class="hex-input" type="text" value="#2563eb" maxlength="7" aria-label="背景十六进制色值">
-            <button id="resync-btn" class="btn" type="button">同步主站</button>
+          <div class="ts-row">
+            <input id="bg-color-picker" class="color-picker" type="color" value="#18181b" aria-label="选择背景强调色">
+            <input id="bg-color-hex" class="ts-input hex-input" type="text" value="#18181b" maxlength="7" aria-label="背景十六进制色值">
+            <button id="resync-btn" class="ts-btn ts-btn-sm" type="button">同步主站</button>
           </div>
         </div>
 
         <div class="field">
-          <label for="bg-style">背景样式</label>
-          <select id="bg-style">
+          <label class="ts-label" for="bg-style">背景样式</label>
+          <select id="bg-style" class="ts-select">
             <option value="gradient">强调色柔和渐变</option>
             <option value="solid">纯色填充</option>
             <option value="outline">浅底描边</option>
@@ -341,33 +178,33 @@
         </div>
 
         <div class="field">
-          <div class="field-row">
-            <label for="fg-color-picker">前景色（文字颜色）</label>
+          <div class="field-head">
+            <label class="ts-label" for="fg-color-picker">前景色（文字颜色）</label>
             <label class="checkbox-label">
               <input id="auto-contrast" type="checkbox" checked>
               自动高对比度
             </label>
           </div>
-          <div class="color-row">
-            <input id="fg-color-picker" type="color" value="#ffffff" aria-label="选择文字颜色">
-            <input id="fg-color-hex" class="hex-input" type="text" value="#ffffff" maxlength="7" aria-label="文字十六进制色值">
+          <div class="ts-row">
+            <input id="fg-color-picker" class="color-picker" type="color" value="#ffffff" aria-label="选择文字颜色">
+            <input id="fg-color-hex" class="ts-input hex-input" type="text" value="#ffffff" maxlength="7" aria-label="文字十六进制色值">
           </div>
         </div>
 
         <div class="field">
-          <div class="field-row">
-            <label for="radius-range">圆角比例</label>
-            <span id="radius-value">24%</span>
+          <div class="field-head">
+            <label class="ts-label" for="radius-range">圆角比例</label>
+            <span id="radius-value" class="ts-badge ts-badge-mono">24%</span>
           </div>
-          <input id="radius-range" type="range" min="0" max="50" value="24">
+          <input id="radius-range" class="range-input" type="range" min="0" max="50" value="24">
         </div>
 
         <div class="field">
-          <div class="field-row">
-            <label for="font-size-range">字号比例</label>
-            <span id="font-size-value">52%</span>
+          <div class="field-head">
+            <label class="ts-label" for="font-size-range">字号比例</label>
+            <span id="font-size-value" class="ts-badge ts-badge-mono">52%</span>
           </div>
-          <input id="font-size-range" type="range" min="28" max="76" value="52">
+          <input id="font-size-range" class="range-input" type="range" min="28" max="76" value="52">
         </div>
 
         <div class="field">
@@ -378,14 +215,16 @@
         </div>
       </section>
 
-      <section class="panel" aria-label="实时预览与导出">
-        <h2>实时预览</h2>
+      <section class="ts-card" aria-label="实时预览与导出">
+        <div class="ts-card-header">
+          <h2 class="ts-section-title">实时预览</h2>
+        </div>
 
         <div class="preview-stage">
           <div class="tab-mock" aria-label="浏览器标签页效果预览">
             <img id="preview-tab" alt="标签页预览">
             <span class="tab-mock-title">ToolStow — 个人微工具箱</span>
-            <span aria-hidden="true">×</span>
+            <span class="ts-muted" aria-hidden="true">×</span>
           </div>
 
           <div class="preview-sizes">
@@ -409,8 +248,8 @@
         </div>
 
         <div class="field">
-          <label for="png-size">PNG 导出分辨率</label>
-          <select id="png-size">
+          <label class="ts-label" for="png-size">PNG 导出分辨率</label>
+          <select id="png-size" class="ts-select">
             <option value="32">32×32（标准 Favicon）</option>
             <option value="64">64×64（高清 Favicon）</option>
             <option value="180">180×180（Apple Touch Icon）</option>
@@ -419,17 +258,15 @@
           </select>
         </div>
 
-        <div class="btn-row">
-          <button id="download-svg-btn" class="btn btn-primary" type="button">下载 SVG</button>
-          <button id="download-png-btn" class="btn btn-primary" type="button">下载 PNG</button>
-          <button id="copy-svg-btn" class="btn" type="button">复制 SVG 代码</button>
+        <div class="ts-row">
+          <button id="download-svg-btn" class="ts-btn ts-btn-primary" type="button">下载 SVG</button>
+          <button id="download-png-btn" class="ts-btn ts-btn-primary" type="button">下载 PNG</button>
+          <button id="copy-svg-btn" class="ts-btn" type="button">复制 SVG 代码</button>
         </div>
 
-        <div id="status-line" class="status-line" role="status" aria-live="polite"></div>
-
         <div class="field">
-          <label>HTML 引用示例</label>
-          <pre id="html-snippet" class="code-preview"></pre>
+          <span class="ts-label">HTML 引用示例</span>
+          <pre id="html-snippet" class="ts-code"></pre>
         </div>
       </section>
     </div>
@@ -437,11 +274,11 @@
 
   <script>
     const state = {
-      hostAccent: "#2563eb",
+      hostAccent: "#18181b",
       hostMode: "light",
       followHost: true,
       glyph: "TS",
-      bgColor: "#2563eb",
+      bgColor: "#18181b",
       bgStyle: "gradient",
       autoContrast: true,
       fgColor: "#ffffff",
@@ -451,7 +288,6 @@
       pngSize: 512,
       currentSvg: "",
       currentDataUrl: "",
-      statusTimer: null,
     };
 
     const els = {
@@ -474,7 +310,6 @@
       downloadSvgBtn: document.getElementById("download-svg-btn"),
       downloadPngBtn: document.getElementById("download-png-btn"),
       copySvgBtn: document.getElementById("copy-svg-btn"),
-      statusLine: document.getElementById("status-line"),
       htmlSnippet: document.getElementById("html-snippet"),
       previews: [
         document.getElementById("preview-tab"),
@@ -485,16 +320,14 @@
       ],
     };
 
-    function isHex6(val) {
-      return typeof val === "string" && /^#[0-9a-fA-F]{6}$/.test(val);
-    }
-
     function normalizeHex(val) {
       if (typeof val !== "string") return null;
       const trimmed = val.trim();
       if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
       if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
-        const r = trimmed[1], g = trimmed[2], b = trimmed[3];
+        const r = trimmed[1];
+        const g = trimmed[2];
+        const b = trimmed[3];
         return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
       }
       return null;
@@ -523,7 +356,7 @@
     function pickContrastColor(hex) {
       const { r, g, b } = hexToRgb(hex);
       const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-      return luminance > 0.62 ? "#0f172a" : "#ffffff";
+      return luminance > 0.62 ? "#09090b" : "#ffffff";
     }
 
     function escapeXml(str) {
@@ -554,7 +387,7 @@
         defs = `<defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="${accent}"/><stop offset="100%" stop-color="${accentDark}"/></linearGradient></defs>`;
         bgRect = `<rect width="${size}" height="${size}" rx="${rx}" fill="url(#g)"/>`;
       } else if (state.bgStyle === "outline") {
-        const fill = state.hostMode === "dark" ? "#0f172a" : "#ffffff";
+        const fill = state.hostMode === "dark" ? "#09090b" : "#ffffff";
         bgRect = `<rect x="5" y="5" width="${size - 10}" height="${size - 10}" rx="${Math.max(0, rx - 3)}" fill="${fill}" stroke="${accent}" stroke-width="10"/>`;
       } else {
         bgRect = `<rect width="${size}" height="${size}" rx="${rx}" fill="${accent}"/>`;
@@ -572,12 +405,10 @@
         .join("");
     }
 
-    function showStatus(msg) {
-      if (state.statusTimer) window.clearTimeout(state.statusTimer);
-      els.statusLine.textContent = msg;
-      state.statusTimer = window.setTimeout(() => {
-        els.statusLine.textContent = "";
-      }, 2600);
+    function notify(msg) {
+      if (window.ToolStow) {
+        window.ToolStow.toast(msg);
+      }
     }
 
     function triggerDownload(url, filename) {
@@ -604,7 +435,7 @@
       els.fgColorHex.disabled = state.autoContrast;
       els.radiusValue.textContent = `${state.radiusPct}%`;
       els.fontSizeValue.textContent = `${state.fontSizePct}%`;
-      els.hostThemeLabel.textContent = `当前主站强调色：${state.hostAccent}`;
+      els.hostThemeLabel.textContent = `主站：${state.hostAccent}`;
 
       const svg = buildSvg();
       state.currentSvg = svg;
@@ -625,7 +456,7 @@
       const url = URL.createObjectURL(blob);
       triggerDownload(url, "favicon.svg");
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      showStatus("已触发 favicon.svg 下载");
+      notify("已触发 favicon.svg 下载");
     }
 
     function downloadPng() {
@@ -635,7 +466,7 @@
       canvas.height = size;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
-        showStatus("无法初始化 Canvas 渲染上下文");
+        notify("无法初始化 Canvas 渲染上下文");
         return;
       }
 
@@ -649,63 +480,38 @@
           canvas.toBlob((blob) => {
             if (!blob) {
               triggerDownload(canvas.toDataURL("image/png"), filename);
-              showStatus(`已触发 ${filename} 下载`);
+              notify(`已触发 ${filename} 下载`);
               return;
             }
             const url = URL.createObjectURL(blob);
             triggerDownload(url, filename);
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-            showStatus(`已触发 ${filename} 下载`);
+            notify(`已触发 ${filename} 下载`);
           }, "image/png");
         } else {
           triggerDownload(canvas.toDataURL("image/png"), filename);
-          showStatus(`已触发 ${filename} 下载`);
+          notify(`已触发 ${filename} 下载`);
         }
       };
       img.onerror = () => {
-        showStatus("PNG 渲染失败，请改用 SVG 导出");
+        notify("PNG 渲染失败，请改用 SVG 导出");
       };
       img.src = state.currentDataUrl;
     }
 
     async function copySvgCode() {
-      let ok = false;
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        try {
-          await navigator.clipboard.writeText(state.currentSvg);
-          ok = true;
-        } catch {
-          ok = false;
-        }
-      }
-      if (!ok) {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = state.currentSvg;
-          ta.setAttribute("readonly", "");
-          ta.style.position = "fixed";
-          ta.style.top = "-9999px";
-          document.body.appendChild(ta);
-          ta.select();
-          ok = document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch {
-          ok = false;
-        }
-      }
-      showStatus(ok ? "SVG 代码已复制到剪贴板" : "剪贴板受限，请直接点击“下载 SVG”");
+      const ok = window.ToolStow ? await window.ToolStow.copy(state.currentSvg) : false;
+      notify(ok ? "SVG 代码已复制到剪贴板" : "剪贴板受限，请直接点击“下载 SVG”");
     }
 
-    function applyHostTheme(payload) {
-      if (!payload || typeof payload !== "object") return;
-      if (payload.mode === "dark" || payload.mode === "light") {
-        state.hostMode = payload.mode;
-        document.documentElement.dataset.theme = payload.mode;
+    function applyHostTheme(theme) {
+      if (!theme || typeof theme !== "object") return;
+      if (theme.mode === "dark" || theme.mode === "light") {
+        state.hostMode = theme.mode;
       }
-      const hex = normalizeHex(payload.accent);
+      const hex = normalizeHex(theme.accent);
       if (hex) {
         state.hostAccent = hex;
-        document.documentElement.style.setProperty("--accent", hex);
         if (state.followHost) {
           state.bgColor = hex;
         }
@@ -713,7 +519,6 @@
       render();
     }
 
-    // Bind controls
     els.glyphInput.addEventListener("input", (e) => {
       state.glyph = e.target.value;
       render();
@@ -747,7 +552,7 @@
       state.followHost = true;
       state.bgColor = state.hostAccent;
       render();
-      showStatus(`已同步主站强调色 ${state.hostAccent}`);
+      notify(`已同步主站强调色 ${state.hostAccent}`);
     });
 
     els.bgStyle.addEventListener("change", (e) => {
@@ -802,21 +607,13 @@
     els.downloadPngBtn.addEventListener("click", downloadPng);
     els.copySvgBtn.addEventListener("click", copySvgCode);
 
-    window.addEventListener("message", (event) => {
-      if (event.data && event.data.type === "toolstow:theme") {
-        applyHostTheme(event.data.payload);
-      }
-    });
-
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      state.hostMode = "dark";
-      document.documentElement.dataset.theme = "dark";
-    }
-
-    render();
-
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: "toolstow:ready" }, "*");
+    if (window.ToolStow) {
+      applyHostTheme(window.ToolStow.getTheme());
+      window.ToolStow.onThemeChange(({ mode, accent }) => {
+        applyHostTheme({ mode, accent });
+      });
+    } else {
+      render();
     }
   </script>
 </body>

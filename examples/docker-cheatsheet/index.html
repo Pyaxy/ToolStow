@@ -1,290 +1,108 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Docker 常用命令速查</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <script src="/ui/v1/theme.js"></script>
   <style>
-    :root {
-      --accent: #2563eb;
-      --bg: #f8fafc;
-      --surface: #ffffff;
-      --surface-alt: #f1f5f9;
-      --text: #0f172a;
-      --muted: #64748b;
-      --border: #e2e8f0;
-      --code-bg: #0f172a;
-      --code-text: #e2e8f0;
-      --success: #16a34a;
-    }
-
-    :root[data-theme="dark"] {
-      --bg: #0f172a;
-      --surface: #1e293b;
-      --surface-alt: #162033;
-      --text: #f1f5f9;
-      --muted: #94a3b8;
-      --border: #334155;
-      --code-bg: #020617;
-      --code-text: #e2e8f0;
-      --success: #22c55e;
-    }
-
-    *,
-    *::before,
-    *::after {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      padding: 20px;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .container {
-      max-width: 960px;
-      margin: 0 auto;
-    }
-
-    .header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-
-    .header h1 {
-      margin: 0;
-      font-size: 20px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .count-pill {
-      font-size: 12px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 999px;
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      color: var(--muted);
-    }
-
-    .controls {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-bottom: 18px;
-    }
-
-    .search-box {
-      display: flex;
-      gap: 8px;
-    }
-
-    .search-box input {
+    .search-input {
       flex: 1;
-      padding: 9px 12px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface);
-      color: var(--text);
-      font: inherit;
+      min-width: 220px;
     }
 
-    .search-box input:focus {
-      outline: 2px solid var(--accent);
-      outline-offset: -1px;
+    .shortcut-hint {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--ts-space-1);
+      font-size: 12px;
+      white-space: nowrap;
     }
 
-    .tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
+    .category-tabs {
+      align-self: flex-start;
     }
 
-    .tab-btn {
-      padding: 5px 12px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: var(--surface);
-      color: var(--text);
-      font: inherit;
-      font-size: 13px;
-      cursor: pointer;
+    .cmd-group {
+      margin-bottom: var(--ts-space-5);
     }
 
-    .tab-btn:hover {
-      border-color: var(--accent);
+    .cmd-group:last-child {
+      margin-bottom: 0;
     }
 
-    .tab-btn.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #ffffff;
+    .cmd-group-title {
+      margin-bottom: var(--ts-space-2);
     }
 
-    .group {
-      margin-bottom: 20px;
-    }
-
-    .group-title {
-      margin: 0 0 10px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-      color: var(--accent);
-      text-transform: uppercase;
-    }
-
-    .card-grid {
+    .cmd-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      gap: var(--ts-space-3);
     }
 
     @media (max-width: 520px) {
-      body {
-        padding: 12px;
+      .cmd-grid {
+        grid-template-columns: 1fr;
       }
 
-      .card-grid {
-        grid-template-columns: 1fr;
+      .shortcut-hint {
+        display: none;
       }
     }
 
     .cmd-card {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 12px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--surface);
-    }
-
-    .cmd-head {
-      display: flex;
-      align-items: flex-start;
       justify-content: space-between;
-      gap: 8px;
     }
 
     .cmd-title {
       font-weight: 600;
       font-size: 14px;
+      color: var(--ts-ink);
     }
 
     .cmd-note {
-      font-size: 12px;
-      color: var(--muted);
       margin-top: 2px;
-    }
-
-    .cmd-code-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 6px;
-      background: var(--code-bg);
-      color: var(--code-text);
-    }
-
-    .cmd-code {
-      flex: 1;
-      margin: 0;
-      overflow-x: auto;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 12.5px;
-      white-space: pre;
-    }
-
-    .copy-btn {
-      flex-shrink: 0;
-      padding: 4px 10px;
-      border: 1px solid var(--accent);
-      border-radius: 5px;
-      background: transparent;
-      color: #ffffff;
       font-size: 12px;
-      cursor: pointer;
+      color: var(--ts-ink-muted);
     }
 
-    .copy-btn:hover {
-      background: var(--accent);
+    .cmd-copy-btn {
+      flex-shrink: 0;
     }
 
-    .copy-btn.copied {
-      background: var(--success);
-      border-color: var(--success);
-      color: #ffffff;
-    }
-
-    .empty-msg {
-      padding: 32px 16px;
-      text-align: center;
-      color: var(--muted);
-      border: 1px dashed var(--border);
-      border-radius: 8px;
-      background: var(--surface);
-    }
-
-    .toast {
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      padding: 8px 14px;
-      border-radius: 6px;
-      background: var(--accent);
-      color: #ffffff;
-      font-size: 13px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.18s ease;
-    }
-
-    .toast.show {
-      opacity: 1;
+    .cmd-copy-btn.is-copied {
+      background: var(--ts-success);
+      border-color: var(--ts-success);
+      color: var(--ts-code-ink);
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <header class="header">
-      <h1>
-        <span>🐳 Docker 常用命令速查</span>
-        <span id="match-count" class="count-pill">0 条</span>
-      </h1>
-      <span class="count-pill">按 / 快速聚焦搜索</span>
+  <div class="ts-page">
+    <header class="ts-standalone-only ts-standalone-header">
+      <h1>🐳 Docker 常用命令速查</h1>
     </header>
 
-    <section class="controls">
-      <div class="search-box">
+    <section class="ts-stack">
+      <div class="ts-toolbar">
         <input
           id="filter-input"
+          class="ts-input search-input"
           type="search"
           placeholder="输入关键词过滤（如 logs、compose、prune、exec、port）..."
           autocomplete="off"
           aria-label="过滤 Docker 命令"
         >
+        <span id="match-count" class="ts-badge ts-badge-mono">0 条</span>
+        <span class="ts-muted shortcut-hint">按 <kbd class="ts-kbd">/</kbd> 聚焦</span>
       </div>
-      <div id="category-tabs" class="tabs" role="tablist" aria-label="命令分组"></div>
+      <div id="category-tabs" class="ts-tabs category-tabs" role="tablist" aria-label="命令分组"></div>
     </section>
 
     <main id="command-groups"></main>
   </div>
-
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script>
     const COMMANDS = [
@@ -465,75 +283,29 @@
     const state = {
       query: "",
       category: "全部",
-      toastTimer: null,
     };
 
     const filterInput = document.getElementById("filter-input");
     const categoryTabs = document.getElementById("category-tabs");
     const commandGroups = document.getElementById("command-groups");
     const matchCount = document.getElementById("match-count");
-    const toastEl = document.getElementById("toast");
-
-    function showToast(msg) {
-      if (state.toastTimer) window.clearTimeout(state.toastTimer);
-      toastEl.textContent = msg;
-      toastEl.classList.add("show");
-      state.toastTimer = window.setTimeout(() => {
-        toastEl.classList.remove("show");
-      }, 1800);
-    }
 
     async function copyCommand(text, codeEl, buttonEl) {
-      let ok = false;
-
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        try {
-          await navigator.clipboard.writeText(text);
-          ok = true;
-        } catch {
-          ok = false;
-        }
-      }
-
-      if (!ok) {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = text;
-          ta.setAttribute("readonly", "");
-          ta.style.position = "fixed";
-          ta.style.top = "-9999px";
-          ta.style.opacity = "0";
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          ok = document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch {
-          ok = false;
-        }
-      }
+      const ok = window.ToolStow ? await window.ToolStow.copy(text, codeEl) : false;
 
       if (ok) {
         const prev = buttonEl.textContent;
         buttonEl.textContent = "已复制";
-        buttonEl.classList.add("copied");
-        showToast("已复制到剪贴板");
+        buttonEl.classList.add("is-copied");
+        if (window.ToolStow) {
+          window.ToolStow.toast("已复制到剪贴板");
+        }
         window.setTimeout(() => {
           buttonEl.textContent = prev;
-          buttonEl.classList.remove("copied");
+          buttonEl.classList.remove("is-copied");
         }, 1400);
-      } else {
-        // Fallback: select code text so user can press Cmd/Ctrl+C manually.
-        try {
-          const range = document.createRange();
-          range.selectNodeContents(codeEl);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
-        } catch {
-          // ignore
-        }
-        showToast("当前环境限制自动复制，已选中命令请按 Cmd/Ctrl+C");
+      } else if (window.ToolStow) {
+        window.ToolStow.toast("当前环境限制自动复制，已选中命令请按 Cmd/Ctrl+C");
       }
     }
 
@@ -554,7 +326,7 @@
       for (const cat of getCategories()) {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "tab-btn" + (state.category === cat ? " active" : "");
+        btn.className = "ts-tab" + (state.category === cat ? " active" : "");
         btn.textContent = cat;
         btn.setAttribute("role", "tab");
         btn.setAttribute("aria-selected", String(state.category === cat));
@@ -588,7 +360,7 @@
 
       if (matched.length === 0) {
         const empty = document.createElement("div");
-        empty.className = "empty-msg";
+        empty.className = "ts-empty";
         empty.textContent = "未找到匹配的 Docker 命令，请尝试其它关键词。";
         commandGroups.replaceChildren(empty);
         return;
@@ -603,22 +375,19 @@
       const frag = document.createDocumentFragment();
       for (const [catName, items] of grouped.entries()) {
         const section = document.createElement("section");
-        section.className = "group";
+        section.className = "cmd-group";
 
         const heading = document.createElement("h2");
-        heading.className = "group-title";
+        heading.className = "ts-section-title cmd-group-title";
         heading.textContent = `${catName} (${items.length})`;
         section.appendChild(heading);
 
         const grid = document.createElement("div");
-        grid.className = "card-grid";
+        grid.className = "cmd-grid";
 
         for (const item of items) {
           const card = document.createElement("article");
-          card.className = "cmd-card";
-
-          const head = document.createElement("div");
-          head.className = "cmd-head";
+          card.className = "ts-card cmd-card";
 
           const titleWrap = document.createElement("div");
           const title = document.createElement("div");
@@ -630,23 +399,22 @@
           note.textContent = item.note;
 
           titleWrap.append(title, note);
-          head.appendChild(titleWrap);
 
           const codeRow = document.createElement("div");
-          codeRow.className = "cmd-code-row";
+          codeRow.className = "ts-code-row";
 
           const code = document.createElement("pre");
-          code.className = "cmd-code";
+          code.className = "ts-code";
           code.textContent = item.cmd;
 
           const copyBtn = document.createElement("button");
           copyBtn.type = "button";
-          copyBtn.className = "copy-btn";
+          copyBtn.className = "ts-btn ts-btn-sm cmd-copy-btn";
           copyBtn.textContent = "复制";
           copyBtn.addEventListener("click", () => copyCommand(item.cmd, code, copyBtn));
 
           codeRow.append(code, copyBtn);
-          card.append(head, codeRow);
+          card.append(titleWrap, codeRow);
           grid.appendChild(card);
         }
 
@@ -657,29 +425,13 @@
       commandGroups.replaceChildren(frag);
     }
 
-    function applyTheme(payload) {
-      if (!payload || typeof payload !== "object") return;
-      if (payload.mode === "dark" || payload.mode === "light") {
-        document.documentElement.dataset.theme = payload.mode;
-      }
-      if (typeof payload.accent === "string" && /^#[0-9a-fA-F]{3,8}$/.test(payload.accent)) {
-        document.documentElement.style.setProperty("--accent", payload.accent);
-      }
-    }
-
-    window.addEventListener("message", (event) => {
-      if (event.data && event.data.type === "toolstow:theme") {
-        applyTheme(event.data.payload);
-      }
-    });
-
     filterInput.addEventListener("input", (e) => {
       state.query = e.target.value;
       renderCommands();
     });
 
     window.addEventListener("keydown", (e) => {
-      if (e.key === "/" && document.activeElement !== filterInput) {
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && document.activeElement !== filterInput) {
         e.preventDefault();
         filterInput.focus();
         filterInput.select();
@@ -694,16 +446,8 @@
       }
     });
 
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      document.documentElement.dataset.theme = "dark";
-    }
-
     renderTabs();
     renderCommands();
-
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: "toolstow:ready" }, "*");
-    }
   </script>
 </body>
 </html>
