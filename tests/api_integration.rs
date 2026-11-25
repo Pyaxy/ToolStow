@@ -39,6 +39,7 @@ struct TestEnv {
     data_dir: PathBuf,
     tools_dir: PathBuf,
     theme_dir: PathBuf,
+    themes_dir: PathBuf,
     app: Router,
     registry: Arc<ToolRegistry>,
 }
@@ -54,12 +55,15 @@ fn build_test_env(
     let data_dir = temp.path().join("data");
     let tools_dir = data_dir.join("tools");
     let theme_dir = data_dir.join("theme");
+    let themes_dir = data_dir.join("themes");
     fs::create_dir_all(&tools_dir).expect("create tools dir");
+    fs::create_dir_all(&themes_dir).expect("create themes dir");
 
     let config = Config {
         data_dir: data_dir.clone(),
         tools_dir: tools_dir.clone(),
         theme_dir: theme_dir.clone(),
+        themes_dir: themes_dir.clone(),
         max_upload_mb,
         include_drafts,
         cookie_secure,
@@ -88,6 +92,7 @@ fn build_test_env(
         data_dir,
         tools_dir,
         theme_dir,
+        themes_dir,
         app,
         registry,
     }
@@ -314,6 +319,7 @@ async fn read_only_fail_closed_mode_and_draft_visibility() {
     assert_eq!(me["defaultAccent"], "#18181b");
     assert_eq!(me["isAdmin"], false);
     assert_eq!(me["adminEnabled"], false);
+    assert_eq!(me["activeTheme"], "default");
     assert_eq!(me["themeSource"], "embedded");
 
     // GET /api/admin/session -> 200 JSON { authenticated: false, adminEnabled: false }
@@ -1878,4 +1884,777 @@ async fn upload_overwrite_confirmation_returns_409_until_confirmed() {
     let updated = read_body_json(resp).await;
     assert_eq!(updated["version"], "2.0.0");
     assert_eq!(updated["draft"], true);
+}
+
+fn admin_theme_upload_request(uri: &str, zip_bytes: &[u8], cookie: &str) -> Request<Body> {
+    let body = build_multipart_body("file", "theme.zip", zip_bytes);
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(HOST, "127.0.0.1:8080")
+        .header(ORIGIN, "http://127.0.0.1:8080")
+        .header("x-toolstow-client", "1")
+        .header(COOKIE, cookie)
+        .header(
+            CONTENT_TYPE,
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        )
+        .body(Body::from(body))
+        .expect("build theme upload request")
+}
+
+#[tokio::test]
+async fn multi_theme_admin_auth_fail_closed_and_bearer_isolation() {
+    let sample_theme_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"paper-warm","name":"Paper Warm","version":"1.0.0"}"#,
+        ),
+        ("ui.css", b":root { --ts-canvas: #faf7f2; }\n"),
+    ]);
+
+    // 1. Fail-closed 404 when TOOLSTOW_ADMIN_KEY is unset (even when TOOLSTOW_API_KEY IS set)
+    let api_only_env = build_test_env(None, Some(API_KEY), 50, false, false);
+
+    let probes: Vec<(Method, &str, Vec<u8>, Option<&str>)> = vec![
+        (Method::GET, "/api/admin/themes", Vec::new(), None),
+        (
+            Method::GET,
+            "/api/admin/themes/paper-warm/preview",
+            Vec::new(),
+            None,
+        ),
+        (
+            Method::POST,
+            "/api/admin/themes/upload",
+            build_multipart_body("file", "theme.zip", &sample_theme_zip),
+            Some("multipart"),
+        ),
+        (
+            Method::PUT,
+            "/api/admin/themes/active",
+            json!({ "short": "default" }).to_string().into_bytes(),
+            Some("json"),
+        ),
+        (
+            Method::DELETE,
+            "/api/admin/themes/paper-warm",
+            Vec::new(),
+            None,
+        ),
+    ];
+
+    for (method, uri, body, kind) in &probes {
+        let mut builder = Request::builder()
+            .method(method.clone())
+            .uri(*uri)
+            .header(HOST, "127.0.0.1:8080")
+            .header(AUTHORIZATION, format!("Bearer {API_KEY}"));
+        if *kind == Some("multipart") {
+            builder = builder.header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            );
+        } else if *kind == Some("json") {
+            builder = builder.header(CONTENT_TYPE, "application/json");
+        }
+        let resp = api_only_env
+            .app
+            .clone()
+            .oneshot(builder.body(Body::from(body.clone())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "expected fail-closed 404 for {method} {uri} when admin key unset"
+        );
+    }
+
+    // 2. When TOOLSTOW_ADMIN_KEY IS set, Bearer API key MUST be rejected with 401 on all theme endpoints
+    let dual_env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 50, false, false);
+    for (method, uri, body, kind) in &probes {
+        let mut builder = Request::builder()
+            .method(method.clone())
+            .uri(*uri)
+            .header(HOST, "127.0.0.1:8080")
+            .header(AUTHORIZATION, format!("Bearer {API_KEY}"));
+        if *kind == Some("multipart") {
+            builder = builder.header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            );
+        } else if *kind == Some("json") {
+            builder = builder.header(CONTENT_TYPE, "application/json");
+        }
+        let resp = dual_env
+            .app
+            .clone()
+            .oneshot(builder.body(Body::from(body.clone())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "AI Bearer key must be rejected with 401 on {method} {uri}"
+        );
+    }
+
+    // 3. CSRF enforcement on mutating theme routes (missing X-ToolStow-Client -> 403, Origin: null -> 403)
+    let cookie = login_as_admin(&dual_env.app, ADMIN_KEY).await;
+
+    let resp = dual_env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "short": "default" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let resp = dual_env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/themes/paper-warm")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "null")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn multi_theme_upload_conflict_preview_skin_only_full_shell_and_delete_revert() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 50, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    create_disk_tool(
+        &env.tools_dir,
+        "demo",
+        r#"{"id":"demo","name":"Demo Tool"}"#,
+        "<h1>Real Demo Tool</h1>",
+    );
+    assert_eq!(env.registry.scan_all().unwrap(), 1);
+
+    // Baseline embedded /ui/v1/toolstow.css
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let base_ui_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(base_ui_css.contains("--ts-canvas"));
+
+    // Initial GET /api/admin/themes -> [default (active: true)], Cache-Control: no-store
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/admin/themes")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    let initial_themes = read_body_json(resp).await;
+    let initial_arr = initial_themes.as_array().unwrap();
+    assert_eq!(initial_arr.len(), 1);
+    assert_eq!(initial_arr[0]["short"], "default");
+    assert_eq!(initial_arr[0]["builtin"], true);
+    assert_eq!(initial_arr[0]["active"], true);
+
+    // 1. Upload full-shell theme v1 -> 201 Created
+    let preview_svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 9"><rect width="16" height="9" fill="#18181b"/></svg>"##;
+    let full_v1_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{
+                "short": "neon-grid",
+                "name": "Neon Grid",
+                "version": "1.0.0",
+                "description": "Full shell v1",
+                "author": "Tester",
+                "preview": "preview.svg"
+            }"#,
+        ),
+        ("dist/index.html", b"<!doctype html><h1>Neon Grid v1</h1>"),
+        ("dist/theme.js", b"console.log('neon-v1');"),
+        ("ui.css", b":root { --ts-accent: #111111; }\n"),
+        ("preview.svg", preview_svg),
+    ]);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload?overwrite=false",
+            &full_v1_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = read_body_json(resp).await;
+    assert_eq!(created["short"], "neon-grid");
+    assert_eq!(created["version"], "1.0.0");
+    assert_eq!(created["active"], false);
+    assert_eq!(created["hasCustomShell"], true);
+    assert_eq!(created["hasUiCss"], true);
+    assert_eq!(created["previewUrl"], "/api/admin/themes/neon-grid/preview");
+    assert!(env.themes_dir.join("neon-grid/theme.json").is_file());
+
+    // 2. Duplicate upload with ?overwrite=false -> 409 Conflict THEME_EXISTS with existing & incoming
+    let full_v2_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{
+                "short": "neon-grid",
+                "name": "Neon Grid Pro",
+                "version": "2.0.0",
+                "description": "Full shell v2",
+                "author": "Tester",
+                "preview": "preview.svg"
+            }"#,
+        ),
+        ("dist/index.html", b"<!doctype html><h1>Neon Grid v2</h1>"),
+        ("dist/theme.js", b"console.log('neon-v2');"),
+        // Attempt to shadow locked routes inside custom theme web_root
+        ("dist/admin/index.html", b"<h1>FAKE THEME ADMIN</h1>"),
+        ("dist/api/tools", b"FAKE THEME API"),
+        ("dist/t/demo/index.html", b"<h1>FAKE THEME TOOL</h1>"),
+        ("dist/ui/v1/toolstow.css", b"/* FAKE THEME UI CSS */"),
+        ("ui.css", b":root { --ts-accent: #222222; }\n"),
+        ("preview.svg", preview_svg),
+    ]);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload?overwrite=false",
+            &full_v2_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let conflict = read_body_json(resp).await;
+    assert_eq!(conflict["code"], "THEME_EXISTS");
+    assert_eq!(conflict["existing"]["short"], "neon-grid");
+    assert_eq!(conflict["existing"]["version"], "1.0.0");
+    assert_eq!(conflict["incoming"]["short"], "neon-grid");
+    assert_eq!(conflict["incoming"]["name"], "Neon Grid Pro");
+    assert_eq!(conflict["incoming"]["version"], "2.0.0");
+
+    // 3. Confirmed overwrite with ?overwrite=true -> 200 OK
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload?overwrite=true",
+            &full_v2_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = read_body_json(resp).await;
+    assert_eq!(updated["version"], "2.0.0");
+    assert_eq!(updated["name"], "Neon Grid Pro");
+    assert_eq!(updated["active"], false);
+
+    // 4. Preview endpoint -> 200 with CSP: sandbox;, nosniff, no-cache
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/admin/themes/neon-grid/preview")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap(),
+        "sandbox;"
+    );
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert!(
+        resp.headers()[CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .contains("image/svg+xml")
+    );
+    assert_eq!(read_body_bytes(resp).await, preview_svg);
+
+    // 5. Upload skin-only theme (ui.css only, no index.html)
+    let skin_css = ":root { --ts-canvas: #faf7f2; --ts-ink: #1c1917; }\n";
+    let skin_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"paper-warm","name":"Paper Warm","version":"1.0.0"}"#,
+        ),
+        ("ui.css", skin_css.as_bytes()),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload?overwrite=false",
+            &skin_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let skin_entry = read_body_json(resp).await;
+    assert_eq!(skin_entry["short"], "paper-warm");
+    assert_eq!(skin_entry["hasCustomShell"], false);
+    assert_eq!(skin_entry["hasUiCss"], true);
+    assert!(skin_entry["previewUrl"].is_null());
+
+    // Place legacy data/theme/ files to verify named themes do NOT mix legacy data/theme/!
+    fs::create_dir_all(&env.theme_dir).unwrap();
+    fs::write(
+        env.theme_dir.join("index.html"),
+        "<!doctype html><h1>Legacy Dir Shell</h1>",
+    )
+    .unwrap();
+    fs::write(env.theme_dir.join("ui.css"), "/* LEGACY_UI_CSS */\n").unwrap();
+
+    // Activate skin-only theme -> 200 { activeTheme: "paper-warm" }
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "short": "paper-warm" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_json(resp).await["activeTheme"], "paper-warm");
+
+    // /api/me reports activeTheme: "paper-warm", themeSource: "custom"
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/api/me").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let me = read_body_json(resp).await;
+    assert_eq!(me["activeTheme"], "paper-warm");
+    assert_eq!(me["themeSource"], "custom");
+
+    // GET / stays on embedded shell (NOT legacy data/theme/index.html)
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let root_html = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(root_html.contains("/app.js"));
+    assert!(!root_html.contains("Legacy Dir Shell"));
+
+    // GET /ui/v1/toolstow.css appends paper-warm/ui.css (and NOT legacy data/theme/ui.css)
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let skin_combined_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(skin_combined_css.contains("--ts-canvas"));
+    assert!(
+        skin_combined_css.contains("/* --- ToolStow Active Theme Override (paper-warm/ui.css) --- */")
+    );
+    assert!(skin_combined_css.ends_with(skin_css));
+    assert!(!skin_combined_css.contains("LEGACY_UI_CSS"));
+
+    // Upload a shell-only theme (no ui.css) and verify legacy data/theme/ui.css is NOT mixed into it
+    let shell_only_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"bare-shell","name":"Bare Shell","version":"1.0.0"}"#,
+        ),
+        ("index.html", b"<!doctype html><h1>Bare Shell</h1>"),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload",
+            &shell_only_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "short": "bare-shell" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bare_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert_eq!(bare_css, base_ui_css);
+    assert!(!bare_css.contains("LEGACY_UI_CSS"));
+
+    // Clean up legacy data/theme/ so default revert restores embedded mode
+    fs::remove_dir_all(&env.theme_dir).unwrap();
+
+    // 6. Activate full-shell theme neon-grid -> switches /, fallback assets, and /ui/v1/toolstow.css
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "short": "neon-grid" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_json(resp).await["activeTheme"], "neon-grid");
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/api/me").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let me = read_body_json(resp).await;
+    assert_eq!(me["activeTheme"], "neon-grid");
+    assert_eq!(me["themeSource"], "custom");
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        read_body_bytes(resp).await,
+        b"<!doctype html><h1>Neon Grid v2</h1>"
+    );
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/theme.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_bytes(resp).await, b"console.log('neon-v2');");
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let neon_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(neon_css.contains("--ts-canvas"));
+    assert!(neon_css.contains("/* --- ToolStow Active Theme Override (neon-grid/ui.css) --- */"));
+    assert!(neon_css.contains("--ts-accent: #222222;"));
+    assert!(!neon_css.contains("FAKE THEME UI CSS"));
+
+    // Locked routes stay locked even when full-shell theme tries to shadow them
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/admin").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let admin_html = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(admin_html.contains("ToolStow Admin"));
+    assert!(!admin_html.contains("FAKE THEME ADMIN"));
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/api/tools").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(read_body_json(resp).await[0]["id"], "demo");
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/demo/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_body_bytes(resp).await, b"<h1>Real Demo Tool</h1>");
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8(read_body_bytes(resp).await)
+            .unwrap()
+            .contains("toolstow:theme")
+    );
+
+    // Activating nonexistent theme -> 404
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "short": "does-not-exist" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Re-uploading the currently active theme sets active: true in the 200 response
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload?overwrite=true",
+            &full_v2_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_json(resp).await["active"], true);
+
+    // 7. Deleting "default" -> 400 Bad Request; deleting missing -> 404 Not Found
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/themes/default")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/themes/missing-theme")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // 8. Deleting the currently active theme -> 204 No Content & auto-reverts to "default"
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/themes/neon-grid")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // /api/me reverts to default + embedded
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/api/me").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let me = read_body_json(resp).await;
+    assert_eq!(me["activeTheme"], "default");
+    assert_eq!(me["themeSource"], "embedded");
+
+    // settings.json persisted activeTheme: "default"
+    let settings_raw = fs::read_to_string(env.data_dir.join("settings.json")).unwrap();
+    let settings_json: Value = serde_json::from_str(&settings_raw).unwrap();
+    assert_eq!(settings_json["activeTheme"], "default");
+
+    // GET / restored to embedded shell and /ui/v1/toolstow.css restored to base CSS
+    let resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8(read_body_bytes(resp).await)
+            .unwrap()
+            .contains("/app.js")
+    );
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(read_body_bytes(resp).await).unwrap(),
+        base_ui_css
+    );
+
+    // GET /api/admin/themes marks default active again and no longer lists neon-grid
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/admin/themes")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let final_themes = read_body_json(resp).await;
+    let arr = final_themes.as_array().unwrap();
+    assert_eq!(arr[0]["short"], "default");
+    assert_eq!(arr[0]["active"], true);
+    assert!(!arr.iter().any(|t| t["short"] == "neon-grid"));
 }

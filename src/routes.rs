@@ -20,7 +20,7 @@ use axum::http::request::Parts;
 use axum::http::uri::Authority;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Json, Redirect, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
@@ -32,6 +32,7 @@ use crate::error::AppError;
 use crate::manifest::{self, ToolEntry};
 use crate::registry::ToolRegistry;
 use crate::settings::{SettingsStore, SiteSettings, SiteSettingsUpdate};
+use crate::themes::{self, BUILTIN_DEFAULT_THEME, ResolvedTheme, ThemeEntry, ThemeInstallOutcome};
 
 /// Custom header required on browser-originated and cookie-authenticated mutating requests so
 /// cross-origin or sandboxed submissions trigger CORS preflight and are blocked.
@@ -102,6 +103,7 @@ struct MeResponse {
     default_accent: String,
     is_admin: bool,
     admin_enabled: bool,
+    active_theme: String,
     theme_source: &'static str,
 }
 
@@ -131,10 +133,11 @@ struct PatchToolRequest {
     draft: bool,
 }
 
-/// Optional query parameters accepted by `POST /api/admin/tools/upload`.
+/// Optional query parameters accepted by `POST /api/admin/tools/upload` and
+/// `POST /api/admin/themes/upload`.
 #[derive(Debug, Default, Deserialize)]
-struct UploadToolQuery {
-    /// When `false`, existing tools with the same `id` return `409 Conflict` (`TOOL_EXISTS`)
+struct UploadOverwriteQuery {
+    /// When `false`, existing tools/themes with the same identifier return `409 Conflict`
     /// instead of overwriting. Defaults to `true` when omitted.
     overwrite: Option<bool>,
 }
@@ -148,6 +151,30 @@ struct ToolExistsConflictResponse {
     error: String,
     existing: Option<ToolEntry>,
     incoming: ToolEntry,
+}
+
+/// JSON conflict payload returned by `POST /api/admin/themes/upload?overwrite=false` when a theme
+/// with the same `short` is already installed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThemeExistsConflictResponse {
+    code: &'static str,
+    error: String,
+    existing: Option<ThemeEntry>,
+    incoming: ThemeEntry,
+}
+
+/// JSON request payload for `PUT /api/admin/themes/active`.
+#[derive(Debug, Deserialize)]
+struct SetActiveThemeRequest {
+    short: String,
+}
+
+/// JSON response payload for `PUT /api/admin/themes/active`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActiveThemeResponse {
+    active_theme: String,
 }
 
 /// Extracts a rate-limit client key from optional `ConnectInfo<SocketAddr>`, falling back to
@@ -439,8 +466,9 @@ pub fn build_router(state: AppState) -> Router {
         .max_upload_bytes()
         .saturating_add(1024 * 1024);
 
-    let upload_route = Router::new()
+    let upload_routes = Router::new()
         .route("/api/admin/tools/upload", post(upload_tool))
+        .route("/api/admin/themes/upload", post(upload_theme))
         .layer(DefaultBodyLimit::max(upload_body_limit));
 
     Router::new()
@@ -453,15 +481,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/t/{id}", get(redirect_tool_entry))
         .route("/t/{id}/", get(redirect_tool_entry))
         .route("/t/{id}/{*path}", get(serve_tool_asset))
-        // Locked embedded admin panel (never shadowable by data/theme/)
+        // Locked embedded admin panel (never shadowable by data/theme/ or data/themes/)
         .route("/admin", get(serve_admin_index))
         .route("/admin/", get(serve_admin_index))
         .route("/admin/{*path}", get(serve_admin_asset))
-        // Locked shared UI design system & theme bridge (never shadowable by data/theme/)
+        // Locked shared UI design system & theme bridge (never shadowable by data/theme/ or data/themes/)
         .route("/ui/v1/toolstow.css", get(serve_ui_css))
         .route("/ui/v1/theme.js", get(serve_ui_theme_js))
         .route("/ui/{*path}", get(serve_ui_not_found))
-        // Admin session & settings endpoints
+        // Admin session, settings & theme management endpoints (Admin Session Cookie ONLY)
         .route("/api/admin/session", get(get_admin_session))
         .route("/api/admin/login", post(admin_login))
         .route("/api/admin/logout", post(admin_logout))
@@ -469,9 +497,16 @@ pub fn build_router(state: AppState) -> Router {
             "/api/admin/settings",
             get(get_admin_settings).put(update_admin_settings),
         )
+        .route("/api/admin/themes", get(list_admin_themes))
+        .route("/api/admin/themes/active", put(set_active_theme))
+        .route("/api/admin/themes/{short}", delete(delete_theme))
+        .route(
+            "/api/admin/themes/{short}/preview",
+            get(serve_theme_preview),
+        )
         // Admin tool management endpoints (Admin Session Cookie OR AI Bearer API key)
         .route("/api/admin/tools", get(list_admin_tools))
-        .merge(upload_route)
+        .merge(upload_routes)
         .route(
             "/api/admin/tools/{id}",
             patch(patch_tool).delete(delete_tool),
@@ -482,12 +517,28 @@ pub fn build_router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-/// `GET /`: serves `index.html` from the active public theme (`data/theme/` or embedded `FrontendAssets`).
-async fn serve_index(State(state): State<AppState>) -> Result<Response, AppError> {
-    serve_public_asset(&state.config.theme_dir, "index.html", false).await
+/// Resolves the currently active disk-installed theme off the async executor thread.
+///
+/// Fast-paths `"default"` without spawning a blocking task.
+async fn resolve_active_theme_async(state: &AppState, active_short: String) -> Option<ResolvedTheme> {
+    if active_short == BUILTIN_DEFAULT_THEME {
+        return None;
+    }
+
+    let themes_dir = state.config.themes_dir.clone();
+    tokio::task::spawn_blocking(move || themes::resolve_active_theme(&themes_dir, &active_short))
+        .await
+        .ok()
+        .flatten()
 }
 
-/// Fallback handler serving custom theme or embedded frontend assets without ever shadowing
+/// `GET /`: serves `index.html` from the active public theme (`data/themes/<short>/`,
+/// legacy `data/theme/`, or embedded `FrontendAssets`).
+async fn serve_index(State(state): State<AppState>) -> Result<Response, AppError> {
+    serve_active_public_asset(&state, "index.html", false).await
+}
+
+/// Fallback handler serving active custom theme or embedded frontend assets without ever shadowing
 /// `/admin*`, `/api/*`, `/t/*`, or `/ui*`.
 async fn serve_frontend_fallback(
     State(state): State<AppState>,
@@ -519,7 +570,26 @@ async fn serve_frontend_fallback(
         rel_path
     };
 
-    serve_public_asset(&state.config.theme_dir, rel_path, method == Method::HEAD).await
+    serve_active_public_asset(&state, rel_path, method == Method::HEAD).await
+}
+
+/// Serves a public frontend asset according to active theme resolution:
+/// 1. Installed active theme with a custom shell (`web_root: Some(...)`) -> serve from `web_root`.
+/// 2. Installed active skin-only theme (`web_root: None`) -> serve embedded [`FrontendAssets`].
+/// 3. `"default"` (or missing/invalid active theme) -> legacy `data/theme/` if active, else embedded.
+async fn serve_active_public_asset(
+    state: &AppState,
+    rel_path: &str,
+    head_only: bool,
+) -> Result<Response, AppError> {
+    let active_short = state.settings.get().active_theme;
+    match resolve_active_theme_async(state, active_short).await {
+        Some(resolved) => match resolved.web_root {
+            Some(web_root) => serve_custom_theme_asset(&web_root, rel_path, head_only).await,
+            None => serve_embedded_frontend_asset(rel_path, head_only),
+        },
+        None => serve_public_asset(&state.config.theme_dir, rel_path, head_only).await,
+    }
 }
 
 /// Serves a public frontend asset from `theme_dir` when custom theme is active, otherwise from
@@ -682,15 +752,37 @@ fn serve_embedded_admin_asset(path: &str) -> Result<Response, AppError> {
 }
 
 /// `GET` / `HEAD /ui/v1/toolstow.css`: serves embedded `ui/v1/toolstow.css` with optional
-/// `data/theme/ui.css` cascade override appended safely.
+/// active theme (`data/themes/<short>/ui.css`) or legacy `data/theme/ui.css` cascade override
+/// appended safely.
 async fn serve_ui_css(State(state): State<AppState>) -> Result<Response, AppError> {
     let base = UiAssets::get("v1/toolstow.css")
         .ok_or_else(|| AppError::not_found("UI asset not found: /ui/v1/toolstow.css"))?;
 
     let mut body = base.data.into_owned();
-    if let Some(override_bytes) = read_optional_theme_ui_override(&state.config.theme_dir).await? {
-        body.extend_from_slice(THEME_UI_OVERRIDE_BANNER);
-        body.extend_from_slice(&override_bytes);
+    let active_short = state.settings.get().active_theme;
+
+    match resolve_active_theme_async(&state, active_short).await {
+        Some(resolved) => {
+            if resolved.ui_css_path.is_some()
+                && let Some(override_bytes) =
+                    read_optional_theme_ui_override(&resolved.root_dir).await?
+            {
+                let banner = format!(
+                    "\n\n/* --- ToolStow Active Theme Override ({}/ui.css) --- */\n",
+                    resolved.entry.short
+                );
+                body.extend_from_slice(banner.as_bytes());
+                body.extend_from_slice(&override_bytes);
+            }
+        }
+        None => {
+            if let Some(override_bytes) =
+                read_optional_theme_ui_override(&state.config.theme_dir).await?
+            {
+                body.extend_from_slice(THEME_UI_OVERRIDE_BANNER);
+                body.extend_from_slice(&override_bytes);
+            }
+        }
     }
 
     Response::builder()
@@ -798,14 +890,22 @@ async fn read_optional_theme_ui_override(theme_dir: &Path) -> Result<Option<Vec<
     Ok(Some(bytes))
 }
 
-/// `GET /api/me`: returns public site settings, current admin session state, and theme source.
+/// `GET /api/me`: returns public site settings, current admin session state, active theme,
+/// and theme source.
 async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let settings = state.settings.get();
-    let theme_source = if is_custom_theme_active(&state.config.theme_dir) {
-        "custom"
-    } else {
-        "embedded"
-    };
+    let (active_theme, theme_source) =
+        match resolve_active_theme_async(&state, settings.active_theme).await {
+            Some(resolved) => (resolved.entry.short, "custom"),
+            None => (
+                BUILTIN_DEFAULT_THEME.to_string(),
+                if is_custom_theme_active(&state.config.theme_dir) {
+                    "custom"
+                } else {
+                    "embedded"
+                },
+            ),
+        };
 
     let body = MeResponse {
         site_title: settings.site_title,
@@ -813,6 +913,7 @@ async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
         default_accent: settings.default_accent,
         is_admin: state.auth.has_valid_admin_session(&headers),
         admin_enabled: state.auth.is_admin_enabled(),
+        active_theme,
         theme_source,
     };
 
@@ -916,6 +1017,198 @@ async fn update_admin_settings(
     Ok(no_store_json(StatusCode::OK, updated))
 }
 
+/// `GET /api/admin/themes`: lists the built-in default theme followed by all valid installed
+/// themes under `<themes_dir>` (Admin Session ONLY).
+async fn list_admin_themes(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+) -> Result<Response, AppError> {
+    let themes_dir = state.config.themes_dir.clone();
+    let active_short = state.settings.get().active_theme;
+
+    let themes =
+        tokio::task::spawn_blocking(move || themes::list_themes(&themes_dir, &active_short))
+            .await
+            .map_err(|err| AppError::internal(format!("list themes task failed: {err}")))?;
+
+    Ok(no_store_json(StatusCode::OK, themes))
+}
+
+/// `GET /api/admin/themes/{short}/preview`: safely serves a theme's preview image with
+/// `Content-Security-Policy: sandbox;` and `X-Content-Type-Options: nosniff` (Admin Session ONLY).
+async fn serve_theme_preview(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+    AxumPath(short): AxumPath<String>,
+) -> Result<Response, AppError> {
+    let themes_dir = state.config.themes_dir.clone();
+    let preview_path =
+        tokio::task::spawn_blocking(move || themes::resolve_theme_preview(&themes_dir, &short))
+            .await
+            .map_err(|err| AppError::internal(format!("resolve theme preview task failed: {err}")))??;
+
+    let bytes = tokio::fs::read(&preview_path).await.map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found("theme preview image not found")
+        } else {
+            AppError::internal(format!("failed to read theme preview image: {err}"))
+        }
+    })?;
+
+    let content_type = content_type_for_path(&preview_path);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .header(CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox;"))
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .body(Body::from(bytes))
+        .map_err(|err| AppError::internal(format!("failed to build theme preview response: {err}")))
+}
+
+/// `POST /api/admin/themes/upload`: validates and atomically installs or updates a `.zip` theme
+/// package (Admin Session ONLY).
+///
+/// Supports optional `?overwrite=false` to reject existing theme shorts with `409 Conflict`
+/// (`THEME_EXISTS`) and both `existing` / `incoming` metadata for confirmation dialogs.
+async fn upload_theme(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+    Query(query): Query<UploadOverwriteQuery>,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Result<Response, AppError> {
+    let allow_overwrite = query.overwrite.unwrap_or(true);
+    let max_upload_bytes = state.config.max_upload_bytes();
+    let max_upload_mb = state.config.max_upload_mb;
+    let zip_bytes = extract_uploaded_zip_bytes(multipart, max_upload_bytes, max_upload_mb).await?;
+
+    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let themes_dir = state.config.themes_dir.clone();
+    let limits = ArchiveLimits {
+        max_zip_bytes: max_upload_bytes,
+        ..ArchiveLimits::default()
+    };
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        themes::install_theme_zip_checked(&themes_dir, &zip_bytes, limits, allow_overwrite)
+    })
+    .await
+    .map_err(|err| AppError::internal(format!("theme install task failed: {err}")))??;
+
+    let active_short = state.settings.get().active_theme;
+
+    match outcome {
+        ThemeInstallOutcome::Installed { mut entry, updated } => {
+            entry.active = entry.short == active_short;
+
+            let status = if updated {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            };
+
+            Ok(no_store_json(status, entry))
+        }
+        ThemeInstallOutcome::AlreadyExists {
+            mut existing,
+            incoming,
+        } => {
+            if let Some(ref mut existing_entry) = existing {
+                existing_entry.active = existing_entry.short == active_short;
+            }
+
+            let body = ThemeExistsConflictResponse {
+                code: "THEME_EXISTS",
+                error: format!(
+                    "theme '{}' already exists; confirm overwrite to replace it",
+                    incoming.short
+                ),
+                existing: existing.map(|e| *e),
+                incoming,
+            };
+            Ok(no_store_json(StatusCode::CONFLICT, body))
+        }
+    }
+}
+
+/// `PUT /api/admin/themes/active`: switches the active public theme to `"default"` or a valid
+/// installed theme short and persists it to `settings.json` (Admin Session ONLY).
+async fn set_active_theme(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+    payload: Result<Json<SetActiveThemeRequest>, JsonRejection>,
+) -> Result<Response, AppError> {
+    let Json(body) = payload
+        .map_err(|err| AppError::bad_request(format!("invalid JSON theme payload: {err}")))?;
+
+    let short = body.short;
+    if short != BUILTIN_DEFAULT_THEME {
+        themes::validate_theme_short(&short)?;
+    }
+
+    let _write_guard = state.registry.write_lock().lock_owned().await;
+
+    if short != BUILTIN_DEFAULT_THEME {
+        let themes_dir = state.config.themes_dir.clone();
+        let short_for_check = short.clone();
+        let exists = tokio::task::spawn_blocking(move || {
+            themes::resolve_active_theme(&themes_dir, &short_for_check).is_some()
+        })
+        .await
+        .map_err(|err| AppError::internal(format!("resolve theme task failed: {err}")))?;
+
+        if !exists {
+            return Err(AppError::not_found(format!("theme '{short}' not found")));
+        }
+    }
+
+    let settings_store = state.settings.clone();
+    let updated = tokio::task::spawn_blocking(move || settings_store.set_active_theme(short))
+        .await
+        .map_err(|err| AppError::internal(format!("set active theme task failed: {err}")))??;
+
+    Ok(no_store_json(
+        StatusCode::OK,
+        ActiveThemeResponse {
+            active_theme: updated.active_theme,
+        },
+    ))
+}
+
+/// `DELETE /api/admin/themes/{short}`: deletes an installed theme directory from disk and
+/// automatically reverts `activeTheme` to `"default"` if the deleted theme was active
+/// (Admin Session ONLY).
+async fn delete_theme(
+    _admin: AdminSessionOnly,
+    State(state): State<AppState>,
+    AxumPath(short): AxumPath<String>,
+) -> Result<StatusCode, AppError> {
+    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let themes_dir = state.config.themes_dir.clone();
+    let short_for_task = short.clone();
+
+    let removed =
+        tokio::task::spawn_blocking(move || themes::delete_theme_dir(&themes_dir, &short_for_task))
+            .await
+            .map_err(|err| AppError::internal(format!("delete theme task failed: {err}")))??;
+
+    if !removed {
+        return Err(AppError::not_found(format!("theme '{short}' not found")));
+    }
+
+    if state.settings.get().active_theme == short {
+        let settings_store = state.settings.clone();
+        tokio::task::spawn_blocking(move || {
+            settings_store.set_active_theme(BUILTIN_DEFAULT_THEME.to_string())
+        })
+        .await
+        .map_err(|err| AppError::internal(format!("reset active theme task failed: {err}")))??;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `GET /api/admin/tools`: returns all tools (including drafts) with optional `q`, `category`,
 /// `tag`, and `draft=true|false` filters (Admin Session OR AI Bearer API key).
 async fn list_admin_tools(
@@ -944,58 +1237,13 @@ async fn list_admin_tools(
 async fn upload_tool(
     _auth: AdminToolsAuth,
     State(state): State<AppState>,
-    Query(query): Query<UploadToolQuery>,
+    Query(query): Query<UploadOverwriteQuery>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Response, AppError> {
     let allow_overwrite = query.overwrite.unwrap_or(true);
-    let mut multipart = multipart.map_err(|rejection| {
-        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            AppError::payload_too_large(format!(
-                "upload exceeds maximum allowed size of {} MiB",
-                state.config.max_upload_mb
-            ))
-        } else {
-            AppError::bad_request(format!(
-                "invalid multipart request: {}",
-                rejection.body_text()
-            ))
-        }
-    })?;
-
     let max_upload_bytes = state.config.max_upload_bytes();
     let max_upload_mb = state.config.max_upload_mb;
-    let mut zip_bytes: Option<Vec<u8>> = None;
-
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|err| map_multipart_error(err, max_upload_mb))?
-    {
-        if field.name() == Some("file") {
-            let mut buf = Vec::new();
-            while let Some(chunk) = field
-                .chunk()
-                .await
-                .map_err(|err| map_multipart_error(err, max_upload_mb))?
-            {
-                if buf.len().saturating_add(chunk.len()) > max_upload_bytes {
-                    return Err(AppError::payload_too_large(format!(
-                        "upload exceeds maximum allowed size of {max_upload_mb} MiB"
-                    )));
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            zip_bytes = Some(buf);
-            break;
-        }
-    }
-
-    let zip_bytes =
-        zip_bytes.ok_or_else(|| AppError::bad_request("missing multipart field 'file'"))?;
-
-    if zip_bytes.is_empty() {
-        return Err(AppError::bad_request("uploaded 'file' must not be empty"));
-    }
+    let zip_bytes = extract_uploaded_zip_bytes(multipart, max_upload_bytes, max_upload_mb).await?;
 
     let _write_guard = state.registry.write_lock().lock_owned().await;
     let tools_dir = state.registry.tools_dir().to_path_buf();
@@ -1035,6 +1283,61 @@ async fn upload_tool(
             Ok((StatusCode::CONFLICT, Json(body)).into_response())
         }
     }
+}
+
+/// Extracts and size-checks the multipart `file` field for `.zip` uploads.
+async fn extract_uploaded_zip_bytes(
+    multipart: Result<Multipart, MultipartRejection>,
+    max_upload_bytes: usize,
+    max_upload_mb: usize,
+) -> Result<Vec<u8>, AppError> {
+    let mut multipart = multipart.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AppError::payload_too_large(format!(
+                "upload exceeds maximum allowed size of {max_upload_mb} MiB"
+            ))
+        } else {
+            AppError::bad_request(format!(
+                "invalid multipart request: {}",
+                rejection.body_text()
+            ))
+        }
+    })?;
+
+    let mut zip_bytes: Option<Vec<u8>> = None;
+
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| map_multipart_error(err, max_upload_mb))?
+    {
+        if field.name() == Some("file") {
+            let mut buf = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
+                .await
+                .map_err(|err| map_multipart_error(err, max_upload_mb))?
+            {
+                if buf.len().saturating_add(chunk.len()) > max_upload_bytes {
+                    return Err(AppError::payload_too_large(format!(
+                        "upload exceeds maximum allowed size of {max_upload_mb} MiB"
+                    )));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            zip_bytes = Some(buf);
+            break;
+        }
+    }
+
+    let zip_bytes =
+        zip_bytes.ok_or_else(|| AppError::bad_request("missing multipart field 'file'"))?;
+
+    if zip_bytes.is_empty() {
+        return Err(AppError::bad_request("uploaded 'file' must not be empty"));
+    }
+
+    Ok(zip_bytes)
 }
 
 /// `PATCH /api/admin/tools/{id}`: atomically updates a tool's `draft` flag in `manifest.json`

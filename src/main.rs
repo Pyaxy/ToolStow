@@ -14,6 +14,7 @@ use toolstow::config::Config;
 use toolstow::registry::ToolRegistry;
 use toolstow::routes::{AppState, build_router, is_custom_theme_active};
 use toolstow::settings::SettingsStore;
+use toolstow::themes::{BUILTIN_DEFAULT_THEME, resolve_active_theme};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,6 +39,12 @@ async fn main() -> anyhow::Result<()> {
             config.tools_dir.display()
         )
     })?;
+    fs::create_dir_all(&config.themes_dir).with_context(|| {
+        format!(
+            "failed to create themes directory '{}'",
+            config.themes_dir.display()
+        )
+    })?;
 
     let settings = SettingsStore::load(config.settings_path());
     let auth = AuthManager::new(
@@ -56,11 +63,19 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to start tools directory watcher")?;
 
     let listen_addr = config.listen_addr();
-    let theme_mode = if is_custom_theme_active(&config.theme_dir) {
-        "custom"
-    } else {
-        "embedded"
-    };
+    let active_theme_setting = settings.get().active_theme;
+    let (active_theme, theme_mode) =
+        match resolve_active_theme(&config.themes_dir, &active_theme_setting) {
+            Some(resolved) => (resolved.entry.short, "custom"),
+            None => (
+                BUILTIN_DEFAULT_THEME.to_string(),
+                if is_custom_theme_active(&config.theme_dir) {
+                    "custom"
+                } else {
+                    "embedded"
+                },
+            ),
+        };
     let admin_enabled = auth.is_admin_enabled();
     let api_enabled = auth.is_api_enabled();
 
@@ -85,6 +100,8 @@ async fn main() -> anyhow::Result<()> {
         data_dir = %config.data_dir.display(),
         tools_dir = %config.tools_dir.display(),
         theme_dir = %config.theme_dir.display(),
+        themes_dir = %config.themes_dir.display(),
+        active_theme = %active_theme,
         theme_mode,
         tools_loaded = loaded_count,
         admin_panel_enabled = admin_enabled,

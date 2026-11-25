@@ -19,6 +19,8 @@ pub const DEFAULT_DATA_DIR: &str = "./data";
 pub const DEFAULT_TOOLS_DIR: &str = "./data/tools";
 /// Default directory storing optional custom public frontend theme overrides.
 pub const DEFAULT_THEME_DIR: &str = "./data/theme";
+/// Default directory storing installed theme packages (derived from `DEFAULT_DATA_DIR`).
+pub const DEFAULT_THEMES_DIR: &str = "./data/themes";
 /// Default maximum `.zip` upload size in MiB.
 pub const DEFAULT_MAX_UPLOAD_MB: usize = 50;
 /// Default setting for exposing draft tools to public visitors.
@@ -54,6 +56,10 @@ struct CliArgs {
     #[arg(long)]
     theme_dir: Option<PathBuf>,
 
+    /// Override root directory containing installed theme subdirectories (defaults to `<data_dir>/themes`).
+    #[arg(long)]
+    themes_dir: Option<PathBuf>,
+
     /// Maximum allowed `.zip` upload payload size in MiB.
     #[arg(long)]
     max_upload_mb: Option<usize>,
@@ -81,6 +87,8 @@ pub struct Config {
     pub tools_dir: PathBuf,
     /// Directory containing optional custom static public frontend overrides.
     pub theme_dir: PathBuf,
+    /// Root directory containing installed theme subdirectories.
+    pub themes_dir: PathBuf,
     /// Maximum allowed `.zip` upload payload size in MiB.
     pub max_upload_mb: usize,
     /// Whether draft tools are exposed publicly (intended for local development preview).
@@ -101,6 +109,7 @@ impl fmt::Debug for Config {
             .field("data_dir", &self.data_dir)
             .field("tools_dir", &self.tools_dir)
             .field("theme_dir", &self.theme_dir)
+            .field("themes_dir", &self.themes_dir)
             .field("max_upload_mb", &self.max_upload_mb)
             .field("include_drafts", &self.include_drafts)
             .field("cookie_secure", &self.cookie_secure)
@@ -118,12 +127,14 @@ impl Default for Config {
         let data_dir = PathBuf::from(DEFAULT_DATA_DIR);
         let tools_dir = data_dir.join("tools");
         let theme_dir = data_dir.join("theme");
+        let themes_dir = data_dir.join("themes");
         Self {
             host: DEFAULT_HOST.to_string(),
             port: DEFAULT_PORT,
             data_dir,
             tools_dir,
             theme_dir,
+            themes_dir,
             max_upload_mb: DEFAULT_MAX_UPLOAD_MB,
             include_drafts: DEFAULT_INCLUDE_DRAFTS,
             cookie_secure: DEFAULT_COOKIE_SECURE,
@@ -287,6 +298,11 @@ impl Config {
             .or_else(|| lookup_non_empty("TOOLSTOW_THEME_DIR").map(PathBuf::from))
             .unwrap_or_else(|| data_dir.join("theme"));
 
+        let themes_dir = cli
+            .themes_dir
+            .or_else(|| lookup_non_empty("TOOLSTOW_THEMES_DIR").map(PathBuf::from))
+            .unwrap_or_else(|| data_dir.join("themes"));
+
         let max_upload_mb = cli
             .max_upload_mb
             .or_else(|| {
@@ -331,6 +347,7 @@ impl Config {
             data_dir,
             tools_dir,
             theme_dir,
+            themes_dir,
             max_upload_mb,
             include_drafts,
             cookie_secure,
@@ -387,6 +404,7 @@ mod tests {
         assert_eq!(cfg.data_dir, PathBuf::from("./data"));
         assert_eq!(cfg.tools_dir, PathBuf::from("./data/tools"));
         assert_eq!(cfg.theme_dir, PathBuf::from("./data/theme"));
+        assert_eq!(cfg.themes_dir, PathBuf::from(DEFAULT_THEMES_DIR));
         assert_eq!(cfg.settings_path(), PathBuf::from("./data/settings.json"));
         assert_eq!(cfg.max_upload_mb, 50);
         assert_eq!(cfg.max_upload_bytes(), 50 * 1024 * 1024);
@@ -489,6 +507,7 @@ TOOLSTOW_API_KEY=dotenv-api-key-12345
         assert_eq!(cfg.data_dir, PathBuf::from("/env/data"));
         assert_eq!(cfg.tools_dir, PathBuf::from("/custom/tools"));
         assert_eq!(cfg.theme_dir, PathBuf::from("/env/data/theme"));
+        assert_eq!(cfg.themes_dir, PathBuf::from("/env/data/themes"));
         assert_eq!(cfg.settings_path(), PathBuf::from("/env/data/settings.json"));
         assert_eq!(cfg.max_upload_mb, 25);
         assert!(!cfg.include_drafts);
@@ -515,12 +534,39 @@ TOOLSTOW_API_KEY=dotenv-api-key-12345
         assert_eq!(cfg.data_dir, PathBuf::from("/var/lib/toolstow"));
         assert_eq!(cfg.tools_dir, PathBuf::from("/var/lib/toolstow/tools"));
         assert_eq!(cfg.theme_dir, PathBuf::from("/var/lib/toolstow/theme"));
+        assert_eq!(cfg.themes_dir, PathBuf::from("/var/lib/toolstow/themes"));
         assert_eq!(
             cfg.settings_path(),
             PathBuf::from("/var/lib/toolstow/settings.json")
         );
         assert!(cfg.include_drafts);
         assert!(cfg.cookie_secure);
+    }
+
+    #[test]
+    fn resolves_themes_dir_cli_over_env_over_dotenv() {
+        let dotenv = parse_dotenv_str("TOOLSTOW_THEMES_DIR=/dotenv/themes\n");
+        let cfg_dotenv =
+            Config::try_from_args_and_env(["toolstow"], no_env, &dotenv).expect("dotenv themes");
+        assert_eq!(cfg_dotenv.themes_dir, PathBuf::from("/dotenv/themes"));
+
+        let mut proc_env = HashMap::new();
+        proc_env.insert("TOOLSTOW_THEMES_DIR", "/env/themes");
+        let cfg_env = Config::try_from_args_and_env(
+            ["toolstow"],
+            |k| proc_env.get(k).map(|v| (*v).to_string()),
+            &dotenv,
+        )
+        .expect("env themes");
+        assert_eq!(cfg_env.themes_dir, PathBuf::from("/env/themes"));
+
+        let cfg_cli = Config::try_from_args_and_env(
+            ["toolstow", "--themes-dir", "/cli/themes"],
+            |k| proc_env.get(k).map(|v| (*v).to_string()),
+            &dotenv,
+        )
+        .expect("cli themes");
+        assert_eq!(cfg_cli.themes_dir, PathBuf::from("/cli/themes"));
     }
 
     #[test]

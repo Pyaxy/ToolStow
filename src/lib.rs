@@ -12,3 +12,4 @@ pub mod manifest;
 pub mod registry;
 pub mod routes;
 pub mod settings;
+pub mod themes;

@@ -17,6 +17,8 @@ pub const DEFAULT_SITE_TITLE: &str = "ToolStow";
 pub const DEFAULT_SITE_DESCRIPTION: &str = "Personal Micro-App Toolbox";
 /// Default monochrome accent color hex string.
 pub const DEFAULT_ACCENT: &str = "#18181b";
+/// Default active theme short name (built-in theme).
+pub const DEFAULT_ACTIVE_THEME: &str = "default";
 /// Maximum allowed character length for `siteTitle`.
 pub const MAX_SITE_TITLE_LEN: usize = 80;
 /// Maximum allowed character length for `siteDescription`.
@@ -34,6 +36,10 @@ fn default_accent() -> String {
     DEFAULT_ACCENT.to_string()
 }
 
+fn default_active_theme() -> String {
+    DEFAULT_ACTIVE_THEME.to_string()
+}
+
 /// Site-wide presentation settings persisted in `<data_dir>/settings.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +53,9 @@ pub struct SiteSettings {
     /// Default hex accent color (`#rgb` or `#rrggbb`).
     #[serde(default = "default_accent")]
     pub default_accent: String,
+    /// Active theme short name (`"default"` for built-in theme, or installed theme short).
+    #[serde(default = "default_active_theme")]
+    pub active_theme: String,
 }
 
 impl Default for SiteSettings {
@@ -55,6 +64,7 @@ impl Default for SiteSettings {
             site_title: default_site_title(),
             site_description: default_site_description(),
             default_accent: default_accent(),
+            active_theme: default_active_theme(),
         }
     }
 }
@@ -116,6 +126,15 @@ fn validate_default_accent(raw: &str) -> Result<String, AppError> {
         ));
     }
     Ok(trimmed.to_string())
+}
+
+/// Validates `active_theme` (`"default"` or a valid theme short identifier).
+fn validate_active_theme(raw: &str) -> Result<String, AppError> {
+    if raw == DEFAULT_ACTIVE_THEME {
+        return Ok(DEFAULT_ACTIVE_THEME.to_string());
+    }
+    crate::themes::validate_theme_short(raw)?;
+    Ok(raw.to_string())
 }
 
 /// Thread-safe, atomically persisted store for [`SiteSettings`].
@@ -191,6 +210,37 @@ impl SettingsStore {
             next.default_accent = validate_default_accent(&accent)?;
         }
 
+        self.persist_settings(&next)?;
+
+        {
+            let mut guard = self.settings.write().unwrap_or_else(|e| e.into_inner());
+            *guard = next.clone();
+        }
+
+        Ok(next)
+    }
+
+    /// Validates `short` (`"default"` or a valid theme short), atomically persists the updated
+    /// [`SiteSettings`] to disk, and updates the in-memory cache.
+    pub fn set_active_theme(&self, short: String) -> Result<SiteSettings, AppError> {
+        let _write_guard = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        let validated = validate_active_theme(&short)?;
+        let mut next = self.get();
+        next.active_theme = validated;
+
+        self.persist_settings(&next)?;
+
+        {
+            let mut guard = self.settings.write().unwrap_or_else(|e| e.into_inner());
+            *guard = next.clone();
+        }
+
+        Ok(next)
+    }
+
+    /// Atomically writes `next` as pretty-printed JSON to `self.path` via a same-directory temp file.
+    fn persist_settings(&self, next: &SiteSettings) -> Result<(), AppError> {
         let parent_dir = match self.path.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => parent,
             _ => Path::new("."),
@@ -203,7 +253,7 @@ impl SettingsStore {
             ))
         })?;
 
-        let mut json_bytes = serde_json::to_vec_pretty(&next)
+        let mut json_bytes = serde_json::to_vec_pretty(next)
             .map_err(|err| AppError::internal(format!("failed to serialize settings: {err}")))?;
         json_bytes.push(b'\n');
 
@@ -229,12 +279,7 @@ impl SettingsStore {
             ))
         })?;
 
-        {
-            let mut guard = self.settings.write().unwrap_or_else(|e| e.into_inner());
-            *guard = next.clone();
-        }
-
-        Ok(next)
+        Ok(())
     }
 }
 
@@ -266,10 +311,19 @@ fn sanitize_loaded_settings(path: &Path, loaded: SiteSettings) -> SiteSettings {
         }
     };
 
+    let active_theme = match validate_active_theme(&loaded.active_theme) {
+        Ok(v) => v,
+        Err(err) => {
+            warn!(path = %path.display(), error = %err, "invalid activeTheme in settings.json; using default");
+            defaults.active_theme
+        }
+    };
+
     SiteSettings {
         site_title,
         site_description,
         default_accent,
+        active_theme,
     }
 }
 
@@ -387,5 +441,78 @@ mod tests {
         // State and disk remain untouched
         assert_eq!(store.get(), SiteSettings::default());
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn loads_legacy_settings_json_without_active_theme_and_sanitizes_invalid_active_theme() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+
+        // Legacy settings.json without activeTheme loads seamlessly with "default"
+        fs::write(
+            &path,
+            r##"{"siteTitle": "Legacy", "siteDescription": "Old", "defaultAccent": "#111"}"##,
+        )
+        .unwrap();
+        let store = SettingsStore::load(path.clone());
+        let loaded = store.get();
+        assert_eq!(loaded.site_title, "Legacy");
+        assert_eq!(loaded.active_theme, DEFAULT_ACTIVE_THEME);
+
+        // Invalid activeTheme on disk falls back to "default"
+        fs::write(
+            &path,
+            r#"{"siteTitle": "Legacy", "activeTheme": "../escape"}"#,
+        )
+        .unwrap();
+        let store2 = SettingsStore::load(path);
+        assert_eq!(store2.get().active_theme, DEFAULT_ACTIVE_THEME);
+    }
+
+    #[test]
+    fn set_active_theme_validates_persists_and_preserves_other_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested/settings.json");
+        let store = SettingsStore::load(path.clone());
+
+        // Invalid theme shorts are rejected without mutating state or disk
+        for bad in ["", "../evil", "Upper", "double--dash", "-lead", "trail-", " space"] {
+            let err = store.set_active_theme(bad.to_string()).unwrap_err();
+            assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY", "expected '{bad}' to fail");
+        }
+        assert_eq!(store.get().active_theme, DEFAULT_ACTIVE_THEME);
+        assert!(!path.exists());
+
+        // Valid installed theme short persists as camelCase activeTheme
+        let updated = store
+            .set_active_theme("nord-minimal".to_string())
+            .expect("valid theme short");
+        assert_eq!(updated.active_theme, "nord-minimal");
+        assert_eq!(store.get().active_theme, "nord-minimal");
+
+        let disk_raw = fs::read_to_string(&path).unwrap();
+        let disk_json: serde_json::Value = serde_json::from_str(&disk_raw).unwrap();
+        assert_eq!(disk_json["activeTheme"], "nord-minimal");
+
+        // Regular settings update preserves active_theme
+        let updated2 = store
+            .update(SiteSettingsUpdate {
+                site_title: Some("Custom Title".to_string()),
+                ..Default::default()
+            })
+            .expect("update title");
+        assert_eq!(updated2.site_title, "Custom Title");
+        assert_eq!(updated2.active_theme, "nord-minimal");
+
+        // Reload from disk preserves active_theme
+        let reloaded = SettingsStore::load(path.clone());
+        assert_eq!(reloaded.get().active_theme, "nord-minimal");
+
+        // Switching back to "default" succeeds
+        let reset = reloaded
+            .set_active_theme(DEFAULT_ACTIVE_THEME.to_string())
+            .expect("reset to default");
+        assert_eq!(reset.active_theme, DEFAULT_ACTIVE_THEME);
+        assert_eq!(SettingsStore::load(path).get().active_theme, DEFAULT_ACTIVE_THEME);
     }
 }
