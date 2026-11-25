@@ -89,12 +89,12 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/r
 
 ---
 
-## 项目文档索引
+## 项目文档与 Agent Skills 索引
 
+- **AI 工具开发与发布 Skill**：[skills/toolstow-tool/](skills/toolstow-tool/SKILL.md) — 自包含 Agent Skill 目录（`SKILL.md` + `scripts/validate.py` / `pack.py` / `publish.py`，零外部依赖，可直接拷贝给 AI Coding Agent 使用）
+- **AI 主题开发 Skill**：[skills/toolstow-theme/](skills/toolstow-theme/SKILL.md) — 自包含 Agent Skill 目录（`SKILL.md` + `scripts/validate.py` / `pack.py`，涵盖 `theme.json`、SVG 安全检查、整站/纯皮肤校验与纯净 `.zip` 打包）
 - **需求与技术规格**：[docs/requirements.md](docs/requirements.md) — 完整架构设计、协议规范、安全模型与演进路线
 - **VPS 部署与主题定制**：[docs/deployment.md](docs/deployment.md) — `data/` 目录规划、`systemd` 服务、Caddy HTTPS 反代与 `data/themes/` 多主题管理
-- **AI 工具开发与发布 Skill**：[docs/ai-tool-skill.md](docs/ai-tool-skill.md) — 可直接提供给 AI / Agent 的微工具制作、打包与 Bearer API 发布规范
-- **AI 主题开发 Skill**：[docs/ai-theme-skill.md](docs/ai-theme-skill.md) — 可直接提供给 AI / Agent 的自定义主题开发、配色规范与打包说明
 - **变更日志**：[CHANGELOG.md](CHANGELOG.md) — 各版本更新记录
 
 ## 开发与测试
@@ -102,4 +102,8 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/r
 ```bash
 cargo test
 cargo clippy --all-targets -- -D warnings
+
+# 校验仓库内置示例插件与示例主题
+python3 skills/toolstow-tool/scripts/validate.py --strict --strict-dir-name examples/docker-cheatsheet examples/dynamic-favicon
+python3 skills/toolstow-theme/scripts/validate.py --strict --strict-dir-name examples/themes/*
 ```

@@ -103,16 +103,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Zip themes and example plugins
+      - name: Validate and zip themes and example plugins
         run: |
           mkdir -p dist
           for dir in examples/themes/*; do
             name=$(basename "$dir")
-            (cd "$dir" && zip -r "../../../dist/toolstow-theme-${name}.zip" .)
+            python3 skills/toolstow-theme/scripts/pack.py --strict --strict-dir-name "$dir" -o "dist/toolstow-theme-${name}.zip"
           done
           for dir in examples/docker-cheatsheet examples/dynamic-favicon; do
             name=$(basename "$dir")
-            (cd "$dir" && zip -r "../../dist/toolstow-plugin-${name}.zip" .)
+            python3 skills/toolstow-tool/scripts/pack.py --strict --strict-dir-name "$dir" -o "dist/toolstow-plugin-${name}.zip"
           done
 
       - name: Upload asset archives
