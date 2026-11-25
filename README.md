@@ -1,6 +1,6 @@
 # ToolStow
 
-> 单二进制、零数据库、零构建热插拔的个人微工具自托管宿主
+> AI 原生、单二进制、零数据库、热插拔的个人微工具自托管宿主
 
 ---
 
@@ -8,10 +8,11 @@
 
 写代码或和 AI 对话时，经常会随手生成各种实用小网页——命令速查表、格式转换器、图标生成器、日期计算器……它们通常散落在本地临时文件夹和聊天记录里，用完即丢。
 
-**ToolStow** 把这些轻量化静态微工具统一收进一个极简、可自托管的个人工具箱中：
+**ToolStow** 不仅把这些轻量化静态微工具统一收进一个极简、可自托管的个人工具箱，更原生面向 **AI Coding Agent 生产闭环**而设计：
 
+- **AI 通过 Skill 自主开发并上架工具（核心亮点）**：仓库内置自包含的 [Agent Skills](skills/toolstow-tool/SKILL.md)（含规范与零依赖校验/打包/发布脚本）。把 `skills/toolstow-tool/` 交给 AI Agent 后，只需一句话描述需求，**AI 就能自主完成「编写工具 → 自动校验安全与语法 → 打包 → 携 `TOOLSTOW_API_KEY` 一键发布到你的 ToolStow」全流程**（也可先以 `"draft": true` 草稿上架待你审核）；主题开发同理，交给 [skills/toolstow-theme/](skills/toolstow-theme/SKILL.md) 即可自动生成并校验打包自定义主题。
 - **单二进制、零数据库**：一个可执行文件开箱即用，所有数据集中在 `--data-dir`（默认 `./data`）下，文件系统即唯一事实来源（`tools/` + `themes/` + `settings.json`），支持文件变更自动热加载。
-- **热插拔与双密钥安全隔离**：支持在 `/admin` 网页拖拽上传 `.zip`、直接放进 `data/tools/` 目录，或由 AI 携 `TOOLSTOW_API_KEY` 调接口自动发布，无需重启；管理员网页登录（`TOOLSTOW_ADMIN_KEY`）与机器发布密钥严格隔离，未配置密钥时管理入口默认关闭（`404`）。
+- **热插拔与双密钥安全隔离**：支持 AI 携 `TOOLSTOW_API_KEY` 自动发布、在 `/admin` 网页拖拽上传 `.zip` 或直接放入 `data/tools/` 目录，均无需重启；管理员网页登录（`TOOLSTOW_ADMIN_KEY`）与机器发布密钥严格隔离，未配置密钥时管理入口默认关闭（`404`）。
 - **草稿预览与双重沙箱**：支持 Hugo 风格 `"draft": true` 草稿（仅管理员可见）；所有子工具运行在 `<iframe sandbox>` + `Content-Security-Policy: sandbox` 双重隔离中（强制剥离 `allow-same-origin`），ZIP 解包防路径穿越、拒符号链接并做体积/文件数防炸弹限制。
 - **统一 UI SDK 与多主题换肤**：内置 `/ui/v1/toolstow.css` 与 `/ui/v1/theme.js`，主站与所有子工具自动同步明暗模式与主题皮肤；支持在 `/admin` 上传、预览并热切换多套前台主题，而 `/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定。
 
