@@ -1,0 +1,147 @@
+name: Release
+
+# 1. 只在推送 v 开头的版本 Tag 时触发（例如 v0.3.0）
+on:
+  push:
+    tags:
+      - "v*"
+
+# 2. 赋予内置 GITHUB_TOKEN 创建 Release 和上传附件的权限
+permissions:
+  contents: write
+
+jobs:
+  # =========================================================
+  # 任务 1：多平台矩阵并行编译 Rust 单二进制
+  # =========================================================
+  build-binaries:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            install_musl: true
+
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            install_musl: true
+            linker_env: musl-gcc
+
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            install_musl: false
+
+          # 新增：Windows x64 (.exe)
+          - name: windows-amd64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            install_musl: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install musl tools
+        if: matrix.install_musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.linker_env }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Linux / macOS 打包成 .tar.gz
+      - name: Package binary archive (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist staging
+          cp "target/${{ matrix.target }}/release/toolstow" staging/
+          cp README.md LICENSE .env.example staging/
+          tar -czf "dist/toolstow-${{ github.ref_name }}-${{ matrix.name }}.tar.gz" -C staging .
+
+      # Windows 打包成 .zip（二进制叫 toolstow.exe）
+      - name: Package binary archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/toolstow.exe" staging/
+          Copy-Item README.md, LICENSE, .env.example staging/
+          Compress-Archive -Path staging\* -DestinationPath "dist/toolstow-${{ github.ref_name }}-${{ matrix.name }}.zip"
+
+      # 同时匹配 .tar.gz 和 .zip
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-bin-${{ matrix.name }}
+          path: dist/*
+  # =========================================================
+  # 任务 2：自动把仓库里的示例插件 & 4 套主题打成可直接上传的 .zip
+  # =========================================================
+  package-assets:
+    name: Package Themes & Example Plugins
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Zip themes and example plugins
+        run: |
+          mkdir -p dist
+          for dir in examples/themes/*; do
+            name=$(basename "$dir")
+            (cd "$dir" && zip -r "../../../dist/toolstow-theme-${name}.zip" .)
+          done
+          for dir in examples/docker-cheatsheet examples/dynamic-favicon; do
+            name=$(basename "$dir")
+            (cd "$dir" && zip -r "../../dist/toolstow-plugin-${name}.zip" .)
+          done
+
+      - name: Upload asset archives
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assets-zips
+          path: dist/*.zip
+
+  # =========================================================
+  # 任务 3：汇总所有产物 + 生成校验码 + 创建 GitHub Release
+  # =========================================================
+  release:
+    name: Publish GitHub Release
+    # 关键：必须等上面两个任务（共 4 个并行 Job）全部成功才开始
+    needs: [build-binaries, package-assets]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        working-directory: artifacts
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: artifacts/*
