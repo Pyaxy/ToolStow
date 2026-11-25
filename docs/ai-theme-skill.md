@@ -1,6 +1,6 @@
 # ToolStow AI Theme Development Skill
 
-Use this specification whenever designing, implementing, or packaging a custom public frontend theme for **ToolStow** (v0.2.2+).
+Use this specification whenever designing, implementing, or packaging a custom public frontend theme for **ToolStow** (v0.3.0+).
 
 ToolStow themes are self-contained static `.zip` packages installed via `/admin` (into `<data-dir>/themes/<short>/`). All visual styling — colors, accent, typography, radii, light/dark palettes, and control appearance — is owned **entirely by the theme** (there is no global accent picker in ToolStow).
 

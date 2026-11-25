@@ -2,6 +2,26 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.3.0] - 2026-11-25
+
+### Added
+- **Multi-Theme Manager (`src/themes.rs`, `/api/admin/themes*`, `/admin` Theme Gallery)**:
+  - Stores installed themes under `--themes-dir` / `TOOLSTOW_THEMES_DIR` (default `<data-dir>/themes/<short>/`) with `theme.json` validation, safe ZIP extraction (Zip Slip / symlink / zip-bomb defenses, single-folder unwrap), `?overwrite=false` `409 THEME_EXISTS` confirmation, sandboxed preview image serving (`GET /api/admin/themes/{short}/preview`), one-click switching (`PUT /api/admin/themes/active` persisted to `data/settings.json`), and safe deletion (auto-reverting active theme to `"default"`).
+  - Supports both **full custom shell themes** (`index.html` / `dist/index.html` + optional `ui.css`) and **skin-only themes** (`ui.css` only, reskinning the built-in shell and all plugins).
+  - Restricted all `/api/admin/themes*` routes to **Admin Session ONLY** (`TOOLSTOW_ADMIN_KEY`), rejecting AI Bearer keys (`401`).
+- **Cross-origin theme assets (`GET /ui/v1/theme-assets/{*path}` + CORS)**:
+  - Added locked read-only `/ui/v1/theme-assets/{*path}` and `Access-Control-Allow-Origin: *` headers on custom theme static assets (with `CSP: sandbox;` on SVG/HTML and symlink/dot-segment blocking) so custom `.woff2` fonts, background images, and SVG textures work seamlessly on both `/` and inside `Origin: null` sandboxed plugin iframes.
+- **4 curated bundled themes (`examples/themes/`)** inspired by `monitor-probe/themes`:
+  - `ascii-probe` (retro terminal TUI full shell + `ui.css`)
+  - `serverstatus` (high-density ops table full shell + `ui.css`)
+  - `paper-warm` (warm parchment editorial skin-only `ui.css`)
+  - `rakugaki` (hand-drawn sketchbook & chalkboard doodle full shell + `ui.css` + tiled grid SVG assets)
+- **AI Theme Development Skill** (`docs/ai-theme-skill.md`) for generating drop-in ToolStow themes.
+
+### Changed
+- **Theme-owned visual styling**: Removed manual accent-color pickers from the public topbar, `/admin` site settings, `SiteSettings`, and `GET /api/me` (`defaultAccent`). Themes now own 100% of color and accent styling via `ui.css`, while shells still read computed `--ts-accent` and `--ts-*` tokens to sync to plugin iframes.
+- Bumped crate version to `0.3.0` (`toolstow --version`).
+
 ## [0.2.2] - 2026-11-25
 
 ### Added

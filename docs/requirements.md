@@ -1,4 +1,4 @@
-# ToolStow 项目需求与技术规格书（v0.2.2）
+# ToolStow 项目需求与技术规格书（v0.3.0）
 
 ## 1. 项目背景与定位
 
@@ -309,7 +309,7 @@ data/
 
 ```text
 toolstow/
-├── Cargo.toml                # Crate 清单（v0.2.2，Rust Edition 2024）
+├── Cargo.toml                # Crate 清单（v0.3.0，Rust Edition 2024）
 ├── Cargo.lock
 ├── README.md                 # 项目总览与快速开始
 ├── CHANGELOG.md              # 版本变更记录
