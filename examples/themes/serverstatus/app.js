@@ -9,7 +9,6 @@ const SANDBOX_ALLOWLIST = new Set([
 
 const DEFAULT_SANDBOX = ["allow-scripts", "allow-downloads", "allow-forms"];
 const STORAGE_KEY_MODE = "toolstow:mode";
-const STORAGE_KEY_ACCENT = "toolstow:accent";
 const THEME_ACCENT_LIGHT = "#2563eb";
 const THEME_ACCENT_DARK = "#3b82f6";
 const DEFAULT_SITE_TITLE = "ToolStow";
@@ -48,9 +47,9 @@ const state = {
   site: {
     siteTitle: DEFAULT_SITE_TITLE,
     siteDescription: DEFAULT_SITE_DESC,
-    defaultAccent: THEME_ACCENT_LIGHT,
     isAdmin: false,
     adminEnabled: false,
+    activeTheme: "serverstatus",
     themeSource: "custom",
   },
   allTools: [],
@@ -66,7 +65,6 @@ const state = {
   theme: {
     mode: "light",
     accent: THEME_ACCENT_LIGHT,
-    hasUserAccent: false,
   },
   statusTimer: null,
   searchTimer: null,
@@ -77,8 +75,6 @@ const els = {
   brandTitle: document.getElementById("brand-title"),
   siteDescPill: document.getElementById("site-desc-pill"),
   searchInput: document.getElementById("search-input"),
-  accentInput: document.getElementById("accent-input"),
-  accentSwatch: document.getElementById("accent-swatch"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
   statusBanner: document.getElementById("status-banner"),
@@ -150,47 +146,21 @@ function initTheme() {
     state.theme.mode = "dark";
   }
 
-  const savedAccent = normalizeHexColor(readStorage(STORAGE_KEY_ACCENT));
-  if (savedAccent) {
-    state.theme.accent = savedAccent;
-    state.theme.hasUserAccent = true;
-  } else {
-    state.theme.accent = defaultAccentForMode(state.theme.mode);
-  }
-
   applyThemeToHost();
 }
 
 function applyThemeToHost() {
   document.documentElement.dataset.theme = state.theme.mode;
-  if (state.theme.hasUserAccent) {
-    document.documentElement.style.setProperty("--ts-accent", state.theme.accent);
-  } else {
-    document.documentElement.style.removeProperty("--ts-accent");
-    const computed = normalizeHexColor(
-      window.getComputedStyle(document.documentElement).getPropertyValue("--ts-accent")
-    );
-    state.theme.accent = computed || defaultAccentForMode(state.theme.mode);
-  }
-
-  els.accentInput.value = state.theme.accent;
-  els.accentSwatch.style.backgroundColor = state.theme.accent;
+  const computed = normalizeHexColor(
+    window.getComputedStyle(document.documentElement).getPropertyValue("--ts-accent")
+  );
+  state.theme.accent = computed || defaultAccentForMode(state.theme.mode);
   els.themeToggle.textContent = state.theme.mode === "dark" ? "亮色" : "暗色";
 }
 
 function setThemeMode(mode) {
   state.theme.mode = mode === "dark" ? "dark" : "light";
   writeStorage(STORAGE_KEY_MODE, state.theme.mode);
-  applyThemeToHost();
-  postThemeToActiveIframe();
-}
-
-function setAccentColor(accent) {
-  const normalized = normalizeHexColor(accent);
-  if (!normalized) return;
-  state.theme.accent = normalized;
-  state.theme.hasUserAccent = true;
-  writeStorage(STORAGE_KEY_ACCENT, state.theme.accent);
   applyThemeToHost();
   postThemeToActiveIframe();
 }
@@ -206,17 +176,6 @@ function applySiteInfo() {
   els.siteDescPill.textContent = state.site.siteDescription || "";
   els.adminLink.hidden = state.site.isAdmin !== true;
   updateDocumentTitle(getSelectedTool());
-
-  if (!state.theme.hasUserAccent) {
-    const serverAccent = normalizeHexColor(state.site.defaultAccent);
-    if (serverAccent && serverAccent !== "#18181b" && serverAccent !== "#fafafa") {
-      state.theme.accent = serverAccent;
-      document.documentElement.style.setProperty("--ts-accent", serverAccent);
-      els.accentInput.value = serverAccent;
-      els.accentSwatch.style.backgroundColor = serverAccent;
-      postThemeToActiveIframe();
-    }
-  }
 }
 
 function getSelectedTool() {
@@ -304,7 +263,7 @@ async function fetchSiteMe() {
         typeof data.siteDescription === "string"
           ? data.siteDescription.trim()
           : DEFAULT_SITE_DESC,
-      defaultAccent: normalizeHexColor(data.defaultAccent) || THEME_ACCENT_LIGHT,
+      activeTheme: typeof data.activeTheme === "string" ? data.activeTheme : "serverstatus",
       isAdmin: data.isAdmin === true,
       adminEnabled: data.adminEnabled === true,
       themeSource: typeof data.themeSource === "string" ? data.themeSource : "custom",
@@ -827,14 +786,6 @@ function bindEvents() {
 
   els.themeToggle.addEventListener("click", () => {
     setThemeMode(state.theme.mode === "dark" ? "light" : "dark");
-  });
-
-  els.accentInput.addEventListener("input", (e) => {
-    setAccentColor(e.target.value);
-  });
-
-  els.accentInput.addEventListener("change", (e) => {
-    setAccentColor(e.target.value);
   });
 
   els.searchInput.addEventListener("input", (e) => {

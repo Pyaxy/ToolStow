@@ -70,7 +70,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/p
 
 | 接口 | 权限 | 说明 |
 | :--- | :--- | :--- |
-| `GET /api/me` | 公开 | 站点标题、描述、默认强调色、当前登录态（`isAdmin`）、当前主题（`activeTheme`）与主题来源 |
+| `GET /api/me` | 公开 | 站点标题、描述、当前登录态（`isAdmin`）、当前主题（`activeTheme`）与主题来源 |
 | `GET /api/tools` | 公开 | 已发布（`draft: false`）工具列表，支持 `?q=&category=&tag=` |
 | `GET /t/{id}/{*path}` | 公开 / 管理员 | 沙箱静态托管（草稿工具仅管理员 Session 或 `--include-drafts` 可访问） |
 | `GET /admin` | `TOOLSTOW_ADMIN_KEY` | 内置单密钥管理面板（未配置密钥时返回 `404`） |
@@ -78,7 +78,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/p
 | `POST /api/admin/tools/upload` | Admin Session 或 API Key | `multipart/form-data`（`file`）上传或覆盖 `.zip`（支持 `?overwrite=false` 冲突返回 `409 TOOL_EXISTS`，`/admin` 网页默认先校验并弹窗确认覆盖） |
 | `PATCH /api/admin/tools/{id}` | Admin Session 或 API Key | JSON `{"draft": true\|false}` 原地原子切换草稿/发布状态 |
 | `DELETE /api/admin/tools/{id}` | Admin Session 或 API Key | 删除指定工具目录并移除内存索引 |
-| `GET/PUT /api/admin/settings` | 仅 Admin Session | 读取或更新 `data/settings.json`（站点名称、描述、默认强调色） |
+| `GET/PUT /api/admin/settings` | 仅 Admin Session | 读取或更新 `data/settings.json`（站点名称与描述） |
 | `GET /api/admin/themes` | 仅 Admin Session | 列出内置 `default` 与 `data/themes/` 下全部已安装主题元数据 |
 | `GET /api/admin/themes/{short}/preview` | 仅 Admin Session | 安全返回指定主题的预览图（附带 `CSP: sandbox;` 与 `nosniff`） |
 | `POST /api/admin/themes/upload` | 仅 Admin Session | `multipart/form-data`（`file`）上传 `.zip` 主题包（支持 `?overwrite=false` 返回 `409 THEME_EXISTS`，`/admin` 弹窗确认后再覆盖） |
@@ -92,6 +92,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/p
 - **需求与技术规格**：[docs/requirements.md](docs/requirements.md) — 完整架构设计、协议规范、安全模型与演进路线
 - **VPS 部署与主题定制**：[docs/deployment.md](docs/deployment.md) — `data/` 目录规划、`systemd` 服务、Caddy HTTPS 反代与 `data/themes/` 多主题管理
 - **AI 工具开发与发布 Skill**：[docs/ai-tool-skill.md](docs/ai-tool-skill.md) — 可直接提供给 AI / Agent 的微工具制作、打包与 Bearer API 发布规范
+- **AI 主题开发 Skill**：[docs/ai-theme-skill.md](docs/ai-theme-skill.md) — 可直接提供给 AI / Agent 的自定义主题开发、配色规范与打包说明
 - **变更日志**：[CHANGELOG.md](CHANGELOG.md) — 各版本更新记录
 
 ## 开发与测试

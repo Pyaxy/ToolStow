@@ -15,8 +15,6 @@ use crate::error::AppError;
 pub const DEFAULT_SITE_TITLE: &str = "ToolStow";
 /// Default site description shown in the public frontend shell.
 pub const DEFAULT_SITE_DESCRIPTION: &str = "Personal Micro-App Toolbox";
-/// Default monochrome accent color hex string.
-pub const DEFAULT_ACCENT: &str = "#18181b";
 /// Default active theme short name (built-in theme).
 pub const DEFAULT_ACTIVE_THEME: &str = "default";
 /// Maximum allowed character length for `siteTitle`.
@@ -30,10 +28,6 @@ fn default_site_title() -> String {
 
 fn default_site_description() -> String {
     DEFAULT_SITE_DESCRIPTION.to_string()
-}
-
-fn default_accent() -> String {
-    DEFAULT_ACCENT.to_string()
 }
 
 fn default_active_theme() -> String {
@@ -50,9 +44,6 @@ pub struct SiteSettings {
     /// Short site subtitle / description (0..=240 characters).
     #[serde(default = "default_site_description")]
     pub site_description: String,
-    /// Default hex accent color (`#rgb` or `#rrggbb`).
-    #[serde(default = "default_accent")]
-    pub default_accent: String,
     /// Active theme short name (`"default"` for built-in theme, or installed theme short).
     #[serde(default = "default_active_theme")]
     pub active_theme: String,
@@ -63,7 +54,6 @@ impl Default for SiteSettings {
         Self {
             site_title: default_site_title(),
             site_description: default_site_description(),
-            default_accent: default_accent(),
             active_theme: default_active_theme(),
         }
     }
@@ -79,17 +69,6 @@ pub struct SiteSettingsUpdate {
     /// Optional updated site description (trimmed, max 240 chars).
     #[serde(default)]
     pub site_description: Option<String>,
-    /// Optional updated default accent color (`#rgb` or `#rrggbb`).
-    #[serde(default)]
-    pub default_accent: Option<String>,
-}
-
-/// Returns `true` if `value` is a valid CSS hex color in `#rgb` or `#rrggbb` form.
-pub fn is_valid_hex_color(value: &str) -> bool {
-    let Some(hex) = value.strip_prefix('#') else {
-        return false;
-    };
-    (hex.len() == 3 || hex.len() == 6) && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Validates and normalizes `site_title`.
@@ -113,17 +92,6 @@ fn validate_site_description(raw: &str) -> Result<String, AppError> {
         return Err(AppError::bad_request(format!(
             "siteDescription must be at most {MAX_SITE_DESCRIPTION_LEN} characters"
         )));
-    }
-    Ok(trimmed.to_string())
-}
-
-/// Validates and normalizes `default_accent`.
-fn validate_default_accent(raw: &str) -> Result<String, AppError> {
-    let trimmed = raw.trim();
-    if !is_valid_hex_color(trimmed) {
-        return Err(AppError::bad_request(
-            "defaultAccent must be a valid hex color (#rgb or #rrggbb)",
-        ));
     }
     Ok(trimmed.to_string())
 }
@@ -205,9 +173,6 @@ impl SettingsStore {
         }
         if let Some(description) = update.site_description {
             next.site_description = validate_site_description(&description)?;
-        }
-        if let Some(accent) = update.default_accent {
-            next.default_accent = validate_default_accent(&accent)?;
         }
 
         self.persist_settings(&next)?;
@@ -303,14 +268,6 @@ fn sanitize_loaded_settings(path: &Path, loaded: SiteSettings) -> SiteSettings {
         }
     };
 
-    let default_accent = match validate_default_accent(&loaded.default_accent) {
-        Ok(v) => v,
-        Err(err) => {
-            warn!(path = %path.display(), error = %err, "invalid defaultAccent in settings.json; using default");
-            defaults.default_accent
-        }
-    };
-
     let active_theme = match validate_active_theme(&loaded.active_theme) {
         Ok(v) => v,
         Err(err) => {
@@ -322,7 +279,6 @@ fn sanitize_loaded_settings(path: &Path, loaded: SiteSettings) -> SiteSettings {
     SiteSettings {
         site_title,
         site_description,
-        default_accent,
         active_theme,
     }
 }
@@ -342,7 +298,6 @@ mod tests {
         assert_eq!(store.get(), SiteSettings::default());
         assert_eq!(store.get().site_title, "ToolStow");
         assert_eq!(store.get().site_description, "Personal Micro-App Toolbox");
-        assert_eq!(store.get().default_accent, "#18181b");
 
         // Corrupt JSON -> logs warning and falls back to defaults
         fs::write(&path, "{not valid json").unwrap();
@@ -356,18 +311,16 @@ mod tests {
         let path = dir.path().join("nested/data/settings.json");
         let store = SettingsStore::load(path.clone());
 
-        // Partial update: title + accent only
+        // Partial update: title only
         let updated = store
             .update(SiteSettingsUpdate {
                 site_title: Some("  My Toolbox  ".to_string()),
                 site_description: None,
-                default_accent: Some(" #2563EB ".to_string()),
             })
             .expect("valid partial update");
 
         assert_eq!(updated.site_title, "My Toolbox");
         assert_eq!(updated.site_description, DEFAULT_SITE_DESCRIPTION);
-        assert_eq!(updated.default_accent, "#2563EB");
         assert_eq!(store.get(), updated);
 
         // Verify persisted JSON uses camelCase keys
@@ -375,19 +328,16 @@ mod tests {
         let disk_json: serde_json::Value = serde_json::from_str(&disk_raw).unwrap();
         assert_eq!(disk_json["siteTitle"], "My Toolbox");
         assert_eq!(disk_json["siteDescription"], DEFAULT_SITE_DESCRIPTION);
-        assert_eq!(disk_json["defaultAccent"], "#2563EB");
 
-        // Partial update: description can be cleared, 3-digit hex color accepted
+        // Partial update: description can be cleared
         let updated2 = store
             .update(SiteSettingsUpdate {
                 site_title: None,
                 site_description: Some("   ".to_string()),
-                default_accent: Some("#0fA".to_string()),
             })
             .expect("valid second update");
         assert_eq!(updated2.site_title, "My Toolbox");
         assert_eq!(updated2.site_description, "");
-        assert_eq!(updated2.default_accent, "#0fA");
 
         // Reload from disk confirms persistence
         let reloaded = SettingsStore::load(path);
@@ -426,17 +376,6 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(err.error_code(), "BAD_REQUEST");
-
-        // Invalid hex colors
-        for bad in ["18181b", "#12", "#1234", "#12345", "#1234567", "#gggggg", "red"] {
-            let err = store
-                .update(SiteSettingsUpdate {
-                    default_accent: Some(bad.to_string()),
-                    ..Default::default()
-                })
-                .unwrap_err();
-            assert_eq!(err.error_code(), "BAD_REQUEST", "expected '{bad}' to fail");
-        }
 
         // State and disk remain untouched
         assert_eq!(store.get(), SiteSettings::default());

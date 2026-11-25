@@ -148,51 +148,6 @@ a {
   flex-shrink: 0;
 }
 
-/* Subtle Accent Swatch Picker */
-.accent-picker {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  cursor: pointer;
-  transition: border-color 0.14s ease, background-color 0.14s ease;
-}
-
-.accent-picker:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-}
-
-.accent-picker:focus-within {
-  outline: 2px solid var(--ink);
-  outline-offset: 1px;
-}
-
-.accent-swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--accent);
-  border: 1px solid rgba(128, 128, 128, 0.35);
-}
-
-.accent-picker input[type="color"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  cursor: pointer;
-}
-
 /* Buttons */
 .btn {
   display: inline-flex;

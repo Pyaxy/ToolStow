@@ -100,7 +100,6 @@ struct AdminListToolsQuery {
 struct MeResponse {
     site_title: String,
     site_description: String,
-    default_accent: String,
     is_admin: bool,
     admin_enabled: bool,
     active_theme: String,
@@ -910,7 +909,6 @@ async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let body = MeResponse {
         site_title: settings.site_title,
         site_description: settings.site_description,
-        default_accent: settings.default_accent,
         is_admin: state.auth.has_valid_admin_session(&headers),
         admin_enabled: state.auth.is_admin_enabled(),
         active_theme,

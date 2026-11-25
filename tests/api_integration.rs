@@ -316,7 +316,6 @@ async fn read_only_fail_closed_mode_and_draft_visibility() {
     let me = read_body_json(resp).await;
     assert_eq!(me["siteTitle"], "ToolStow");
     assert_eq!(me["siteDescription"], "Personal Micro-App Toolbox");
-    assert_eq!(me["defaultAccent"], "#18181b");
     assert_eq!(me["isAdmin"], false);
     assert_eq!(me["adminEnabled"], false);
     assert_eq!(me["activeTheme"], "default");
@@ -704,8 +703,7 @@ async fn admin_session_rate_limit_cookie_flags_settings_and_draft_preview() {
                 .body(Body::from(
                     json!({
                         "siteTitle": "My Personal Lab",
-                        "siteDescription": "Monochrome self-hosted utilities",
-                        "defaultAccent": "#2563eb"
+                        "siteDescription": "Monochrome self-hosted utilities"
                     })
                     .to_string(),
                 ))
@@ -717,13 +715,12 @@ async fn admin_session_rate_limit_cookie_flags_settings_and_draft_preview() {
     let updated = read_body_json(resp).await;
     assert_eq!(updated["siteTitle"], "My Personal Lab");
     assert_eq!(updated["siteDescription"], "Monochrome self-hosted utilities");
-    assert_eq!(updated["defaultAccent"], "#2563eb");
 
     // Verify persisted settings.json on disk
     let persisted_raw = fs::read_to_string(env.data_dir.join("settings.json")).unwrap();
     let persisted: Value = serde_json::from_str(&persisted_raw).unwrap();
     assert_eq!(persisted["siteTitle"], "My Personal Lab");
-    assert_eq!(persisted["defaultAccent"], "#2563eb");
+    assert_eq!(persisted["siteDescription"], "Monochrome self-hosted utilities");
 
     // Reflected immediately on /api/me
     let resp = env
@@ -734,7 +731,7 @@ async fn admin_session_rate_limit_cookie_flags_settings_and_draft_preview() {
         .unwrap();
     let me = read_body_json(resp).await;
     assert_eq!(me["siteTitle"], "My Personal Lab");
-    assert_eq!(me["defaultAccent"], "#2563eb");
+    assert_eq!(me["siteDescription"], "Monochrome self-hosted utilities");
 
     // Draft preview: anonymous -> 404, admin cookie -> 307 / 200
     let resp = env

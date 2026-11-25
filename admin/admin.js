@@ -1,6 +1,5 @@
 const CLIENT_HEADERS = { "X-ToolStow-Client": "1" };
 const STORAGE_KEY_MODE = "toolstow:mode";
-const FALLBACK_ACCENT = "#18181b";
 
 const state = {
   authenticated: false,
@@ -71,10 +70,6 @@ const els = {
   settingsForm: document.getElementById("settings-form"),
   settingSiteTitle: document.getElementById("setting-site-title"),
   settingSiteDesc: document.getElementById("setting-site-desc"),
-  settingAccentPicker: document.getElementById("setting-accent-picker"),
-  settingAccentPreview: document.getElementById("setting-accent-preview"),
-  settingAccentText: document.getElementById("setting-accent-text"),
-  accentPresets: Array.from(document.querySelectorAll(".preset-dot")),
   saveSettingsBtn: document.getElementById("save-settings-btn"),
   settingsFeedback: document.getElementById("settings-feedback"),
 
@@ -505,14 +500,6 @@ async function fetchAdminTools() {
   }
 }
 
-function syncAccentControls(hex) {
-  const normalized = normalizeHexColor(hex);
-  if (!normalized) return;
-  els.settingAccentPicker.value = normalized;
-  els.settingAccentPreview.style.backgroundColor = normalized;
-  els.settingAccentText.value = normalized;
-}
-
 async function fetchAdminSettings() {
   try {
     const res = await apiRequest("/api/admin/settings", { method: "GET" });
@@ -530,7 +517,6 @@ async function fetchAdminSettings() {
     els.settingSiteTitle.value = typeof data.siteTitle === "string" ? data.siteTitle : "ToolStow";
     els.settingSiteDesc.value =
       typeof data.siteDescription === "string" ? data.siteDescription : "";
-    syncAccentControls(data.defaultAccent || FALLBACK_ACCENT);
   } catch (err) {
     setSettingsFeedback(err.message || "加载站点设置失败", "error");
   }
@@ -541,21 +527,13 @@ async function saveAdminSettings(event) {
 
   const siteTitle = els.settingSiteTitle.value.trim();
   const siteDescription = els.settingSiteDesc.value.trim();
-  const accentInput = els.settingAccentText.value.trim();
-  const normalizedAccent = normalizeHexColor(accentInput);
 
   if (!siteTitle) {
     setSettingsFeedback("站点标题不能为空", "error");
     els.settingSiteTitle.focus();
     return;
   }
-  if (!normalizedAccent) {
-    setSettingsFeedback("默认强调色需为有效十六进制色值（如 #18181b）", "error");
-    els.settingAccentText.focus();
-    return;
-  }
 
-  syncAccentControls(normalizedAccent);
   els.saveSettingsBtn.disabled = true;
   setSettingsFeedback("正在保存...", "info");
 
@@ -566,7 +544,6 @@ async function saveAdminSettings(event) {
       body: JSON.stringify({
         siteTitle,
         siteDescription,
-        defaultAccent: normalizedAccent,
       }),
     });
 
@@ -584,7 +561,6 @@ async function saveAdminSettings(event) {
       els.settingSiteTitle.value = body.siteTitle || siteTitle;
       els.settingSiteDesc.value =
         typeof body.siteDescription === "string" ? body.siteDescription : siteDescription;
-      syncAccentControls(body.defaultAccent || normalizedAccent);
     }
 
     const now = new Date();
@@ -1269,18 +1245,6 @@ async function checkSession() {
   }
 }
 
-function initPresetSwatches() {
-  for (const btn of els.accentPresets) {
-    const color = normalizeHexColor(btn.dataset.color);
-    if (color) {
-      btn.style.backgroundColor = color;
-      btn.addEventListener("click", () => {
-        syncAccentControls(color);
-      });
-    }
-  }
-}
-
 function initCurlExample() {
   const origin = window.location.origin || "http://127.0.0.1:8080";
   els.curlExample.textContent = [
@@ -1418,18 +1382,6 @@ function bindEvents() {
   els.refreshThemesBtn.addEventListener("click", fetchAdminThemes);
 
   // Settings controls
-  els.settingAccentPicker.addEventListener("input", (e) => {
-    syncAccentControls(e.target.value);
-  });
-
-  els.settingAccentText.addEventListener("input", (e) => {
-    const normalized = normalizeHexColor(e.target.value);
-    if (normalized) {
-      els.settingAccentPicker.value = normalized;
-      els.settingAccentPreview.style.backgroundColor = normalized;
-    }
-  });
-
   els.settingsForm.addEventListener("submit", saveAdminSettings);
 
   // Copy cURL snippet
@@ -1476,7 +1428,6 @@ function bindEvents() {
 
 async function bootstrap() {
   initTheme();
-  initPresetSwatches();
   initCurlExample();
   bindEvents();
   await checkSession();
