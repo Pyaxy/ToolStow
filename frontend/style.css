@@ -321,6 +321,7 @@ a {
 .nav-item-btn,
 .tool-item-btn {
   width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -335,6 +336,13 @@ a {
   text-align: left;
   cursor: pointer;
   transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.nav-item-btn > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item-btn:hover,
@@ -440,6 +448,7 @@ a {
 }
 
 .tag-chip {
+  max-width: 100%;
   padding: 2px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -448,6 +457,7 @@ a {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
   cursor: pointer;
   transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
@@ -694,13 +704,17 @@ a {
     display: none;
   }
 
+  .search-wrap input {
+    padding-right: 12px;
+  }
+
   .empty-state {
     padding: 24px 16px;
   }
 
   .sidebar {
-    position: fixed;
-    top: var(--topbar-height);
+    position: absolute;
+    top: 0;
     bottom: 0;
     left: 0;
     z-index: 40;
@@ -714,16 +728,38 @@ a {
   }
 
   .sidebar-backdrop {
-    position: fixed;
-    top: var(--topbar-height);
-    right: 0;
-    bottom: 0;
-    left: 0;
+    position: absolute;
+    inset: 0;
     z-index: 30;
     background: rgba(9, 9, 11, 0.45);
   }
 
   .sidebar-backdrop:not([hidden]) {
     display: block;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .topbar-left {
+    order: 1;
+    flex: 1 1 auto;
+  }
+
+  .topbar-actions {
+    order: 2;
+    margin-left: 0;
+  }
+
+  .search-wrap {
+    order: 3;
+    flex: 1 0 100%;
+    max-width: none;
   }
 }
