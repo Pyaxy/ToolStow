@@ -109,6 +109,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 code,
 kbd,
 pre {
