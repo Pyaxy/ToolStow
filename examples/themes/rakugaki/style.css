@@ -1,0 +1,915 @@
+/* ==========================================================================
+   Rakugaki Sketchbook Public Shell Layout & Doodle Chrome
+   Loaded right after /ui/v1/toolstow.css (which includes ./ui.css cascade).
+   ========================================================================== */
+
+:root {
+  --rk-topbar-h: 58px;
+  --rk-footer-h: 32px;
+}
+
+html,
+body {
+  height: 100%;
+  color: var(--ts-ink);
+  font-family: var(--ts-font-sans);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.rk-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* ==========================================================================
+   Top Bar
+   ========================================================================== */
+
+.rk-topbar {
+  min-height: var(--rk-topbar-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 18px;
+  background: var(--ts-surface);
+  border-bottom: 2px solid var(--ts-ink);
+  box-shadow: 0 3px 0 var(--rk-ink-shadow);
+  position: relative;
+  z-index: 10;
+}
+
+.rk-brand-group {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.rk-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: var(--rk-radius-wobbly);
+  color: var(--ts-ink);
+  transition: transform 0.12s ease;
+}
+
+.rk-brand:hover {
+  transform: rotate(-1deg);
+}
+
+.rk-brand-doodle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--rk-highlight);
+  color: #1f1c18;
+  box-shadow: 2px 2px 0 var(--rk-ink-shadow);
+}
+
+:root[data-theme="dark"] .rk-brand-doodle {
+  background: var(--ts-accent);
+  color: #171614;
+}
+
+.rk-brand-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.rk-brand-stamp {
+  padding: 1px 7px;
+  border: 1.5px solid var(--ts-accent);
+  border-radius: var(--rk-radius-wobbly);
+  color: var(--ts-accent);
+  font-size: 11px;
+  font-weight: 700;
+  transform: rotate(-3deg);
+}
+
+/* Search Input */
+.rk-search-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 440px;
+  display: flex;
+  align-items: center;
+}
+
+.rk-search-icon {
+  position: absolute;
+  left: 11px;
+  color: var(--ts-ink-muted);
+  pointer-events: none;
+}
+
+.rk-search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 46px 0 34px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font: inherit;
+  font-size: 13px;
+  box-shadow: 2.5px 2.5px 0 var(--rk-ink-shadow);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.rk-search-input::placeholder {
+  color: var(--ts-ink-muted);
+}
+
+.rk-search-input:focus {
+  outline: none;
+  border-color: var(--ts-accent);
+  box-shadow: 3px 3px 0 var(--ts-accent);
+}
+
+.rk-kbd {
+  position: absolute;
+  right: 8px;
+  padding: 1px 5px;
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-surface);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.rk-inline-kbd {
+  padding: 0 5px;
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rk-topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Hand-Drawn Shell Buttons */
+.rk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 2.5px 2.5px 0 var(--rk-ink-shadow);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+.rk-btn:hover {
+  background: var(--rk-highlight-soft);
+  transform: translate(-1px, -1px);
+  box-shadow: 3.5px 3.5px 0 var(--rk-ink-shadow);
+}
+
+.rk-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0.5px 0.5px 0 var(--rk-ink-shadow);
+}
+
+.rk-btn:focus-visible,
+.rk-cat-tab:focus-visible,
+.rk-tag-pill:focus-visible,
+.rk-note-card:focus-visible,
+.rk-quick-select:focus-visible {
+  outline: 2px dashed var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.rk-btn-sm {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.rk-btn-accent {
+  background: var(--ts-accent);
+  border-color: var(--ts-ink);
+  color: var(--rk-accent-ink);
+}
+
+.rk-btn-accent:hover {
+  background: var(--ts-accent);
+  color: var(--rk-accent-ink);
+  opacity: 0.94;
+}
+
+/* Status Banner */
+.rk-status-banner {
+  flex-shrink: 0;
+  padding: 7px 18px;
+  border-bottom: 1.75px dashed var(--ts-ink);
+  background: var(--rk-highlight-soft);
+  color: var(--ts-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.rk-status-banner[data-kind="error"] {
+  background: var(--ts-danger-bg);
+  color: var(--ts-danger);
+  border-bottom-color: var(--ts-danger);
+}
+
+/* ==========================================================================
+   Notebook Wall View
+   ========================================================================== */
+
+.rk-notebook {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 22px 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Hero Cover Card with Notebook Margin Line */
+.rk-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px 16px 34px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-surface);
+  box-shadow: 4px 4px 0 var(--rk-ink-shadow);
+  overflow: hidden;
+}
+
+.rk-hero::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 20px;
+  width: 2px;
+  background: var(--rk-margin-rule);
+}
+
+.rk-hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rk-hero-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rk-hero-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  padding: 0 4px;
+  background: linear-gradient(
+    180deg,
+    transparent 58%,
+    var(--rk-highlight-stripe) 58%,
+    var(--rk-highlight-stripe) 95%,
+    transparent 95%
+  );
+}
+
+.rk-stamp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--rk-cobalt-soft);
+  color: var(--rk-cobalt);
+  font-family: var(--ts-font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  transform: rotate(1.2deg);
+}
+
+.rk-hero-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ts-ink-muted);
+}
+
+.rk-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Horizontal Sticky-Tab Category Strip */
+.rk-tabs-shell {
+  padding-bottom: 4px;
+  border-bottom: 2px dashed var(--ts-border);
+}
+
+.rk-cat-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rk-cat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: 14px 12px 4px 5px / 10px 12px 4px 4px;
+  background: var(--ts-surface);
+  color: var(--ts-ink-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 2.5px 2.5px 0 var(--rk-ink-shadow);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+.rk-cat-tab:hover {
+  background: var(--rk-highlight-soft);
+  color: var(--ts-ink);
+  transform: translateY(-2px);
+}
+
+.rk-cat-tab.active {
+  background: var(--rk-highlight);
+  color: #1f1c18;
+  transform: translateY(-2px) rotate(-0.6deg);
+  box-shadow: 3px 3px 0 var(--rk-ink-shadow);
+}
+
+:root[data-theme="dark"] .rk-cat-tab.active {
+  background: var(--ts-accent);
+  color: #171614;
+}
+
+.rk-cat-count {
+  padding: 0 5px;
+  border: 1.25px solid currentColor;
+  border-radius: var(--rk-radius-wobbly);
+  font-family: var(--ts-font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  opacity: 0.85;
+}
+
+/* Tag Doodle Pills Bar */
+.rk-tags-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rk-tags-label {
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--ts-ink-muted);
+  padding: 2px 6px;
+  border: 1.5px dashed var(--ts-ink-muted);
+  border-radius: var(--rk-radius-wobbly);
+}
+
+.rk-tag-list,
+.rk-active-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rk-tag-pill {
+  padding: 2px 9px;
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-surface);
+  color: var(--ts-ink-secondary);
+  font-family: var(--ts-font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 1.5px 1.5px 0 var(--rk-ink-shadow);
+  transition: transform 0.1s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.rk-tag-pill:hover {
+  background: var(--rk-cobalt-soft);
+  color: var(--rk-cobalt);
+  transform: translate(-1px, -1px);
+}
+
+.rk-tag-pill.active {
+  background: var(--ts-accent);
+  color: var(--rk-accent-ink);
+  border-color: var(--ts-ink);
+}
+
+.rk-empty-inline {
+  font-size: 12px;
+  color: var(--ts-ink-muted);
+  font-style: italic;
+}
+
+/* ==========================================================================
+   Sticky-Note Tool Card Wall
+   ========================================================================== */
+
+.rk-note-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: 22px 18px;
+  padding-top: 8px;
+}
+
+.rk-note-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 16px 14px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 3.5px 3.5px 0 var(--rk-ink-shadow);
+  transform: rotate(-0.5deg);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background-color 0.14s ease;
+}
+
+.rk-note-card:nth-child(even) {
+  transform: rotate(0.5deg);
+}
+
+.rk-note-card:nth-child(3n) {
+  transform: rotate(-0.35deg);
+}
+
+/* Masking-Tape Top Strip Accent */
+.rk-note-card::before {
+  content: "";
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  width: 64px;
+  height: 16px;
+  background: var(--rk-tape-yellow);
+  border: 1.25px solid rgba(31, 28, 24, 0.32);
+  border-radius: 3px 6px 4px 5px / 5px 3px 6px 4px;
+  transform: translateX(-50%) rotate(-2deg);
+  pointer-events: none;
+}
+
+.rk-note-card:nth-child(3n + 2)::before {
+  background: var(--rk-tape-blue);
+  transform: translateX(-50%) rotate(1.8deg);
+}
+
+.rk-note-card:nth-child(3n)::before {
+  background: var(--rk-tape-red);
+  transform: translateX(-50%) rotate(-1.2deg);
+}
+
+:root[data-theme="dark"] .rk-note-card::before {
+  border-color: rgba(244, 239, 230, 0.25);
+}
+
+.rk-note-card:hover {
+  transform: translate(-2px, -4px) rotate(0deg);
+  box-shadow: 6px 6px 0 var(--rk-ink-shadow);
+  background: var(--ts-surface);
+}
+
+.rk-note-card:active {
+  transform: translate(2px, 2px) rotate(0deg);
+  box-shadow: 1px 1px 0 var(--rk-ink-shadow);
+}
+
+.rk-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rk-card-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rk-tool-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-canvas);
+  font-size: 18px;
+  box-shadow: 2px 2px 0 var(--rk-ink-shadow);
+}
+
+.rk-tool-icon-lg {
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
+}
+
+.rk-tool-icon img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.rk-card-title {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--ts-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rk-mono-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-canvas);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rk-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--rk-highlight);
+  color: #1f1c18;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+:root[data-theme="dark"] .rk-sync-pill {
+  background: var(--ts-accent);
+  color: #171614;
+}
+
+.rk-card-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ts-ink-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 39px;
+}
+
+.rk-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.rk-card-tag {
+  padding: 0 6px;
+  border: 1px dashed var(--ts-ink-muted);
+  border-radius: var(--rk-radius-wobbly);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: 10.5px;
+}
+
+.rk-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 9px;
+  border-top: 1.5px dashed var(--ts-border);
+  font-size: 11.5px;
+  color: var(--ts-ink-muted);
+}
+
+.rk-card-cat {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rk-card-open {
+  color: var(--ts-accent);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.rk-empty-card {
+  grid-column: 1 / -1;
+  padding: 36px 20px;
+  border: 2px dashed var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-surface);
+  box-shadow: 4px 4px 0 var(--rk-ink-shadow);
+  text-align: center;
+  font-size: 14px;
+  color: var(--ts-ink-muted);
+}
+
+/* ==========================================================================
+   Framed Sketchbook Tool Workspace
+   ========================================================================== */
+
+.rk-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rk-workspace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  background: var(--ts-surface);
+  border-bottom: 1.75px dashed var(--ts-ink);
+}
+
+.rk-workspace-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.rk-quick-select {
+  height: 30px;
+  max-width: 210px;
+  padding: 0 8px;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 2px 2px 0 var(--rk-ink-shadow);
+}
+
+.rk-tool-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.rk-tool-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.rk-tool-title-row h1 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 800;
+}
+
+.rk-tool-desc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ts-ink-muted);
+}
+
+.rk-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rk-active-tags {
+  padding: 6px 18px;
+  background: transparent;
+  border-bottom: 1.5px dashed var(--ts-border);
+}
+
+.rk-active-tags:empty {
+  display: none;
+}
+
+.rk-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 12px 16px;
+}
+
+.rk-iframe-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border: 2px solid var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-canvas);
+  box-shadow: 4px 4px 0 var(--rk-ink-shadow);
+  overflow: hidden;
+}
+
+.rk-iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* ==========================================================================
+   Footer Marginalia
+   ========================================================================== */
+
+.rk-footer {
+  height: var(--rk-footer-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 18px;
+  background: var(--ts-surface);
+  border-top: 1.75px solid var(--ts-ink);
+  color: var(--ts-ink-muted);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+}
+
+.rk-footer-left,
+.rk-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.rk-ink-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50% 42% 56% 46%;
+  background: var(--ts-accent);
+  border: 1.25px solid var(--ts-ink);
+}
+
+.rk-sep {
+  opacity: 0.45;
+}
+
+/* ==========================================================================
+   Responsive & Reduced Motion
+   ========================================================================== */
+
+@media (max-width: 760px) {
+  .rk-topbar {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .rk-search-wrap {
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .rk-brand-stamp,
+  .rk-kbd,
+  .rk-footer-right {
+    display: none;
+  }
+
+  .rk-notebook {
+    padding: 14px 12px 26px;
+    gap: 12px;
+  }
+
+  .rk-hero {
+    padding: 14px 14px 14px 24px;
+  }
+
+  .rk-hero::before {
+    left: 12px;
+  }
+
+  .rk-note-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .rk-workspace-bar {
+    padding: 8px 12px;
+  }
+
+  .rk-quick-select {
+    max-width: 150px;
+  }
+
+  .rk-canvas-wrap {
+    padding: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rk-brand,
+  .rk-btn,
+  .rk-cat-tab,
+  .rk-tag-pill,
+  .rk-note-card {
+    transition: none;
+    transform: none;
+  }
+
+  .rk-note-card:hover,
+  .rk-note-card:active,
+  .rk-btn:hover,
+  .rk-btn:active,
+  .rk-cat-tab:hover,
+  .rk-cat-tab.active {
+    transform: none;
+  }
+}

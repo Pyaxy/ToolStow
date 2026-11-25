@@ -27,6 +27,7 @@ ToolStow supports **two theme modes** under the exact same `theme.json` schema:
 my-skin/
 ├── theme.json      # Required metadata
 ├── ui.css          # Automatically appended to GET /ui/v1/toolstow.css
+├── assets/         # Optional static textures/fonts referenced via /ui/v1/theme-assets/...
 └── preview.svg     # Optional 16:9 static preview (NO <script>!)
 ```
 
@@ -36,6 +37,7 @@ my-skin/
 my-theme/
 ├── theme.json      # Required metadata
 ├── ui.css          # Recommended: reskins plugins + shared /ui/v1/toolstow.css controls
+├── assets/         # Optional static textures/fonts referenced via /ui/v1/theme-assets/...
 ├── preview.svg     # Optional 16:9 static preview (or preview.png)
 ├── index.html      # Public shell entry (OR place built SPA under dist/index.html)
 ├── style.css       # Shell-specific layout styles
@@ -141,6 +143,26 @@ Always define **both** `:root` (light mode) and `:root[data-theme="dark"]` (dark
 
 You may also optionally override shared plugin primitives (`.ts-card`, `.ts-btn`, `.ts-btn-primary`, `.ts-input`, `.ts-tab`, `.ts-code-row`, etc.) inside `ui.css` to customize control feel across all plugins.
 
+### Static Theme Assets (`GET /ui/v1/theme-assets/{*path}`)
+
+Both **Skin-Only** and **Full Custom Shell** themes can bundle custom `.woff2` fonts, background images, and SVG textures inside their theme directory (for example `assets/paper-grid-light.svg` or `fonts/sketch.woff2`) and reference them from `ui.css` or `style.css` using `/ui/v1/theme-assets/<relative-path>`:
+
+```css
+@font-face {
+  font-family: "MyThemeFont";
+  src: url("/ui/v1/theme-assets/fonts/my-font.woff2") format("woff2");
+  font-display: swap;
+}
+
+body {
+  background-image: url("/ui/v1/theme-assets/assets/paper-grid-light.svg");
+  background-size: 28px 28px;
+}
+```
+
+- **Cross-origin safe for sandboxed plugins**: ToolStow serves `GET`/`HEAD /ui/v1/theme-assets/{*path}` (and custom theme static files) with `Access-Control-Allow-Origin: *`, `Cache-Control: no-cache`, and `X-Content-Type-Options: nosniff`. That guarantees `@font-face` fonts and SVG/image textures load seamlessly on BOTH `/` **and** inside `Origin: null` sandboxed plugin iframes!
+- **Active theme resolution & safety**: Files are resolved strictly inside the currently active theme root (or legacy `data/theme/` when `activeTheme` is `"default"`). Requests for `..`, backslashes, dot-prefixed segments (`.git`, `.env`, `.DS_Store`), `theme.json`, or symlink escapes (`403 Forbidden`) are rejected, and `.svg`/`.html` responses include `Content-Security-Policy: sandbox;`.
+
 > **Important**: Never write inline `document.documentElement.style.setProperty("--ts-accent", ...)` in your shell JS — let `ui.css` own `--ts-accent` for light and dark modes, and read the active value via `getComputedStyle(document.documentElement).getPropertyValue("--ts-accent")` when syncing to plugin iframes.
 
 ---
@@ -245,10 +267,11 @@ Every full custom shell MUST follow these rules when loading a plugin:
 
 ## 7. Reference Implementations & Verification Checklist
 
-Inspect the 3 bundled themes in `examples/themes/` as working references:
+Inspect the 4 bundled themes in `examples/themes/` as working references:
 - **Skin-only**: `examples/themes/paper-warm/` (`theme.json`, `ui.css`, `preview.svg`)
 - **Full TUI shell**: `examples/themes/ascii-probe/`
 - **Full table ops shell**: `examples/themes/serverstatus/`
+- **Full sketchbook shell + shared SVG paper assets**: `examples/themes/rakugaki/` (uses `/ui/v1/theme-assets/assets/paper-grid-*.svg` across both host and plugins)
 
 Before packaging your theme `.zip`, verify:
 - [ ] `theme.json` has valid `short` (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, not `"default"`) and non-empty `name`.

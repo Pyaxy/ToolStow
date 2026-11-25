@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ToolStow · Rakugaki Sketchbook</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="rk-shell">
+    <!-- Hand-Drawn Notebook Top Bar -->
+    <header class="rk-topbar">
+      <div class="rk-brand-group">
+        <a href="#" id="brand-link" class="rk-brand" aria-label="返回涂鸦笔记本首页">
+          <span class="rk-brand-doodle" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M4.5 19.5L8.2 18.6L19.1 7.7C19.9 6.9 19.9 5.6 19.1 4.9C18.3 4.1 17.1 4.1 16.3 4.9L5.4 15.8L4.5 19.5Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M14.2 7L17 9.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M3.5 21H12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="2.5 2.5"/>
+            </svg>
+          </span>
+          <span id="brand-title" class="rk-brand-title">ToolStow</span>
+          <span class="rk-brand-stamp" aria-hidden="true">落書き</span>
+        </a>
+      </div>
+
+      <div class="rk-search-wrap">
+        <svg class="rk-search-icon" width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="5.25" stroke="currentColor" stroke-width="1.8"/>
+          <path d="M12.2 12.2L15.6 15.7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        </svg>
+        <input
+          id="search-input"
+          class="rk-search-input"
+          type="search"
+          placeholder="翻找笔记本里的工具、标签或 ID..."
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="搜索工具"
+        >
+        <kbd class="rk-kbd" aria-hidden="true">⌘K</kbd>
+      </div>
+
+      <div class="rk-topbar-actions">
+        <button
+          id="theme-toggle"
+          class="rk-btn"
+          type="button"
+          aria-label="切换网格纸或黑板暗色模式"
+        >☾ 黑板</button>
+
+        <a id="admin-link" class="rk-btn rk-btn-accent" href="/admin" hidden>管理 / 设置</a>
+      </div>
+    </header>
+
+    <div id="status-banner" class="rk-status-banner" role="status" aria-live="polite" hidden></div>
+
+    <!-- Notebook Directory Wall -->
+    <main id="notebook-view" class="rk-notebook">
+      <section class="rk-hero" aria-label="笔记本封面摘要">
+        <div class="rk-hero-copy">
+          <div class="rk-hero-title-row">
+            <h1 id="hero-title" class="rk-hero-title">ToolStow</h1>
+            <span id="tool-count-stamp" class="rk-stamp-badge">0 个工具</span>
+          </div>
+          <p id="hero-desc" class="rk-hero-desc">
+            手绘涂鸦工具箱 · 按 <kbd class="rk-inline-kbd">⌘K</kbd> 快速翻找
+          </p>
+        </div>
+
+        <div class="rk-hero-actions">
+          <button id="clear-filters-btn" class="rk-btn rk-btn-sm" type="button" hidden>清空筛选</button>
+          <button id="refresh-list-btn" class="rk-btn rk-btn-sm" type="button" title="重新加载工具列表">↻ 刷新</button>
+        </div>
+      </section>
+
+      <!-- Horizontal Sticky-Tab Category Bar -->
+      <nav class="rk-tabs-shell" aria-label="分类索引标签">
+        <div id="category-tabs" class="rk-cat-tabs" role="tablist"></div>
+      </nav>
+
+      <!-- Tag Doodle Pills -->
+      <section class="rk-tags-bar" aria-label="标签涂鸦筛选">
+        <span class="rk-tags-label">TAGS</span>
+        <div id="tag-list" class="rk-tag-list"></div>
+      </section>
+
+      <!-- Sticky-Note Tool Card Wall -->
+      <section aria-label="手绘工具便签墙">
+        <div id="tool-grid" class="rk-note-grid"></div>
+      </section>
+    </main>
+
+    <!-- Framed Sketchbook Tool Workspace -->
+    <section id="tool-view" class="rk-workspace" hidden>
+      <div class="rk-workspace-bar">
+        <div class="rk-workspace-left">
+          <button id="back-to-notebook-btn" class="rk-btn rk-btn-sm" type="button">← 返回笔记本</button>
+
+          <select id="quick-switcher" class="rk-quick-select" aria-label="快速切换工具"></select>
+
+          <span id="active-tool-icon" class="rk-tool-icon rk-tool-icon-lg"></span>
+
+          <div class="rk-tool-meta">
+            <div class="rk-tool-title-row">
+              <h1 id="active-tool-name"></h1>
+              <code id="active-tool-id" class="rk-mono-pill"></code>
+              <span id="active-tool-version" class="rk-mono-pill"></span>
+              <span id="active-tool-theme-badge" class="rk-sync-pill" hidden>手绘同步</span>
+            </div>
+            <p id="active-tool-desc" class="rk-tool-desc"></p>
+          </div>
+        </div>
+
+        <div class="rk-workspace-actions">
+          <button id="reload-tool-btn" class="rk-btn rk-btn-sm" type="button">↻ 刷新</button>
+          <a id="standalone-link" class="rk-btn rk-btn-sm rk-btn-accent" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
+        </div>
+      </div>
+
+      <div id="active-tool-tags" class="rk-active-tags"></div>
+
+      <div class="rk-canvas-wrap">
+        <div id="iframe-host" class="rk-iframe-host"></div>
+      </div>
+    </section>
+
+    <footer class="rk-footer" aria-label="笔记本页脚">
+      <div class="rk-footer-left">
+        <span class="rk-ink-dot" aria-hidden="true"></span>
+        <span id="footer-status">笔记本就绪</span>
+        <span class="rk-sep" aria-hidden="true">·</span>
+        <span id="footer-count">0 / 0</span>
+      </div>
+      <div class="rk-footer-right">
+        <span>⌘K 检索</span>
+        <span class="rk-sep" aria-hidden="true">·</span>
+        <span>ESC 清空</span>
+        <span class="rk-sep" aria-hidden="true">·</span>
+        <span>Rakugaki Sketchbook</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

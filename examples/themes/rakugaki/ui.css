@@ -1,0 +1,346 @@
+/* ==========================================================================
+   ToolStow Theme Cascade: Rakugaki Sketchbook (ui.css)
+   Appended automatically to /ui/v1/toolstow.css when "rakugaki" is active.
+   Reskins host shell & every embedded/standalone plugin with notebook paper,
+   hand-drawn wobbly ink borders, hard offset ink shadows, and chalkboard dark.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* Light Sketchbook Palette */
+  --ts-canvas: #fcf9f2;
+  --ts-surface: #fffdf8;
+  --ts-surface-hover: #f7f0e2;
+  --ts-border: #cdc3b3;
+  --ts-border-strong: #1f1c18;
+  --ts-ink: #1f1c18;
+  --ts-ink-secondary: #3e3830;
+  --ts-ink-muted: #6b655c;
+  --ts-inverted-bg: #1f1c18;
+  --ts-inverted-bg-hover: #342f29;
+  --ts-inverted-ink: #fcf9f2;
+  --ts-accent: #d9381e;
+  --ts-danger: #b91c1c;
+  --ts-danger-bg: #fee2e2;
+  --ts-danger-border: #dc2626;
+  --ts-success: #15803d;
+  --ts-code-bg: #23201b;
+  --ts-code-ink: #f8f3e9;
+
+  --ts-radius-sm: 10px;
+  --ts-radius-md: 12px;
+
+  --ts-font-sans: "Klee One", ui-rounded, "Hiragino Maru Gothic ProN", "PingFang SC", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --ts-font-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  /* Rakugaki Signature Tokens */
+  --rk-highlight: #fde047;
+  --rk-highlight-soft: #fef9c3;
+  --rk-highlight-stripe: rgba(253, 224, 71, 0.62);
+  --rk-cobalt: #1d4ed8;
+  --rk-cobalt-soft: rgba(29, 78, 216, 0.11);
+  --rk-accent-soft: rgba(217, 56, 30, 0.12);
+  --rk-accent-ink: #fcf9f2;
+  --rk-ink-shadow: #1f1c18;
+  --rk-margin-rule: rgba(217, 56, 30, 0.24);
+  --rk-tape-yellow: rgba(253, 224, 71, 0.72);
+  --rk-tape-blue: rgba(147, 197, 253, 0.62);
+  --rk-tape-red: rgba(252, 165, 165, 0.62);
+  --rk-radius-wobbly: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --rk-radius-box: 12px 4px 10px 6px / 6px 12px 4px 10px;
+  --rk-radius-card: 16px 5px 14px 6px / 6px 14px 5px 16px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Dark Chalkboard Palette */
+  --ts-canvas: #171614;
+  --ts-surface: #211f1c;
+  --ts-surface-hover: #2c2925;
+  --ts-border: #4b453d;
+  --ts-border-strong: #f4efe6;
+  --ts-ink: #f4efe6;
+  --ts-ink-secondary: #d9d1c5;
+  --ts-ink-muted: #a8a095;
+  --ts-inverted-bg: #f4efe6;
+  --ts-inverted-bg-hover: #e5ddd1;
+  --ts-inverted-ink: #171614;
+  --ts-accent: #fbbf24;
+  --ts-danger: #f87171;
+  --ts-danger-bg: #321818;
+  --ts-danger-border: #f87171;
+  --ts-success: #4ade80;
+  --ts-code-bg: #100f0d;
+  --ts-code-ink: #f4efe6;
+
+  /* Dark Chalkboard Signature Tokens */
+  --rk-highlight: #fbbf24;
+  --rk-highlight-soft: rgba(251, 191, 36, 0.16);
+  --rk-highlight-stripe: rgba(251, 191, 36, 0.28);
+  --rk-cobalt: #60a5fa;
+  --rk-cobalt-soft: rgba(96, 165, 250, 0.16);
+  --rk-accent-soft: rgba(251, 191, 36, 0.18);
+  --rk-accent-ink: #171614;
+  --rk-ink-shadow: #575046;
+  --rk-margin-rule: rgba(251, 191, 36, 0.22);
+  --rk-tape-yellow: rgba(251, 191, 36, 0.42);
+  --rk-tape-blue: rgba(96, 165, 250, 0.36);
+  --rk-tape-red: rgba(248, 113, 113, 0.36);
+}
+
+/* Shared Notebook Paper / Chalkboard Grid Background (Host + All Plugin Iframes) */
+html,
+body {
+  background-color: var(--ts-canvas);
+  background-image: url("/ui/v1/theme-assets/assets/paper-grid-light.svg");
+  background-size: 28px 28px;
+  background-repeat: repeat;
+}
+
+:root[data-theme="dark"],
+:root[data-theme="dark"] body {
+  background-color: var(--ts-canvas);
+  background-image: url("/ui/v1/theme-assets/assets/paper-grid-dark.svg");
+  background-size: 28px 28px;
+  background-repeat: repeat;
+}
+
+.ts-page,
+.ts-page-narrow {
+  background: transparent;
+}
+
+/* Hand-Drawn Section Headings with Highlighter Underline */
+.ts-section-title {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 0 6px 1px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ts-ink);
+  background: linear-gradient(
+    180deg,
+    transparent 56%,
+    var(--rk-highlight-stripe) 56%,
+    var(--rk-highlight-stripe) 92%,
+    transparent 92%
+  );
+}
+
+.ts-standalone-header {
+  border-bottom: 2px dashed var(--ts-ink);
+}
+
+/* Hand-Drawn Sketch Cards */
+.ts-card {
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-surface);
+  box-shadow: 3px 3px 0 var(--rk-ink-shadow);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.ts-empty {
+  border: 2px dashed var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-surface);
+  box-shadow: 3px 3px 0 var(--rk-ink-shadow);
+}
+
+/* Tactile Hand-Drawn Buttons */
+.ts-btn {
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  font-weight: 600;
+  box-shadow: 2.5px 2.5px 0 var(--rk-ink-shadow);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.ts-btn:hover:not(:disabled) {
+  background: var(--rk-highlight-soft);
+  border-color: var(--ts-ink);
+  transform: translate(-1px, -1px);
+  box-shadow: 3.5px 3.5px 0 var(--rk-ink-shadow);
+}
+
+.ts-btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 0.5px 0.5px 0 var(--rk-ink-shadow);
+}
+
+.ts-btn-primary,
+.ts-btn-accent {
+  background: var(--ts-accent);
+  border-color: var(--ts-ink);
+  color: var(--rk-accent-ink);
+}
+
+.ts-btn-primary:hover:not(:disabled),
+.ts-btn-accent:hover:not(:disabled) {
+  background: var(--ts-accent);
+  border-color: var(--ts-ink);
+  color: var(--rk-accent-ink);
+  opacity: 0.94;
+}
+
+.ts-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ts-btn-ghost:hover:not(:disabled) {
+  background: var(--rk-highlight-soft);
+  border-color: var(--ts-ink);
+  border-style: dashed;
+  box-shadow: 2px 2px 0 var(--rk-ink-shadow);
+}
+
+.ts-btn-danger {
+  border-color: var(--ts-danger);
+  color: var(--ts-danger);
+}
+
+.ts-btn-danger:hover:not(:disabled) {
+  background: var(--ts-danger-bg);
+  border-color: var(--ts-danger);
+  color: var(--ts-danger);
+}
+
+/* Hand-Drawn Form Controls */
+.ts-input,
+.ts-select,
+.ts-textarea {
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  box-shadow: 2px 2px 0 var(--rk-ink-shadow);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+.ts-input:hover:not(:disabled),
+.ts-select:hover:not(:disabled),
+.ts-textarea:hover:not(:disabled) {
+  border-color: var(--ts-ink);
+}
+
+.ts-input:focus,
+.ts-select:focus,
+.ts-textarea:focus {
+  border-color: var(--ts-accent);
+  box-shadow: 3px 3px 0 var(--ts-accent);
+}
+
+/* Hand-Drawn Tabs */
+.ts-tabs {
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+  background: var(--ts-surface);
+  box-shadow: 2.5px 2.5px 0 var(--rk-ink-shadow);
+  padding: 3px;
+  gap: 4px;
+}
+
+.ts-tab {
+  border: 1.5px solid transparent;
+  border-radius: var(--rk-radius-wobbly);
+  color: var(--ts-ink-secondary);
+  font-weight: 600;
+  transition: transform 0.1s ease, background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.ts-tab:hover:not(:disabled) {
+  color: var(--ts-ink);
+  background: var(--rk-highlight-soft);
+  border-color: var(--ts-ink);
+}
+
+.ts-tab.active {
+  background: var(--rk-highlight);
+  border-color: var(--ts-ink);
+  color: #1f1c18;
+  box-shadow: 1.5px 1.5px 0 var(--rk-ink-shadow);
+}
+
+:root[data-theme="dark"] .ts-tab.active {
+  background: var(--ts-accent);
+  border-color: var(--ts-ink);
+  color: #171614;
+}
+
+/* Code Rows, Code Blocks, Badges, Keys & Toast */
+.ts-code-row {
+  border: 1.75px dashed var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+  background: var(--ts-canvas);
+  box-shadow: 2px 2px 0 var(--rk-ink-shadow);
+}
+
+.ts-code {
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+}
+
+.ts-code-row > .ts-code,
+.ts-code-row > code {
+  border: 0;
+  box-shadow: none;
+}
+
+.ts-badge,
+.ts-badge-mono,
+.ts-kbd {
+  border: 1.5px solid var(--ts-ink);
+  border-radius: var(--rk-radius-wobbly);
+  background: var(--ts-surface);
+  color: var(--ts-ink);
+  box-shadow: 1.5px 1.5px 0 var(--rk-ink-shadow);
+}
+
+.ts-badge-mono {
+  color: var(--rk-cobalt);
+}
+
+.ts-toast {
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-box);
+  background: var(--rk-highlight);
+  color: #1f1c18;
+  font-weight: 600;
+  box-shadow: 3px 3px 0 var(--rk-ink-shadow);
+}
+
+:root[data-theme="dark"] .ts-toast {
+  background: var(--ts-accent);
+  color: #171614;
+}
+
+.ts-btn:focus-visible,
+.ts-btn-ghost:focus-visible,
+.ts-tab:focus-visible {
+  outline: 2px dashed var(--ts-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-card,
+  .ts-btn,
+  .ts-tab {
+    transition: none;
+  }
+
+  .ts-btn:hover:not(:disabled),
+  .ts-btn:active:not(:disabled) {
+    transform: none;
+  }
+}

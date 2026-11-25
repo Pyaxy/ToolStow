@@ -47,7 +47,7 @@ chmod 600 .env
 
 # 可选：直接把仓库自带示例工具与示例主题拷贝进 data/ 热加载体验
 cp -r examples/docker-cheatsheet examples/dynamic-favicon data/tools/
-cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/paper-warm data/themes/
+cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/rakugaki examples/themes/paper-warm data/themes/
 ```
 
 启动后访问：
@@ -56,12 +56,13 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/p
 
 ### 4. 内置示例主题包（`examples/themes/`）
 
-仓库自带 3 套风格迥异的示例主题（均含 `theme.json`、`ui.css` 与 `preview.svg`，灵感源自 [monitor-probe/themes](https://github.com/monitor-probe/themes)），可直接拷贝至 `data/themes/` 或打包成 `.zip` 在 `/admin` 拖拽上传：
+仓库自带 4 套风格迥异的示例主题（均含 `theme.json`、`ui.css` 与 `preview.svg`，灵感源自 [monitor-probe/themes](https://github.com/monitor-probe/themes)），可直接拷贝至 `data/themes/` 或打包成 `.zip` 在 `/admin` 拖拽上传：
 
 | 主题目录 | 类型 | 视觉风格与特点 |
 | :--- | :--- | :--- |
 | `examples/themes/ascii-probe/` | 完整主题 + `ui.css` | 复古终端 TUI 风格：等宽排版、2px 锐利框线、`$ toolstow --list` 提示符与荧光祖母绿强调色 |
 | `examples/themes/serverstatus/` | 完整主题 + `ui.css` | 高密度运维控制台表格布局：顶部指标/分类/标签筛选条、紧凑工具表与冷岩板蓝配色 |
+| `examples/themes/rakugaki/` | 完整主题 + `ui.css` + `assets/` | 手绘涂鸦笔记本风格：经由 `/ui/v1/theme-assets/` 共享网格纸/黑板底纹、不规则手绘墨线框、便利贴卡片与硬投影（主站与插件同步手绘化） |
 | `examples/themes/paper-warm/` | 纯皮肤覆盖（无 `index.html`） | 温润羊皮纸社论风格：仅约 70 行 `ui.css` 同时换肤内置前台壳与所有插件，零自定义 HTML/JS |
 
 ---
@@ -73,6 +74,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/p
 | `GET /api/me` | 公开 | 站点标题、描述、当前登录态（`isAdmin`）、当前主题（`activeTheme`）与主题来源 |
 | `GET /api/tools` | 公开 | 已发布（`draft: false`）工具列表，支持 `?q=&category=&tag=` |
 | `GET /t/{id}/{*path}` | 公开 / 管理员 | 沙箱静态托管（草稿工具仅管理员 Session 或 `--include-drafts` 可访问） |
+| `GET /ui/v1/theme-assets/{*path}` | 公开 | 当前启用主题的静态资源托管（如 `.woff2` 字体、背景图、SVG 纹理），附带 `Access-Control-Allow-Origin: *` 与 SVG `CSP: sandbox;`，同时兼容纯皮肤主题、完整主题与 `Origin: null` 沙箱插件 iframe |
 | `GET /admin` | `TOOLSTOW_ADMIN_KEY` | 内置单密钥管理面板（未配置密钥时返回 `404`） |
 | `GET /api/admin/tools` | Admin Session 或 API Key | 全量工具列表（含草稿），支持 `?q=&category=&tag=&draft=true\|false` |
 | `POST /api/admin/tools/upload` | Admin Session 或 API Key | `multipart/form-data`（`file`）上传或覆盖 `.zip`（支持 `?overwrite=false` 冲突返回 `409 TOOL_EXISTS`，`/admin` 网页默认先校验并弹窗确认覆盖） |

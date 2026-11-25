@@ -1,0 +1,9 @@
+{
+  "short": "rakugaki",
+  "name": "Rakugaki Sketchbook",
+  "version": "1.0.0",
+  "description": "手绘涂鸦笔记本风格主题：网格纸底纹、不规则手绘墨线框、硬投影与黑板暗色模式（主站与插件同步手绘化）",
+  "author": "ToolStow",
+  "url": "https://github.com/monitor-probe/themes",
+  "preview": "preview.svg"
+}
