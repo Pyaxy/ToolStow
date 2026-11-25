@@ -1,0 +1,28 @@
+# GitHub 自动生成 Release Notes 分类配置
+# 当通过 Pull Request 合并到 main 并推送新 Tag 时，GitHub 会按 PR 标签自动分组整理更新日志。
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: "✨ 新功能"
+      labels:
+        - enhancement
+        - feat
+    - title: "🐛 问题修复"
+      labels:
+        - bug
+        - fix
+    - title: "🎨 主题与 Agent Skills"
+      labels:
+        - theme
+        - skill
+    - title: "📖 文档与构建"
+      labels:
+        - documentation
+        - docs
+        - ci
+        - chore
+    - title: "📦 其他变更"
+      labels:
+        - "*"

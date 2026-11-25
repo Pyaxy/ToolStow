@@ -315,4 +315,9 @@ jobs:
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ### 快速下载与安装
+            - 按平台下载对应二进制压缩包（`linux-amd64` / `linux-arm64` / `macos-arm64` / `windows-amd64`），解压后直接运行即可。
+            - 可选使用 `SHA256SUMS.txt` 校验文件完整性。
+            - `toolstow-plugins.zip` 与 `toolstow-themes.zip` 为内置示例合集包，解压后把里面的单个 `.zip` 拖进 `/admin` 上传即可使用。
           files: artifacts/*
