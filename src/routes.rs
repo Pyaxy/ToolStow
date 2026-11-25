@@ -3,7 +3,7 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::Arc;
 
 use axum::Router;
@@ -13,8 +13,8 @@ use axum::extract::multipart::{Multipart, MultipartError, MultipartRejection};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Path as AxumPath, Query, State};
 use axum::http::header::{
-    AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, ORIGIN, SET_COOKIE,
-    X_CONTENT_TYPE_OPTIONS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY,
+    CONTENT_TYPE, HOST, ORIGIN, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::request::Parts;
 use axum::http::uri::Authority;
@@ -487,6 +487,7 @@ pub fn build_router(state: AppState) -> Router {
         // Locked shared UI design system & theme bridge (never shadowable by data/theme/ or data/themes/)
         .route("/ui/v1/toolstow.css", get(serve_ui_css))
         .route("/ui/v1/theme.js", get(serve_ui_theme_js))
+        .route("/ui/v1/theme-assets/{*path}", get(serve_active_theme_asset))
         .route("/ui/{*path}", get(serve_ui_not_found))
         // Admin session, settings & theme management endpoints (Admin Session Cookie ONLY)
         .route("/api/admin/session", get(get_admin_session))
@@ -676,6 +677,7 @@ async fn serve_custom_theme_asset(
         .header(CONTENT_TYPE, content_type)
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
         .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"))
         .body(body)
         .map_err(|err| AppError::internal(format!("failed to build theme asset response: {err}")))
 }
@@ -811,6 +813,155 @@ async fn serve_ui_theme_js() -> Result<Response, AppError> {
         .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
         .body(Body::from(asset.data.into_owned()))
         .map_err(|err| AppError::internal(format!("failed to build UI JS response: {err}")))
+}
+
+/// `GET` / `HEAD /ui/v1/theme-assets/{*path}`: safely serves read-only static assets (fonts,
+/// background textures, illustrations, etc.) from the currently active theme directory (both
+/// full-shell and skin-only themes, as well as legacy `data/theme/` when on `"default"`) with
+/// `Access-Control-Allow-Origin: *` so assets load cleanly inside `Origin: null` sandboxed iframes.
+async fn serve_active_theme_asset(
+    State(state): State<AppState>,
+    method: Method,
+    AxumPath(path): AxumPath<String>,
+) -> Result<Response, AppError> {
+    let rel_path = manifest::validate_safe_rel_path(&path)
+        .map_err(|err| AppError::bad_request(err.to_string()))?;
+
+    for component in rel_path.components() {
+        match component {
+            Component::Normal(seg) => {
+                if seg.to_string_lossy().starts_with('.') {
+                    return Err(AppError::bad_request(format!(
+                        "invalid theme asset path '{path}': hidden path segments are not allowed"
+                    )));
+                }
+            }
+            _ => {
+                return Err(AppError::bad_request(format!(
+                    "invalid theme asset path '{path}': contains non-normal path components"
+                )));
+            }
+        }
+    }
+
+    if path.eq_ignore_ascii_case("theme.json") {
+        return Err(AppError::not_found(format!(
+            "theme asset not found: /ui/v1/theme-assets/{path}"
+        )));
+    }
+
+    let active = state.settings.get().active_theme;
+    let base_dir = if let Some(resolved) = resolve_active_theme_async(&state, active.clone()).await
+    {
+        resolved.root_dir
+    } else if active == BUILTIN_DEFAULT_THEME
+        && tokio::fs::metadata(&state.config.theme_dir)
+            .await
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+    {
+        state.config.theme_dir.clone()
+    } else {
+        return Err(AppError::not_found(format!(
+            "theme asset not found: /ui/v1/theme-assets/{path}"
+        )));
+    };
+
+    let candidate_path = base_dir.join(&rel_path);
+
+    let canonical_base_dir = tokio::fs::canonicalize(&base_dir).await.map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found("active theme directory not found")
+        } else {
+            AppError::internal(format!("failed to resolve active theme directory: {err}"))
+        }
+    })?;
+
+    let canonical_target = match tokio::fs::canonicalize(&candidate_path).await {
+        Ok(target) => target,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if let Ok(link_meta) = tokio::fs::symlink_metadata(&candidate_path).await
+                && link_meta.file_type().is_symlink()
+            {
+                return Err(AppError::forbidden(
+                    "requested theme asset symlink escapes or cannot be resolved within theme directory",
+                ));
+            }
+            return Err(AppError::not_found(format!(
+                "theme asset not found: /ui/v1/theme-assets/{path}"
+            )));
+        }
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to resolve theme asset path: {err}"
+            )));
+        }
+    };
+
+    if !canonical_target.starts_with(&canonical_base_dir) {
+        return Err(AppError::forbidden(
+            "requested path escapes active theme directory boundary",
+        ));
+    }
+
+    let metadata = tokio::fs::metadata(&canonical_target)
+        .await
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!(
+                    "theme asset not found: /ui/v1/theme-assets/{path}"
+                ))
+            } else {
+                AppError::internal(format!("failed to inspect theme asset metadata: {err}"))
+            }
+        })?;
+
+    if !metadata.is_file() {
+        return Err(AppError::not_found(format!(
+            "theme asset '/ui/v1/theme-assets/{path}' is not a regular file"
+        )));
+    }
+
+    let content_type = content_type_for_path(&canonical_target);
+    let needs_sandbox_csp = content_type
+        .to_str()
+        .map(|ct| {
+            let essence = ct.split(';').next().unwrap_or(ct).trim();
+            essence.eq_ignore_ascii_case("image/svg+xml")
+                || essence.eq_ignore_ascii_case("text/html")
+                || essence.eq_ignore_ascii_case("application/xhtml+xml")
+        })
+        .unwrap_or(false);
+
+    let body = if method == Method::HEAD {
+        Body::empty()
+    } else {
+        let bytes = tokio::fs::read(&canonical_target).await.map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AppError::not_found(format!(
+                    "theme asset not found: /ui/v1/theme-assets/{path}"
+                ))
+            } else {
+                AppError::internal(format!("failed to read theme asset: {err}"))
+            }
+        })?;
+        Body::from(bytes)
+    };
+
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+
+    if needs_sandbox_csp {
+        builder = builder.header(CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox;"));
+    }
+
+    builder
+        .body(body)
+        .map_err(|err| AppError::internal(format!("failed to build theme asset response: {err}")))
 }
 
 /// `GET` / `HEAD /ui/{*path}`: strictly locked `404 Not Found` JSON error for unknown UI paths.

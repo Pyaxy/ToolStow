@@ -13,8 +13,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::header::{
-    AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST, LOCATION,
-    ORIGIN, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY,
+    CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -2654,4 +2654,453 @@ async fn multi_theme_upload_conflict_preview_skin_only_full_shell_and_delete_rev
     assert_eq!(arr[0]["short"], "default");
     assert_eq!(arr[0]["active"], true);
     assert!(!arr.iter().any(|t| t["short"] == "neon-grid"));
+}
+
+#[tokio::test]
+async fn theme_assets_endpoint_and_custom_theme_cors_and_security() {
+    let env = build_test_env(Some(ADMIN_KEY), None, 50, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    // 1. Built-in default with no legacy data/theme/ -> 404
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/bg.svg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Legacy data/theme/ works on default when present
+    let legacy_png: &[u8] = b"\x89PNG\r\n\x1a\nLEGACY";
+    fs::create_dir_all(env.theme_dir.join("assets")).unwrap();
+    fs::write(env.theme_dir.join("assets/legacy.png"), legacy_png).unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/legacy.png")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "image/png"
+    );
+    assert_eq!(read_body_bytes(resp).await, legacy_png);
+
+    // 2. Upload and activate a skin-only theme (no index.html)
+    let skin_svg = br##"<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4" fill="#111"/></svg>"##;
+    let fake_woff2: &[u8] = b"wOF2FAKEFONTDATA";
+    let fake_png: &[u8] = b"\x89PNG\r\n\x1a\nTILE";
+    let asset_html: &[u8] = b"<!doctype html><script>alert(1)</script>";
+
+    let skin_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"paper-assets","name":"Paper Assets","version":"1.0.0"}"#,
+        ),
+        (
+            "ui.css",
+            b":root { --ts-canvas: #faf7f2; }\nbody { background: url('/ui/v1/theme-assets/assets/bg.svg'); }\n",
+        ),
+        ("assets/bg.svg", skin_svg),
+        ("fonts/custom.woff2", fake_woff2),
+        ("assets/tile.png", fake_png),
+        ("assets/page.html", asset_html),
+    ]);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload",
+            &skin_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let activate_theme = |short: &str| {
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/api/admin/themes/active")
+            .header(HOST, "127.0.0.1:8080")
+            .header(ORIGIN, "http://127.0.0.1:8080")
+            .header("x-toolstow-client", "1")
+            .header(COOKIE, &cookie)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({ "short": short }).to_string()))
+            .unwrap()
+    };
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(activate_theme("paper-assets"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // SVG on skin-only theme -> 200, ACAO: *, nosniff, no-cache, CSP: sandbox;
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/bg.svg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "image/svg+xml"
+    );
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(
+        resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap(),
+        "sandbox;"
+    );
+    assert_eq!(read_body_bytes(resp).await, skin_svg);
+
+    // HEAD request on SVG -> 200, same headers, empty body
+    let head_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/ui/v1/theme-assets/assets/bg.svg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head_resp.status(), StatusCode::OK);
+    assert_eq!(
+        head_resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        head_resp.headers()[CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap(),
+        "sandbox;"
+    );
+    assert!(read_body_bytes(head_resp).await.is_empty());
+
+    // .woff2 font on skin-only theme -> 200, font/woff2, ACAO: *, no CSP
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/fonts/custom.woff2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "font/woff2"
+    );
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert!(resp.headers().get(CONTENT_SECURITY_POLICY).is_none());
+    assert_eq!(read_body_bytes(resp).await, fake_woff2);
+
+    // .png texture on skin-only theme -> 200, image/png, ACAO: *, no CSP
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/tile.png")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "image/png"
+    );
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert!(resp.headers().get(CONTENT_SECURITY_POLICY).is_none());
+    assert_eq!(read_body_bytes(resp).await, fake_png);
+
+    // HTML asset under theme-assets -> 200 with CSP: sandbox;
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/page.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers()[CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert_eq!(
+        resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap(),
+        "sandbox;"
+    );
+
+    // theme.json and directory requests -> 404; legacy data/theme/ is not mixed in
+    for uri in [
+        "/ui/v1/theme-assets/theme.json",
+        "/ui/v1/theme-assets/assets",
+        "/ui/v1/theme-assets/assets/legacy.png",
+    ] {
+        let resp = env
+            .app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "expected 404 for {uri}"
+        );
+    }
+
+    // Dot-prefixed hidden paths and traversal -> 400 Bad Request
+    fs::write(env.themes_dir.join("paper-assets/.hidden"), "secret").unwrap();
+    fs::write(env.themes_dir.join("paper-assets/assets/.env"), "secret").unwrap();
+    for bad_uri in [
+        "/ui/v1/theme-assets/.hidden",
+        "/ui/v1/theme-assets/assets/.env",
+        "/ui/v1/theme-assets/.staging/foo",
+        "/ui/v1/theme-assets/../secret",
+        "/ui/v1/theme-assets/assets/../../secret",
+        "/ui/v1/theme-assets/%2e%2e/secret",
+        "/ui/v1/theme-assets/assets%5cbg.svg",
+    ] {
+        let resp = env
+            .app
+            .clone()
+            .oneshot(Request::builder().uri(bad_uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "expected 400 for {bad_uri}"
+        );
+    }
+
+    // Symlink escape outside theme root -> 403 Forbidden
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let outside = TempDir::new().unwrap();
+        let outside_secret = outside.path().join("outside.txt");
+        fs::write(&outside_secret, "top-secret").unwrap();
+        symlink(
+            &outside_secret,
+            env.themes_dir.join("paper-assets/assets/escape.txt"),
+        )
+        .unwrap();
+
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/ui/v1/theme-assets/assets/escape.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        // Broken symlink pointing outside -> 403 Forbidden
+        symlink(
+            outside.path().join("missing.txt"),
+            env.themes_dir.join("paper-assets/assets/dangling.txt"),
+        )
+        .unwrap();
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/ui/v1/theme-assets/assets/dangling.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    // 3. Upload and activate a full-shell theme
+    let shell_svg = br##"<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>"##;
+    let shell_woff2: &[u8] = b"wOF2SHELLFONT";
+    let shell_css: &[u8] = b"body { color: #222; }\n";
+
+    let full_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"full-assets","name":"Full Assets","version":"1.0.0"}"#,
+        ),
+        ("dist/index.html", b"<!doctype html><h1>Full Assets</h1>"),
+        ("dist/style.css", shell_css),
+        ("ui.css", b":root { --ts-accent: #333; }\n"),
+        ("assets/bg.svg", shell_svg),
+        ("fonts/shell.woff2", shell_woff2),
+    ]);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload",
+            &full_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(activate_theme("full-assets"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // /ui/v1/theme-assets/* serves from full-shell theme root_dir
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/bg.svg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap(),
+        "sandbox;"
+    );
+    assert_eq!(read_body_bytes(resp).await, shell_svg);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/fonts/shell.woff2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "font/woff2"
+    );
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(read_body_bytes(resp).await, shell_woff2);
+
+    // serve_custom_theme_asset (/style.css on active full theme) includes Access-Control-Allow-Origin: *
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/style.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(read_body_bytes(resp).await, shell_css);
 }
