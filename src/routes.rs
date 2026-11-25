@@ -52,6 +52,17 @@ struct FrontendAssets;
 #[folder = "admin/"]
 struct AdminAssets;
 
+/// Embedded locked shared UI design system assets from `ui/`.
+///
+/// Always served directly from the binary under `/ui/v1/*` and never shadowable by `data/theme/`.
+#[derive(RustEmbed)]
+#[folder = "ui/"]
+struct UiAssets;
+
+/// Banner inserted before optional `data/theme/ui.css` overrides appended to `/ui/v1/toolstow.css`.
+const THEME_UI_OVERRIDE_BANNER: &[u8] =
+    b"\n\n/* --- ToolStow Custom Theme Override (data/theme/ui.css) --- */\n";
+
 /// Shared application state injected into Axum route handlers.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -427,6 +438,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/admin", get(serve_admin_index))
         .route("/admin/", get(serve_admin_index))
         .route("/admin/{*path}", get(serve_admin_asset))
+        // Locked shared UI design system & theme bridge (never shadowable by data/theme/)
+        .route("/ui/v1/toolstow.css", get(serve_ui_css))
+        .route("/ui/v1/theme.js", get(serve_ui_theme_js))
+        .route("/ui/{*path}", get(serve_ui_not_found))
         // Admin session & settings endpoints
         .route("/api/admin/session", get(get_admin_session))
         .route("/api/admin/login", post(admin_login))
@@ -454,7 +469,7 @@ async fn serve_index(State(state): State<AppState>) -> Result<Response, AppError
 }
 
 /// Fallback handler serving custom theme or embedded frontend assets without ever shadowing
-/// `/admin*`, `/api/*`, or `/t/*`.
+/// `/admin*`, `/api/*`, `/t/*`, or `/ui*`.
 async fn serve_frontend_fallback(
     State(state): State<AppState>,
     method: Method,
@@ -468,6 +483,8 @@ async fn serve_frontend_fallback(
         || raw_path.starts_with("/t/")
         || raw_path == "/admin"
         || raw_path.starts_with("/admin/")
+        || raw_path == "/ui"
+        || raw_path.starts_with("/ui/")
     {
         return Err(AppError::not_found(format!("route not found: {raw_path}")));
     }
@@ -643,6 +660,123 @@ fn serve_embedded_admin_asset(path: &str) -> Result<Response, AppError> {
         .header(CACHE_CONTROL, cache_control)
         .body(Body::from(asset.data.into_owned()))
         .map_err(|err| AppError::internal(format!("failed to build admin response: {err}")))
+}
+
+/// `GET` / `HEAD /ui/v1/toolstow.css`: serves embedded `ui/v1/toolstow.css` with optional
+/// `data/theme/ui.css` cascade override appended safely.
+async fn serve_ui_css(State(state): State<AppState>) -> Result<Response, AppError> {
+    let base = UiAssets::get("v1/toolstow.css")
+        .ok_or_else(|| AppError::not_found("UI asset not found: /ui/v1/toolstow.css"))?;
+
+    let mut body = base.data.into_owned();
+    if let Some(override_bytes) = read_optional_theme_ui_override(&state.config.theme_dir).await? {
+        body.extend_from_slice(THEME_UI_OVERRIDE_BANNER);
+        body.extend_from_slice(&override_bytes);
+    }
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            CONTENT_TYPE,
+            HeaderValue::from_static("text/css; charset=utf-8"),
+        )
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .body(Body::from(body))
+        .map_err(|err| AppError::internal(format!("failed to build UI CSS response: {err}")))
+}
+
+/// `GET` / `HEAD /ui/v1/theme.js`: serves embedded `ui/v1/theme.js`.
+async fn serve_ui_theme_js() -> Result<Response, AppError> {
+    let asset = UiAssets::get("v1/theme.js")
+        .ok_or_else(|| AppError::not_found("UI asset not found: /ui/v1/theme.js"))?;
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            CONTENT_TYPE,
+            HeaderValue::from_static("text/javascript; charset=utf-8"),
+        )
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .body(Body::from(asset.data.into_owned()))
+        .map_err(|err| AppError::internal(format!("failed to build UI JS response: {err}")))
+}
+
+/// `GET` / `HEAD /ui/{*path}`: strictly locked `404 Not Found` JSON error for unknown UI paths.
+async fn serve_ui_not_found(AxumPath(path): AxumPath<String>) -> AppError {
+    AppError::not_found(format!("UI asset not found: /ui/{path}"))
+}
+
+/// Reads optional `<theme_dir>/ui.css` with canonical path containment verification.
+///
+/// Returns `Ok(None)` when `theme_dir` or `ui.css` does not exist (or is not a regular file),
+/// `Err(AppError::Forbidden)` when `ui.css` is a symlink escaping `theme_dir`, and `Ok(Some(bytes))`
+/// when a valid override file is present.
+async fn read_optional_theme_ui_override(theme_dir: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    let candidate = theme_dir.join("ui.css");
+    let link_meta = match tokio::fs::symlink_metadata(&candidate).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to inspect custom UI override metadata: {err}"
+            )));
+        }
+    };
+
+    let canonical_theme_dir = tokio::fs::canonicalize(theme_dir).await.map_err(|err| {
+        AppError::internal(format!("failed to resolve custom theme directory: {err}"))
+    })?;
+
+    let canonical_target = match tokio::fs::canonicalize(&candidate).await {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if link_meta.file_type().is_symlink() {
+                return Err(AppError::forbidden(
+                    "custom UI override symlink escapes or cannot be resolved within theme directory",
+                ));
+            }
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to resolve custom UI override path: {err}"
+            )));
+        }
+    };
+
+    if !canonical_target.starts_with(&canonical_theme_dir) {
+        return Err(AppError::forbidden(
+            "custom UI override escapes theme directory boundary",
+        ));
+    }
+
+    let metadata = match tokio::fs::metadata(&canonical_target).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to inspect custom UI override target metadata: {err}"
+            )));
+        }
+    };
+
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = match tokio::fs::read(&canonical_target).await {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to read custom UI override: {err}"
+            )));
+        }
+    };
+
+    Ok(Some(bytes))
 }
 
 /// `GET /api/me`: returns public site settings, current admin session state, and theme source.

@@ -1538,3 +1538,254 @@ async fn loads_and_serves_real_bundled_example_tools() {
         .unwrap();
     assert_eq!(read_body_json(resp).await.as_array().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn locked_ui_v1_assets_and_theme_ui_css_cascade_override() {
+    let env = build_test_env(None, None, 50, false, false);
+
+    // 1. GET & HEAD /ui/v1/toolstow.css
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "text/css; charset=utf-8"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    let base_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(base_css.contains("--ts-canvas"));
+    assert!(!base_css.contains("ToolStow Custom Theme Override"));
+
+    let head_css = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head_css.status(), StatusCode::OK);
+    assert_eq!(
+        head_css.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "text/css; charset=utf-8"
+    );
+    assert_eq!(
+        head_css.headers()[CACHE_CONTROL].to_str().unwrap(),
+        "no-cache"
+    );
+    assert_eq!(
+        head_css.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert!(read_body_bytes(head_css).await.is_empty());
+
+    // 2. GET & HEAD /ui/v1/theme.js
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    let theme_js = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(theme_js.contains("toolstow:theme"));
+
+    let head_js = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/ui/v1/theme.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head_js.status(), StatusCode::OK);
+    assert_eq!(
+        head_js.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "text/javascript; charset=utf-8"
+    );
+    assert!(read_body_bytes(head_js).await.is_empty());
+
+    // 3. Unknown /ui paths return 404 JSON error
+    for missing_uri in ["/ui/v1/missing.css", "/ui", "/ui/"] {
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(missing_uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "expected 404 for {missing_uri}"
+        );
+        assert_eq!(read_body_json(resp).await["code"], "NOT_FOUND");
+    }
+
+    // 4. Active custom theme (data/theme/index.html) CANNOT shadow /ui/*
+    fs::create_dir_all(env.theme_dir.join("ui/v1")).unwrap();
+    fs::write(
+        env.theme_dir.join("index.html"),
+        "<!doctype html><h1>Custom Theme Active</h1>",
+    )
+    .unwrap();
+    fs::write(
+        env.theme_dir.join("ui/v1/toolstow.css"),
+        "/* HIJACKED CSS */",
+    )
+    .unwrap();
+    fs::write(env.theme_dir.join("ui/v1/theme.js"), "// HIJACKED JS").unwrap();
+    fs::write(
+        env.theme_dir.join("ui/v1/missing.css"),
+        "/* SHOULD NEVER SERVE */",
+    )
+    .unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let css_with_custom_theme = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(css_with_custom_theme.contains("--ts-canvas"));
+    assert!(!css_with_custom_theme.contains("HIJACKED CSS"));
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let js_with_custom_theme = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(js_with_custom_theme.contains("toolstow:theme"));
+    assert!(!js_with_custom_theme.contains("HIJACKED JS"));
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/missing.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // 5. data/theme/ui.css cascade override appends to base CSS and cleanly reverts on removal
+    let override_css = ":root { --ts-accent: #7c3aed; }\n.custom-reskin { border-radius: 0; }\n";
+    fs::write(env.theme_dir.join("ui.css"), override_css).unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let combined_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(combined_css.contains("--ts-canvas"));
+    assert!(combined_css.contains("/* --- ToolStow Custom Theme Override (data/theme/ui.css) --- */"));
+    assert!(combined_css.contains("--ts-accent: #7c3aed;"));
+    assert!(combined_css.ends_with(override_css));
+
+    fs::remove_file(env.theme_dir.join("ui.css")).unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let reverted_css = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert_eq!(reverted_css, base_css);
+
+    // 6. Symlink escape at data/theme/ui.css pointing outside theme_dir -> 403 Forbidden
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let outside = TempDir::new().unwrap();
+        let outside_secret = outside.path().join("secret.css");
+        fs::write(&outside_secret, "body { content: 'secret'; }").unwrap();
+        symlink(&outside_secret, env.theme_dir.join("ui.css")).unwrap();
+
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/ui/v1/toolstow.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(read_body_json(resp).await["code"], "FORBIDDEN");
+    }
+}
