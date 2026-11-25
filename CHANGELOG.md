@@ -2,6 +2,21 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.2.2] - 2026-11-25
+
+### Added
+- **Shared `/ui/v1/*` design system & plugin theme SDK**:
+  - Added locked backend routes `GET /ui/v1/toolstow.css` and `GET /ui/v1/theme.js` (never shadowed by `data/theme/`), with automatic safe cascade append of optional `data/theme/ui.css` (`403` on symlink escape) so custom skins update host, `/admin`, and all plugins together.
+  - Added synchronous `?theme=&accent=` anti-FOUC initialization, unconditional `toolstow:ready` theme handshake, computed `--ts-*` token mirroring, `.ts-standalone-only` anti-double-header helper, and `window.ToolStow` (`getTheme`, `onThemeChange`, `copy`, `toast`).
+- **Same-ID upload overwrite confirmation**:
+  - `POST /api/admin/tools/upload` now supports `?overwrite=false` returning `409 Conflict` (`TOOL_EXISTS`) with both `existing` and `incoming` tool metadata without touching the live tool directory.
+  - `/admin` upload flow checks `?overwrite=false` first and shows a monochrome confirmation dialog detailing existing vs. incoming version/status before retrying with `?overwrite=true`.
+
+### Changed
+- Migrated `frontend/`, `admin/`, `examples/docker-cheatsheet`, and `examples/dynamic-favicon` to `/ui/v1/toolstow.css` + `/ui/v1/theme.js`.
+- Updated `docs/ai-tool-skill.md` with the 3-layer UI boundary, anti-duplicate-header rule, `/ui/v1/*` template, and `?overwrite=false` reference.
+- Bumped crate version to `0.2.2` (`toolstow --version`).
+
 ## [0.2.1] - 2026-11-24
 
 ### Changed

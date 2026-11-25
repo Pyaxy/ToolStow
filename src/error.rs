@@ -34,6 +34,10 @@ pub enum AppError {
     #[error("{0}")]
     NotFound(String),
 
+    /// Resource already exists and overwrite was not confirmed (`409 Conflict`).
+    #[error("{0}")]
+    Conflict(String),
+
     /// Upload archive or decompressed payload exceeds configured limits (`413 Payload Too Large`).
     #[error("{0}")]
     PayloadTooLarge(String),
@@ -72,6 +76,11 @@ impl AppError {
         Self::NotFound(msg.into())
     }
 
+    /// Constructs a `409 Conflict` error.
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
+    }
+
     /// Constructs a `413 Payload Too Large` error.
     pub fn payload_too_large(msg: impl Into<String>) -> Self {
         Self::PayloadTooLarge(msg.into())
@@ -99,6 +108,7 @@ impl AppError {
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
@@ -113,6 +123,7 @@ impl AppError {
             Self::Unauthorized(_) => "unauthorized",
             Self::Forbidden(_) => "FORBIDDEN",
             Self::NotFound(_) => "NOT_FOUND",
+            Self::Conflict(_) => "CONFLICT",
             Self::PayloadTooLarge(_) => "PAYLOAD_TOO_LARGE",
             Self::UnprocessableEntity(_) => "UNPROCESSABLE_ENTITY",
             Self::TooManyRequests(_) => "too_many_requests",
@@ -196,6 +207,12 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "NOT_FOUND",
                 "tool not found",
+            ),
+            (
+                AppError::conflict("tool already exists"),
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "tool already exists",
             ),
             (
                 AppError::payload_too_large("archive exceeds 50 MB"),

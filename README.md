@@ -1,6 +1,6 @@
 # ToolStow
 
-> 单二进制、零数据库、零构建热插拔的个人微工具自托管宿主（`v0.2.1`）
+> 单二进制、零数据库、零构建热插拔的个人微工具自托管宿主（`v0.2.2`）
 
 **ToolStow** 面向纯 VPS / 个人服务器自托管场景，把散落在各处 AI 对话与本地临时目录里的轻量化静态网页工具，统一收进一个极简黑白风格的工具箱宿主中：放入 `data/tools/` 目录、在 `/admin` 拖拽上传，或由 AI 携带 Bearer Key 调接口发布，**无需重新编译或重启服务即可即时上线**。
 
@@ -64,7 +64,7 @@ cp -r examples/docker-cheatsheet examples/dynamic-favicon data/tools/
 | `GET /t/{id}/{*path}` | 公开 / 管理员 | 沙箱静态托管（草稿工具仅管理员 Session 或 `--include-drafts` 可访问） |
 | `GET /admin` | `TOOLSTOW_ADMIN_KEY` | 内置单密钥管理面板（未配置密钥时返回 `404`） |
 | `GET /api/admin/tools` | Admin Session 或 API Key | 全量工具列表（含草稿），支持 `?q=&category=&tag=&draft=true\|false` |
-| `POST /api/admin/tools/upload` | Admin Session 或 API Key | `multipart/form-data`（`file`）上传或同名覆盖 `.zip` 工具包 |
+| `POST /api/admin/tools/upload` | Admin Session 或 API Key | `multipart/form-data`（`file`）上传或覆盖 `.zip`（支持 `?overwrite=false` 冲突返回 `409 TOOL_EXISTS`，`/admin` 网页默认先校验并弹窗确认覆盖） |
 | `PATCH /api/admin/tools/{id}` | Admin Session 或 API Key | JSON `{"draft": true\|false}` 原地原子切换草稿/发布状态 |
 | `DELETE /api/admin/tools/{id}` | Admin Session 或 API Key | 删除指定工具目录并移除内存索引 |
 | `GET/PUT /api/admin/settings` | 仅 Admin Session | 读取或更新 `data/settings.json`（站点名称、描述、默认强调色） |

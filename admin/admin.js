@@ -9,7 +9,7 @@ const state = {
   filter: "all", // "all" | "published" | "draft"
   search: "",
   themeMode: "light",
-  pendingDeleteTool: null,
+  pendingConfirmAction: null,
   toastTimer: null,
   dragDepth: 0,
 };
@@ -72,6 +72,7 @@ const els = {
 
   // Confirm Dialog
   confirmDialog: document.getElementById("confirm-dialog"),
+  confirmTitle: document.getElementById("confirm-title"),
   confirmMessage: document.getElementById("confirm-message"),
   confirmCancelBtn: document.getElementById("confirm-cancel-btn"),
   confirmOkBtn: document.getElementById("confirm-ok-btn"),
@@ -558,21 +559,64 @@ async function saveAdminSettings(event) {
   }
 }
 
-async function uploadZipFile(file) {
+function openConfirmDialog({ title, message, confirmLabel, confirmKind = "danger", onConfirm, onCancel }) {
+  if (typeof els.confirmDialog.showModal === "function") {
+    state.pendingConfirmAction = { onConfirm, onCancel };
+    els.confirmTitle.textContent = title;
+    els.confirmMessage.textContent = message;
+    els.confirmOkBtn.textContent = confirmLabel;
+    els.confirmOkBtn.className =
+      confirmKind === "primary" ? "btn btn-primary btn-sm" : "btn btn-danger btn-sm";
+    els.confirmDialog.showModal();
+  } else {
+    const confirmed = window.confirm(`${title}\n\n${message}`);
+    if (confirmed) {
+      if (typeof onConfirm === "function") onConfirm();
+    } else if (typeof onCancel === "function") {
+      onCancel();
+    }
+  }
+}
+
+function formatOverwritePrompt(body, fileName) {
+  const existing = body && body.existing && typeof body.existing === "object" ? body.existing : null;
+  const incoming = body && body.incoming && typeof body.incoming === "object" ? body.incoming : null;
+  const toolId = (incoming && incoming.id) || (existing && existing.id) || fileName;
+  const existingName = (existing && existing.name) || toolId;
+  const existingVer = existing && existing.version ? `v${existing.version}` : "未知版本";
+  const existingStatus = existing ? (existing.draft ? "草稿" : "已发布") : "已安装";
+
+  if (incoming) {
+    const incomingName = incoming.name || toolId;
+    const incomingVer = incoming.version ? `v${incoming.version}` : "未知版本";
+    const incomingStatus = incoming.draft ? "草稿" : "已发布";
+    return `工具「${existingName}」(${toolId}) 已存在（当前 ${existingVer} · ${existingStatus}）。确定要用新上传的「${incomingName}」(${incomingVer} · ${incomingStatus}) 覆盖替换现有目录吗？`;
+  }
+
+  return `工具 ID「${toolId}」已存在（当前 ${existingVer} · ${existingStatus}）。确定要覆盖替换现有工具目录吗？`;
+}
+
+async function uploadZipFile(file, overwrite = false) {
   if (!file) return;
   if (!file.name.toLowerCase().endsWith(".zip")) {
     setUploadStatus("仅支持上传 .zip 格式的工具压缩包。", "error");
     return;
   }
 
-  setUploadStatus(`正在上传 ${file.name}...`, "info");
+  setUploadStatus(
+    overwrite ? `正在覆盖更新 ${file.name}...` : `正在上传校验 ${file.name}...`,
+    "info"
+  );
   els.uploadPickBtn.disabled = true;
 
   const formData = new FormData();
   formData.append("file", file, file.name);
 
   try {
-    const res = await apiRequest("/api/admin/tools/upload", {
+    const endpoint = overwrite
+      ? "/api/admin/tools/upload?overwrite=true"
+      : "/api/admin/tools/upload?overwrite=false";
+    const res = await apiRequest(endpoint, {
       method: "POST",
       body: formData,
     });
@@ -583,6 +627,29 @@ async function uploadZipFile(file) {
     }
 
     const body = await readJsonSafe(res);
+
+    if (res.status === 409 && !overwrite) {
+      const promptMsg = formatOverwritePrompt(body, file.name);
+      const conflictId =
+        (body && body.incoming && body.incoming.id) ||
+        (body && body.existing && body.existing.id) ||
+        file.name;
+      setUploadStatus(`检测到同名工具「${conflictId}」已存在，等待确认是否覆盖...`, "info");
+      openConfirmDialog({
+        title: "工具已存在，确认覆盖？",
+        message: promptMsg,
+        confirmLabel: "确认覆盖",
+        confirmKind: "primary",
+        onConfirm: () => {
+          uploadZipFile(file, true);
+        },
+        onCancel: () => {
+          setUploadStatus(`已取消覆盖：${conflictId}`, "info");
+        },
+      });
+      return;
+    }
+
     if (!res.ok) {
       throw new Error(parseErrorPayload(body, `上传失败 (HTTP ${res.status})`));
     }
@@ -637,18 +704,15 @@ async function toggleToolDraft(tool, buttonEl) {
 }
 
 function requestDeleteTool(tool) {
-  if (typeof els.confirmDialog.showModal === "function") {
-    state.pendingDeleteTool = tool;
-    els.confirmMessage.textContent = `确定要删除工具「${tool.name}」(${tool.id}) 吗？该操作将移除磁盘上的工具目录且无法撤销。`;
-    els.confirmDialog.showModal();
-  } else {
-    const confirmed = window.confirm(
-      `确定要删除工具「${tool.name}」(${tool.id}) 吗？该操作将移除磁盘上的工具目录且无法撤销。`
-    );
-    if (confirmed) {
+  openConfirmDialog({
+    title: "确认删除工具",
+    message: `确定要删除工具「${tool.name}」(${tool.id}) 吗？该操作将移除磁盘上的工具目录且无法撤销。`,
+    confirmLabel: "确认删除",
+    confirmKind: "danger",
+    onConfirm: () => {
       executeDeleteTool(tool);
-    }
-  }
+    },
+  });
 }
 
 async function executeDeleteTool(tool) {
@@ -893,22 +957,30 @@ function bindEvents() {
     }
   });
 
-  // Delete Confirmation Dialog
+  // Confirmation Dialog (Delete / Overwrite)
   els.confirmCancelBtn.addEventListener("click", () => {
-    state.pendingDeleteTool = null;
+    const pending = state.pendingConfirmAction;
+    state.pendingConfirmAction = null;
     els.confirmDialog.close();
+    if (pending && typeof pending.onCancel === "function") {
+      pending.onCancel();
+    }
   });
 
   els.confirmDialog.addEventListener("cancel", () => {
-    state.pendingDeleteTool = null;
+    const pending = state.pendingConfirmAction;
+    state.pendingConfirmAction = null;
+    if (pending && typeof pending.onCancel === "function") {
+      pending.onCancel();
+    }
   });
 
   els.confirmOkBtn.addEventListener("click", async () => {
-    const target = state.pendingDeleteTool;
-    state.pendingDeleteTool = null;
+    const pending = state.pendingConfirmAction;
+    state.pendingConfirmAction = null;
     els.confirmDialog.close();
-    if (target) {
-      await executeDeleteTool(target);
+    if (pending && typeof pending.onConfirm === "function") {
+      await pending.onConfirm();
     }
   });
 }

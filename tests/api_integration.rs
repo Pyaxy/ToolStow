@@ -1789,3 +1789,93 @@ async fn locked_ui_v1_assets_and_theme_ui_css_cascade_override() {
         assert_eq!(read_body_json(resp).await["code"], "FORBIDDEN");
     }
 }
+
+#[tokio::test]
+async fn upload_overwrite_confirmation_returns_409_until_confirmed() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 50, false, false);
+
+    let v1_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"conflict-tool","name":"Conflict Tool","version":"1.0.0","draft":false}"#,
+        ),
+        ("index.html", b"<h1>v1 content</h1>"),
+    ]);
+    let v2_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"conflict-tool","name":"Conflict Tool New","version":"2.0.0","draft":true}"#,
+        ),
+        ("index.html", b"<h1>v2 content</h1>"),
+    ]);
+
+    let make_upload = |uri: &str, bytes: &[u8]| {
+        let body = build_multipart_body("file", "bundle.zip", bytes);
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(HOST, "127.0.0.1:8080")
+            .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+            .header(
+                CONTENT_TYPE,
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    // 1. First install with overwrite=false -> 201 Created
+    let resp = env
+        .app
+        .clone()
+        .oneshot(make_upload("/api/admin/tools/upload?overwrite=false", &v1_zip))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(read_body_json(resp).await["version"], "1.0.0");
+
+    // 2. Duplicate ID with overwrite=false -> 409 Conflict with existing & incoming metadata
+    let resp = env
+        .app
+        .clone()
+        .oneshot(make_upload("/api/admin/tools/upload?overwrite=false", &v2_zip))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let conflict = read_body_json(resp).await;
+    assert_eq!(conflict["code"], "TOOL_EXISTS");
+    assert_eq!(conflict["existing"]["id"], "conflict-tool");
+    assert_eq!(conflict["existing"]["version"], "1.0.0");
+    assert_eq!(conflict["existing"]["draft"], false);
+    assert_eq!(conflict["incoming"]["id"], "conflict-tool");
+    assert_eq!(conflict["incoming"]["name"], "Conflict Tool New");
+    assert_eq!(conflict["incoming"]["version"], "2.0.0");
+    assert_eq!(conflict["incoming"]["draft"], true);
+
+    // Existing live tool remains completely untouched
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/conflict-tool/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_bytes(resp).await, b"<h1>v1 content</h1>");
+
+    // 3. Confirmed overwrite with overwrite=true -> 200 OK
+    let resp = env
+        .app
+        .clone()
+        .oneshot(make_upload("/api/admin/tools/upload?overwrite=true", &v2_zip))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = read_body_json(resp).await;
+    assert_eq!(updated["version"], "2.0.0");
+    assert_eq!(updated["draft"], true);
+}

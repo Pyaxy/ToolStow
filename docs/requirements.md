@@ -1,4 +1,4 @@
-# ToolStow 项目需求与技术规格书（v0.2.1）
+# ToolStow 项目需求与技术规格书（v0.2.2）
 
 ## 1. 项目背景与定位
 
@@ -284,7 +284,7 @@ ToolStow 后端通过锁定前缀 `/ui/v1/*` 向公开前台、`/admin` 管理�
 
 ```text
 toolstow/
-├── Cargo.toml                # Crate 清单（v0.2.1，Rust Edition 2024）
+├── Cargo.toml                # Crate 清单（v0.2.2，Rust Edition 2024）
 ├── Cargo.lock
 ├── README.md                 # 项目总览与快速开始
 ├── CHANGELOG.md              # 版本变更记录

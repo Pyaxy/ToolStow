@@ -131,6 +131,25 @@ struct PatchToolRequest {
     draft: bool,
 }
 
+/// Optional query parameters accepted by `POST /api/admin/tools/upload`.
+#[derive(Debug, Default, Deserialize)]
+struct UploadToolQuery {
+    /// When `false`, existing tools with the same `id` return `409 Conflict` (`TOOL_EXISTS`)
+    /// instead of overwriting. Defaults to `true` when omitted.
+    overwrite: Option<bool>,
+}
+
+/// JSON conflict payload returned by `POST /api/admin/tools/upload?overwrite=false` when a tool
+/// with the same `id` is already installed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolExistsConflictResponse {
+    code: &'static str,
+    error: String,
+    existing: Option<ToolEntry>,
+    incoming: ToolEntry,
+}
+
 /// Extracts a rate-limit client key from optional `ConnectInfo<SocketAddr>`, falling back to
 /// `"local"` in in-process `oneshot` tests where no TCP peer address is attached.
 #[derive(Debug, Clone)]
@@ -919,11 +938,16 @@ async fn list_admin_tools(
 
 /// `POST /api/admin/tools/upload`: validates and atomically installs or updates a `.zip` tool
 /// package (Admin Session OR AI Bearer API key).
+///
+/// Supports optional `?overwrite=false` to reject existing tool IDs with `409 Conflict`
+/// (`TOOL_EXISTS`) and both `existing` / `incoming` metadata for confirmation dialogs.
 async fn upload_tool(
     _auth: AdminToolsAuth,
     State(state): State<AppState>,
+    Query(query): Query<UploadToolQuery>,
     multipart: Result<Multipart, MultipartRejection>,
-) -> Result<(StatusCode, Json<ToolEntry>), AppError> {
+) -> Result<Response, AppError> {
+    let allow_overwrite = query.overwrite.unwrap_or(true);
     let mut multipart = multipart.map_err(|rejection| {
         if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
             AppError::payload_too_large(format!(
@@ -980,21 +1004,37 @@ async fn upload_tool(
         ..ArchiveLimits::default()
     };
 
-    let result = tokio::task::spawn_blocking(move || {
-        archive::install_zip_bytes(&tools_dir, &zip_bytes, limits)
+    let outcome = tokio::task::spawn_blocking(move || {
+        archive::install_zip_bytes_checked(&tools_dir, &zip_bytes, limits, allow_overwrite)
     })
     .await
     .map_err(|err| AppError::internal(format!("archive install task failed: {err}")))??;
 
-    state.registry.upsert(result.entry.clone());
+    match outcome {
+        archive::InstallOutcome::Installed(result) => {
+            state.registry.upsert(result.entry.clone());
 
-    let status = if result.updated {
-        StatusCode::OK
-    } else {
-        StatusCode::CREATED
-    };
+            let status = if result.updated {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            };
 
-    Ok((status, Json(result.entry)))
+            Ok((status, Json(result.entry)).into_response())
+        }
+        archive::InstallOutcome::AlreadyExists { existing, incoming } => {
+            let body = ToolExistsConflictResponse {
+                code: "TOOL_EXISTS",
+                error: format!(
+                    "tool '{}' already exists; confirm overwrite to replace it",
+                    incoming.id
+                ),
+                existing: existing.map(|e| *e),
+                incoming,
+            };
+            Ok((StatusCode::CONFLICT, Json(body)).into_response())
+        }
+    }
 }
 
 /// `PATCH /api/admin/tools/{id}`: atomically updates a tool's `draft` flag in `manifest.json`

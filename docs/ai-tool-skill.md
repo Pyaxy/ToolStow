@@ -315,6 +315,11 @@ zip -r my-tool.zip my-tool/
 curl -i -X POST "$TOOLSTOW_URL/api/admin/tools/upload" \
   -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
   -F "file=@my-tool.zip"
+
+# Optional safe create-only check (returns HTTP 409 TOOL_EXISTS with existing/incoming metadata if ID exists)
+curl -i -X POST "$TOOLSTOW_URL/api/admin/tools/upload?overwrite=false" \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  -F "file=@my-tool.zip"
 ```
 
 ### Toggle Draft / Published Status

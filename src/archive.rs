@@ -63,6 +63,21 @@ pub struct InstallResult {
     pub updated: bool,
 }
 
+/// Outcome of [`install_zip_bytes_checked`], distinguishing a completed install from an existing-ID
+/// conflict when overwrite is not permitted.
+#[derive(Debug, Clone)]
+pub enum InstallOutcome {
+    /// Archive passed validation and was installed or atomically replaced.
+    Installed(InstallResult),
+    /// A tool with the same `id` already exists and `allow_overwrite` was `false`.
+    AlreadyExists {
+        /// Currently installed tool metadata (if its existing `manifest.json` is valid).
+        existing: Option<Box<ToolEntry>>,
+        /// Validated metadata of the newly uploaded archive.
+        incoming: ToolEntry,
+    },
+}
+
 /// Inspected metadata for a non-ignored zip entry prior to extraction.
 #[derive(Debug)]
 struct InspectedEntry {
@@ -100,12 +115,33 @@ impl Drop for CleanupPath {
     }
 }
 
-/// Validates, extracts, and atomically installs a `.zip` tool package into `tools_dir/{id}`.
+/// Validates, extracts, and atomically installs a `.zip` tool package into `tools_dir/{id}`,
+/// replacing any existing tool with the same `id`.
 pub fn install_zip_bytes(
     tools_dir: &Path,
     zip_bytes: &[u8],
     limits: ArchiveLimits,
 ) -> Result<InstallResult, AppError> {
+    match install_zip_bytes_checked(tools_dir, zip_bytes, limits, true)? {
+        InstallOutcome::Installed(result) => Ok(result),
+        InstallOutcome::AlreadyExists { incoming, .. } => Err(AppError::conflict(format!(
+            "tool '{}' already exists",
+            incoming.id
+        ))),
+    }
+}
+
+/// Validates, extracts, and installs a `.zip` tool package into `tools_dir/{id}`.
+///
+/// When `allow_overwrite` is `false` and `tools_dir/{id}` already exists, the staging directory is
+/// cleaned up automatically and [`InstallOutcome::AlreadyExists`] is returned without modifying the
+/// existing tool.
+pub fn install_zip_bytes_checked(
+    tools_dir: &Path,
+    zip_bytes: &[u8],
+    limits: ArchiveLimits,
+    allow_overwrite: bool,
+) -> Result<InstallOutcome, AppError> {
     if zip_bytes.len() > limits.max_zip_bytes {
         return Err(AppError::payload_too_large(format!(
             "uploaded zip archive is {} bytes, exceeding limit of {} bytes",
@@ -145,16 +181,27 @@ pub fn install_zip_bytes(
 
     // Validate the extracted tool directory before touching the live tools directory.
     let entry = manifest::load_and_validate_manifest(stage_dir.path(), None)?;
+    let target = tools_dir.join(&entry.id);
+
+    if !allow_overwrite && target.exists() {
+        let existing = manifest::load_and_validate_manifest(&target, Some(&entry.id))
+            .ok()
+            .map(Box::new);
+        // `stage_dir` drops here, cleaning up the temporary directory without touching `target`.
+        return Ok(InstallOutcome::AlreadyExists {
+            existing,
+            incoming: entry,
+        });
+    }
 
     // Atomically move the validated staging directory into `tools_dir/{id}`.
     let staged_path = stage_dir.keep();
     let mut cleanup = CleanupPath::new(staged_path.clone());
-    let target = tools_dir.join(&entry.id);
 
     let updated = install_staged_dir(&staging_root, &staged_path, &target, &entry.id)?;
     cleanup.disarm();
 
-    Ok(InstallResult { entry, updated })
+    Ok(InstallOutcome::Installed(InstallResult { entry, updated }))
 }
 
 /// Deletes `tools_dir/{id}` after validating `id`, returning `Ok(true)` if removed or `Ok(false)` if absent.
@@ -1129,5 +1176,66 @@ mod tests {
         // Invalid ID -> 422
         let err = set_tool_draft(&tools_dir, "../escape", true).unwrap_err();
         assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+    }
+
+    #[test]
+    fn install_zip_bytes_checked_returns_already_exists_without_modifying_existing_tool() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let v1_zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"dup-tool","name":"Original Tool","version":"1.0.0"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>v1</h1>"),
+        ]);
+        let first = install_zip_bytes_checked(&tools_dir, &v1_zip, ArchiveLimits::default(), false)
+            .unwrap();
+        assert!(matches!(
+            first,
+            InstallOutcome::Installed(InstallResult { updated: false, .. })
+        ));
+
+        let v2_zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"dup-tool","name":"Updated Tool","version":"2.0.0","draft":true}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>v2</h1>"),
+        ]);
+        let conflict =
+            install_zip_bytes_checked(&tools_dir, &v2_zip, ArchiveLimits::default(), false)
+                .unwrap();
+        match conflict {
+            InstallOutcome::AlreadyExists { existing, incoming } => {
+                let existing = existing.expect("existing manifest should be loaded");
+                assert_eq!(existing.id, "dup-tool");
+                assert_eq!(existing.version, "1.0.0");
+                assert_eq!(incoming.id, "dup-tool");
+                assert_eq!(incoming.version, "2.0.0");
+                assert!(incoming.draft);
+            }
+            InstallOutcome::Installed(_) => panic!("expected AlreadyExists when overwrite is false"),
+        }
+
+        // Original files remain untouched and staging dir is clean
+        assert_eq!(
+            fs::read_to_string(tools_dir.join("dup-tool/index.html")).unwrap(),
+            "<h1>v1</h1>"
+        );
+        assert!(staging_is_empty(&tools_dir));
+
+        // Explicit overwrite=true replaces atomically
+        let replaced =
+            install_zip_bytes_checked(&tools_dir, &v2_zip, ArchiveLimits::default(), true).unwrap();
+        assert!(matches!(
+            replaced,
+            InstallOutcome::Installed(InstallResult { updated: true, .. })
+        ));
+        assert_eq!(
+            fs::read_to_string(tools_dir.join("dup-tool/index.html")).unwrap(),
+            "<h1>v2</h1>"
+        );
     }
 }
