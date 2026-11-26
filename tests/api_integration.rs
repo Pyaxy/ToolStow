@@ -3992,7 +3992,9 @@ async fn theme_dependent_routes_emit_no_store_across_theme_switches_and_404s() {
         .unwrap();
     assert_eq!(upload_resp.status(), StatusCode::CREATED);
 
-    // 1. Default theme: GET/HEAD on 200 and 404 theme-dependent routes all emit `no-store`.
+    // 1. Default theme: GET/HEAD on 200 and 404 theme-dependent routes all emit `no-store`
+    // and keep matching Content-Length on HEAD vs GET (including 404 JSON bodies).
+    let mut get_lengths = std::collections::HashMap::new();
     for (method, uri, expected_status) in [
         (Method::GET, "/", StatusCode::OK),
         (Method::HEAD, "/", StatusCode::OK),
@@ -4026,11 +4028,28 @@ async fn theme_dependent_routes_emit_no_store_across_theme_switches_and_404s() {
             "no-store",
             "{uri} must emit Cache-Control: no-store"
         );
+        let content_len = resp
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok());
         let body = read_body_bytes(resp).await;
         if is_head {
             assert!(body.is_empty(), "HEAD {uri} must have empty body");
-        } else if uri == "/app.js" {
-            assert_eq!(body, default_app_js);
+            let expected_len = *get_lengths
+                .get(uri)
+                .expect("GET case should run before HEAD case");
+            assert!(expected_len > 0, "{uri} expected non-empty GET body");
+            assert_eq!(
+                content_len,
+                Some(expected_len),
+                "HEAD {uri} Content-Length should match GET body length"
+            );
+        } else {
+            get_lengths.insert(uri, body.len());
+            if uri == "/app.js" {
+                assert_eq!(body, default_app_js);
+            }
         }
     }
 

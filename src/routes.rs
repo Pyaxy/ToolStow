@@ -7,14 +7,14 @@ use std::path::{Component, Path};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, HttpBody};
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::multipart::{Multipart, MultipartError, MultipartRejection};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Path as AxumPath, Query, State};
 use axum::http::header::{
-    ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY,
-    CONTENT_TYPE, HOST, ORIGIN, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, ORIGIN, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::request::Parts;
 use axum::http::uri::Authority;
@@ -571,10 +571,7 @@ async fn resolve_active_theme_async(state: &AppState, active_short: String) -> O
 /// `GET /`: serves `index.html` from the active public theme (`data/themes/<short>/`,
 /// legacy `data/theme/`, or embedded `FrontendAssets`).
 async fn serve_index(State(state): State<AppState>) -> Response {
-    into_no_store_response(
-        serve_active_public_asset(&state, "index.html", false).await,
-        false,
-    )
+    into_no_store_response(serve_active_public_asset(&state, "index.html", false).await)
 }
 
 /// Fallback handler serving active custom theme or embedded frontend assets without ever shadowing
@@ -609,7 +606,11 @@ async fn serve_frontend_fallback(
         serve_active_public_asset(&state, rel_path, head_only).await
     };
 
-    into_no_store_response(result, head_only)
+    let mut resp = into_no_store_response(result);
+    if head_only {
+        strip_body_preserving_content_length(&mut resp);
+    }
+    resp
 }
 
 /// Serves a public frontend asset according to active theme resolution:
@@ -711,12 +712,18 @@ async fn serve_custom_theme_asset(
         Body::from(bytes)
     };
 
-    Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
         .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
-        .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"))
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+
+    if head_only {
+        builder = builder.header(CONTENT_LENGTH, HeaderValue::from(metadata.len()));
+    }
+
+    builder
         .body(body)
         .map_err(|err| AppError::internal(format!("failed to build theme asset response: {err}")))
 }
@@ -727,17 +734,24 @@ fn serve_embedded_frontend_asset(path: &str, head_only: bool) -> Result<Response
         .ok_or_else(|| AppError::not_found(format!("frontend asset not found: /{path}")))?;
 
     let content_type = content_type_for_path(Path::new(path));
+    let len = asset.data.len();
     let body = if head_only {
         Body::empty()
     } else {
         Body::from(asset.data.into_owned())
     };
 
-    Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
-        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+
+    if head_only {
+        builder = builder.header(CONTENT_LENGTH, HeaderValue::from(len));
+    }
+
+    builder
         .body(body)
         .map_err(|err| AppError::internal(format!("failed to build frontend response: {err}")))
 }
@@ -798,7 +812,7 @@ fn serve_embedded_admin_asset(path: &str) -> Result<Response, AppError> {
 /// active theme (`data/themes/<short>/ui.css`) or legacy `data/theme/ui.css` cascade override
 /// appended safely.
 async fn serve_ui_css(State(state): State<AppState>) -> Response {
-    into_no_store_response(serve_ui_css_inner(&state).await, false)
+    into_no_store_response(serve_ui_css_inner(&state).await)
 }
 
 async fn serve_ui_css_inner(state: &AppState) -> Result<Response, AppError> {
@@ -880,10 +894,8 @@ async fn serve_active_theme_asset(
     method: Method,
     AxumPath(path): AxumPath<String>,
 ) -> Response {
-    let head_only = method == Method::HEAD;
     into_no_store_response(
-        serve_active_theme_asset_inner(&state, head_only, &path).await,
-        head_only,
+        serve_active_theme_asset_inner(&state, method == Method::HEAD, &path).await,
     )
 }
 
@@ -1022,6 +1034,10 @@ async fn serve_active_theme_asset_inner(
         .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
         .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+
+    if head_only {
+        builder = builder.header(CONTENT_LENGTH, HeaderValue::from(metadata.len()));
+    }
 
     if needs_sandbox_csp {
         builder = builder.header(CONTENT_SECURITY_POLICY, HeaderValue::from_static("sandbox;"));
@@ -1816,19 +1832,26 @@ async fn serve_tool_asset(
 }
 
 /// Converts a theme-dependent handler result into a response guaranteed to carry
-/// `Cache-Control: no-store` (including `404` and other error responses), clearing the body
-/// when `head_only` is true.
-fn into_no_store_response(result: Result<Response, AppError>, head_only: bool) -> Response {
+/// `Cache-Control: no-store` (including `404` and other error responses).
+fn into_no_store_response(result: Result<Response, AppError>) -> Response {
     let mut resp = match result {
         Ok(resp) => resp,
         Err(err) => err.into_response(),
     };
     resp.headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if head_only {
-        *resp.body_mut() = Body::empty();
-    }
     resp
+}
+
+/// Clears a `HEAD` response body on fallback routes while preserving `Content-Length`.
+fn strip_body_preserving_content_length(resp: &mut Response) {
+    if !resp.headers().contains_key(CONTENT_LENGTH)
+        && let Some(len) = resp.body().size_hint().exact()
+    {
+        resp.headers_mut()
+            .insert(CONTENT_LENGTH, HeaderValue::from(len));
+    }
+    *resp.body_mut() = Body::empty();
 }
 
 /// Builds a JSON response with `Cache-Control: no-store`.
