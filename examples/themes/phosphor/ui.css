@@ -37,8 +37,8 @@
 }
 
 /* P3 Amber Phosphor Variant */
-:root[data-phosphor="amber"],
-:root[data-theme="dark"][data-phosphor="amber"] {
+:root[data-ts-skin="amber"],
+:root[data-theme="dark"][data-ts-skin="amber"] {
   color-scheme: dark;
 
   --ts-canvas: #080602;
@@ -59,8 +59,8 @@
 }
 
 /* P4 Ice / Cyan Phosphor Variant */
-:root[data-phosphor="ice"],
-:root[data-theme="dark"][data-phosphor="ice"] {
+:root[data-ts-skin="ice"],
+:root[data-theme="dark"][data-ts-skin="ice"] {
   color-scheme: dark;
 
   --ts-canvas: #03070b;

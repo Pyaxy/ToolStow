@@ -26,6 +26,14 @@
     return null;
   }
 
+  function applySkin(value) {
+    if (typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) {
+      ROOT.dataset.tsSkin = value;
+    } else {
+      delete ROOT.dataset.tsSkin;
+    }
+  }
+
   function normalizeHexColor(value) {
     if (typeof value !== "string") return null;
     var trimmed = value.trim();
@@ -144,9 +152,11 @@
   var listeners = new Set();
   var toastEl = null;
   var toastTimer = null;
+  var hostSearchShortcut = false;
 
   // Apply initial theme synchronously to prevent dark-mode first-frame FOUC.
   ROOT.dataset.theme = state.mode;
+  if (params && params.has("ts-skin")) applySkin(params.get("ts-skin"));
   if (state.explicitAccent) {
     ROOT.style.setProperty("--ts-accent", state.explicitAccent);
   }
@@ -214,6 +224,8 @@
       state.explicitMode = true;
       ROOT.dataset.theme = nextMode;
     }
+
+    if (Object.prototype.hasOwnProperty.call(payload, "skin")) applySkin(payload.skin);
 
     // Apply optional validated --ts-* token overrides.
     if (payload.tokens && typeof payload.tokens === "object") {
@@ -296,11 +308,31 @@
   window.addEventListener("message", function (event) {
     if (!event || !event.data || typeof event.data !== "object") return;
     if (event.data.type !== "toolstow:theme") return;
-    applyThemePayload(event.data.payload);
+    var payload = event.data.payload;
+    if (isEmbedded && event.source === window.parent) {
+      hostSearchShortcut = Boolean(payload && payload.searchShortcut === true);
+    }
+    applyThemePayload(payload);
   });
 
   // Notify host shell that this plugin is ready to receive theme sync.
   if (isEmbedded) {
+    window.addEventListener("keydown", function (event) {
+      if (
+        !hostSearchShortcut ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        event.altKey ||
+        event.shiftKey ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== "k"
+      ) return;
+
+      event.preventDefault();
+      if (!event.repeat) window.parent.postMessage({ type: "toolstow:search" }, "*");
+    });
+
     try {
       window.parent.postMessage({ type: "toolstow:ready" }, "*");
     } catch (_) {

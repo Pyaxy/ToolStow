@@ -237,6 +237,7 @@
     var onStateChange = typeof opts.onStateChange === "function" ? opts.onStateChange : null;
     var onError = typeof opts.onError === "function" ? opts.onError : null;
     var onToolReady = typeof opts.onToolReady === "function" ? opts.onToolReady : null;
+    var onSearchShortcut = typeof opts.onSearchShortcut === "function" ? opts.onSearchShortcut : null;
 
     var mediaQuery = null;
     try {
@@ -491,6 +492,11 @@
       tokens = collectThemeTokens();
     }
 
+    function readThemeSkin() {
+      var skin = ROOT.dataset.tsSkin || "";
+      return /^[a-z0-9][a-z0-9-]{0,63}$/.test(skin) ? skin : null;
+    }
+
     function applyModeToDocument() {
       if (lockMode) state.theme.mode = lockMode;
       ROOT.dataset.theme = state.theme.mode;
@@ -511,6 +517,8 @@
             payload: {
               mode: state.theme.mode,
               accent: state.theme.accent,
+              skin: readThemeSkin(),
+              searchShortcut: Boolean(onSearchShortcut),
               tokens: Object.assign({}, tokens),
             },
           },
@@ -598,6 +606,19 @@
       }
     }
 
+    function restoreToolFromHash() {
+      if (!hashRouting || state.error) return false;
+      var id = parseToolIdFromHash();
+      if (!id) return false;
+      if (findTool(id)) {
+        selectTool(id, { updateHash: false });
+        return true;
+      }
+      reportError("未找到工具：" + id);
+      clearHash();
+      return false;
+    }
+
     /* ---------- URLs & iframe ---------- */
 
     function buildToolUrl(entryUrl, buildOpts) {
@@ -612,6 +633,8 @@
       if (url.origin !== global.location.origin || !isSafeToolUrl(url.pathname)) return null;
       url.searchParams.set("theme", state.theme.mode);
       url.searchParams.set("accent", state.theme.accent);
+      var skin = readThemeSkin();
+      if (skin) url.searchParams.set("ts-skin", skin);
       if (cacheBust) {
         url.searchParams.set("_ts", String(Date.now()));
       }
@@ -866,7 +889,7 @@
         if (!applied) return getState();
         if (state.selectedId && (!keepSelection || !findTool(state.selectedId))) {
           clearSelection({ updateHash: true }); // notifies
-        } else {
+        } else if (state.selectedId || !restoreToolFromHash()) {
           updateDocumentTitle(getSelectedTool());
           notify();
         }
@@ -880,7 +903,12 @@
       var iframe = state.activeIframe;
       if (!iframe || !event || event.source !== iframe.contentWindow) return;
       var data = event.data;
-      if (!data || typeof data !== "object" || data.type !== "toolstow:ready") return;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "toolstow:search" && onSearchShortcut && doc.activeElement === iframe) {
+        onSearchShortcut();
+        return;
+      }
+      if (data.type !== "toolstow:ready") return;
       state.activeIframeReady = true;
       readThemeFromCss();
       postThemeToActiveIframe();
@@ -939,16 +967,9 @@
       if (bootstrapPromise) return bootstrapPromise;
       applyModeToDocument();
       bindListeners();
-      bootstrapPromise = loadData().then(function () {
-        updateDocumentTitle(null);
-        var initialId = hashRouting ? parseToolIdFromHash() : null;
-        if (initialId && findTool(initialId)) {
-          selectTool(initialId, { updateHash: false, forceReload: false }); // notifies
-        } else {
-          if (initialId) {
-            reportError("未找到工具：" + initialId);
-            if (hashRouting) clearHash();
-          }
+      bootstrapPromise = loadData().then(function (applied) {
+        if (applied && !restoreToolFromHash()) {
+          updateDocumentTitle(getSelectedTool());
           notify();
         }
         return getState();

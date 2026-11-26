@@ -33,7 +33,7 @@ const els = {
 };
 
 let statusTimer = null;
-let searchTimer = null;
+let searchToolId = null;
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
   if (statusTimer) {
@@ -126,6 +126,7 @@ function renderTags(state) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "ops-tag-pill" + (state.filters.tag === tag ? " active" : "");
+      btn.setAttribute("aria-pressed", String(state.filters.tag === tag));
       btn.textContent = `#${tag}`;
       btn.addEventListener("click", () => {
         host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
@@ -209,14 +210,9 @@ function renderTable(state) {
       tagsWrap.className = "ops-row-tags";
       if (Array.isArray(tool.tags) && tool.tags.length > 0) {
         for (const tag of tool.tags.slice(0, 4)) {
-          const pill = document.createElement("button");
-          pill.type = "button";
-          pill.className = "ops-tag-pill" + (state.filters.tag === tag ? " active" : "");
+          const pill = document.createElement("span");
+          pill.className = "ops-tag-pill";
           pill.textContent = `#${tag}`;
-          pill.addEventListener("click", (e) => {
-            e.stopPropagation();
-            host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
-          });
           tagsWrap.appendChild(pill);
         }
       } else {
@@ -256,7 +252,7 @@ function renderTable(state) {
       openBtn.textContent = "打开";
       openBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        host.selectTool(tool.id, { updateHash: true, forceReload: false });
+        openTool(tool.id);
       });
       actionsWrap.appendChild(openBtn);
 
@@ -267,7 +263,8 @@ function renderTable(state) {
         extLink.href = standaloneUrl;
         extLink.target = "_blank";
         extLink.rel = "noopener noreferrer";
-        extLink.title = "独立打开";
+        extLink.title = "在新标签页打开";
+        extLink.setAttribute("aria-label", `在新标签页打开 ${tool.name}`);
         extLink.textContent = "↗";
         extLink.addEventListener("click", (e) => e.stopPropagation());
         actionsWrap.appendChild(extLink);
@@ -277,7 +274,7 @@ function renderTable(state) {
 
       tr.append(tdTool, tdId, tdCat, tdTags, tdVer, tdActions);
       tr.addEventListener("click", () => {
-        host.selectTool(tool.id, { updateHash: true, forceReload: false });
+        openTool(tool.id);
       });
 
       fragment.appendChild(tr);
@@ -327,16 +324,20 @@ function renderActiveToolHeader(tool, state) {
   }
 
   const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags)) {
+  if (Array.isArray(tool.tags) && tool.tags.length > 0) {
+    const label = document.createElement("span");
+    label.className = "ops-tag-bar-label";
+    label.textContent = "按标签返回目录";
+    tagFrag.appendChild(label);
     for (const tag of tool.tags) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "ops-tag-pill" + (state.filters.tag === tag ? " active" : "");
+      btn.className = "ops-tag-pill";
       btn.textContent = `#${tag}`;
+      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
       btn.addEventListener("click", () => {
-        const nextTag = state.filters.tag === tag ? "" : tag;
+        host.setFilters({ q: "", category: "", tag });
         host.clearSelection();
-        host.setFilters({ tag: nextTag });
       });
       tagFrag.appendChild(btn);
     }
@@ -344,7 +345,14 @@ function renderActiveToolHeader(tool, state) {
   els.activeToolTags.replaceChildren(tagFrag);
 }
 
+function openTool(id) {
+  searchToolId = null;
+  host.selectTool(id);
+}
+
 function renderState(state) {
+  if (searchToolId !== state.selectedId) searchToolId = null;
+  const showingSearchResults = Boolean(searchToolId);
   els.brandTitle.textContent = state.site.siteTitle || DEFAULT_SITE_TITLE;
   els.siteDescPill.textContent = state.site.siteDescription || "";
   els.adminLink.hidden = state.site.isAdmin !== true;
@@ -359,14 +367,11 @@ function renderState(state) {
   renderTable(state);
   renderQuickSwitcher(state);
 
-  if (state.selectedTool) {
-    els.directoryView.hidden = true;
-    els.toolView.hidden = false;
-    renderActiveToolHeader(state.selectedTool, state);
-  } else {
-    els.toolView.hidden = true;
-    els.directoryView.hidden = false;
-  }
+  const showingTool = Boolean(state.selectedTool && !showingSearchResults);
+  els.directoryView.hidden = showingTool;
+  els.toolView.hidden = !showingTool;
+  els.clearFiltersBtn.textContent = showingSearchResults ? "返回当前工具" : "重置筛选";
+  if (showingTool) renderActiveToolHeader(state.selectedTool, state);
 }
 
 function bindEvents() {
@@ -382,7 +387,7 @@ function bindEvents() {
   els.quickSwitcher.addEventListener("change", (e) => {
     const nextId = e.target.value;
     if (nextId && nextId !== host.getState().selectedId) {
-      host.selectTool(nextId, { updateHash: true, forceReload: false });
+      openTool(nextId);
     }
   });
 
@@ -392,18 +397,14 @@ function bindEvents() {
 
   els.searchInput.addEventListener("input", (e) => {
     const query = e.target.value;
-    if (host.getState().selectedId) {
-      host.clearSelection();
-    }
-    if (searchTimer) window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(() => {
-      host.setFilters({ q: query });
-    }, 150);
+    searchToolId = query.trim() ? host.getState().selectedId : null;
+    host.setFilters({ q: query });
   });
 
   els.searchInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (els.searchInput.value) {
+        searchToolId = null;
         els.searchInput.value = "";
         host.setFilters({ q: "" });
       } else {
@@ -426,7 +427,12 @@ function bindEvents() {
 
   els.clearFiltersBtn.addEventListener("click", () => {
     els.searchInput.value = "";
-    host.clearFilters();
+    if (searchToolId) {
+      searchToolId = null;
+      host.setFilters({ q: "" });
+    } else {
+      host.clearFilters();
+    }
   });
 
   els.reloadToolBtn.addEventListener("click", () => {

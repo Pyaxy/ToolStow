@@ -317,8 +317,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
-  padding: 0 9px;
+  min-height: 26px;
+  max-width: 100%;
+  padding: 3px 9px;
+  overflow-wrap: anywhere;
   border: 1px solid transparent;
   border-radius: var(--ts-radius-sm);
   background: transparent;
@@ -335,9 +337,9 @@ a {
 }
 
 .ops-cat-tab.active {
-  background: var(--ts-accent);
-  border-color: var(--ts-accent);
-  color: #ffffff;
+  background: var(--ts-inverted-bg);
+  border-color: var(--ts-inverted-bg);
+  color: var(--ts-inverted-ink);
 }
 
 .ops-cat-count {
@@ -356,6 +358,7 @@ a {
 .ops-tag-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 7px 12px;
   border-top: 1px solid var(--ts-border);
@@ -381,6 +384,9 @@ a {
 }
 
 .ops-tag-pill {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 1px 7px;
   border: 1px solid var(--ts-border);
   border-radius: 3px;
@@ -389,18 +395,21 @@ a {
   font-family: var(--ts-font-mono);
   font-size: 11px;
   line-height: 1.5;
+}
+
+button.ops-tag-pill {
   cursor: pointer;
 }
 
-.ops-tag-pill:hover {
+button.ops-tag-pill:hover {
   border-color: var(--ts-accent);
   color: var(--ts-accent);
 }
 
 .ops-tag-pill.active {
-  background: var(--ts-accent);
-  border-color: var(--ts-accent);
-  color: #ffffff;
+  background: var(--ts-inverted-bg);
+  border-color: var(--ts-inverted-bg);
+  color: var(--ts-inverted-ink);
 }
 
 .ops-tag-empty {
@@ -552,7 +561,8 @@ a {
   color: var(--ts-ink-secondary);
   font-size: 11.5px;
   font-weight: 500;
-  white-space: nowrap;
+  max-width: 18ch;
+  overflow-wrap: anywhere;
 }
 
 .ops-sync-pill {

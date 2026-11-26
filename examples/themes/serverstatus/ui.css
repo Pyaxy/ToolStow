@@ -42,7 +42,7 @@
   --ts-ink-secondary: #cbd5e1;
   --ts-ink-muted: #94a3b8;
   --ts-inverted-bg: #2563eb;
-  --ts-inverted-bg-hover: #3b82f6;
+  --ts-inverted-bg-hover: #1d4ed8;
   --ts-inverted-ink: #ffffff;
   --ts-accent: #3b82f6;
   --ts-danger: #f87171;
@@ -70,21 +70,23 @@
   border-radius: var(--ts-radius-sm);
 }
 
-.ts-btn-primary {
-  background: var(--ts-accent);
-  border-color: var(--ts-accent);
-  color: #ffffff;
+.ts-btn-primary,
+.ts-btn-accent {
+  background: var(--ts-inverted-bg);
+  border-color: var(--ts-inverted-bg);
+  color: var(--ts-inverted-ink);
 }
 
-.ts-btn-primary:hover:not(:disabled) {
-  opacity: 0.92;
-  background: var(--ts-accent);
-  border-color: var(--ts-accent);
+.ts-btn-primary:hover:not(:disabled),
+.ts-btn-accent:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--ts-inverted-bg-hover);
+  border-color: var(--ts-inverted-bg-hover);
 }
 
 .ts-tab.active {
-  background: var(--ts-accent);
-  color: #ffffff;
+  background: var(--ts-inverted-bg);
+  color: var(--ts-inverted-ink);
 }
 
 .ts-input:focus,

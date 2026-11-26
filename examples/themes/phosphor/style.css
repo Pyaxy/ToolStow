@@ -372,8 +372,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 9px;
+  min-height: 26px;
+  max-width: 100%;
+  padding: 3px 9px;
+  overflow-wrap: anywhere;
   border: 1px solid var(--ts-border);
   background: var(--ts-canvas);
   color: var(--ts-ink-secondary);
@@ -426,16 +428,22 @@ a {
 }
 
 .ph-tag-pill {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 1px 7px;
   border: 1px solid var(--ts-border);
   background: var(--ts-canvas);
   color: var(--ts-ink-secondary);
   font-family: var(--ts-font-mono);
   font-size: 11px;
+}
+
+button.ph-tag-pill {
   cursor: pointer;
 }
 
-.ph-tag-pill:hover {
+button.ph-tag-pill:hover {
   border-color: var(--ts-accent);
   color: var(--ts-accent);
 }
@@ -584,6 +592,12 @@ a {
   color: var(--ts-ink-secondary);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.col-cat .ph-mono-pill {
+  max-width: 18ch;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ph-sync-pill {

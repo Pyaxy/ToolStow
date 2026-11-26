@@ -71,7 +71,7 @@
           <div id="tag-list" class="tui-tag-list"></div>
         </section>
 
-        <section class="tui-box tui-box-grow">
+        <section id="tools-box" class="tui-box tui-box-grow" hidden>
           <div class="tui-box-head">
             <h2 class="tui-box-title">┌─ TOOLS</h2>
             <span id="tools-count" class="tui-mono-pill">0</span>
@@ -123,12 +123,12 @@
 
             <div class="tui-tool-actions">
               <button id="reload-tool-btn" class="tui-btn" type="button">刷新</button>
-              <a id="standalone-link" class="tui-btn" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
+              <a id="standalone-link" class="tui-btn" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具">新标签页 ↗</a>
               <button id="close-tool-btn" class="tui-btn" type="button" aria-label="关闭当前工具">× 关闭</button>
             </div>
           </div>
 
-          <div id="active-tool-tags" class="tui-active-tags"></div>
+          <div id="active-tool-tags" class="tui-active-tags" role="group" aria-label="当前工具标签"></div>
           <div id="iframe-host" class="tui-iframe-host"></div>
         </section>
       </main>

@@ -366,8 +366,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 13px;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 3px 13px;
+  overflow-wrap: anywhere;
   border: 1.75px solid var(--ts-ink);
   border-radius: 14px 12px 4px 5px / 10px 12px 4px 4px;
   background: var(--ts-surface);
@@ -436,6 +438,9 @@ a {
 }
 
 .rk-tag-pill {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 2px 9px;
   border: 1.5px solid var(--ts-ink);
   border-radius: var(--rk-radius-wobbly);
@@ -645,6 +650,9 @@ a {
 }
 
 .rk-card-tag {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 0 6px;
   border: 1px dashed var(--ts-ink-muted);
   border-radius: var(--rk-radius-wobbly);
