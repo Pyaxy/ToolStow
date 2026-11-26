@@ -156,7 +156,7 @@ function renderDirectoryList(s) {
     if (!s.loading && s.error && s.allTools.length === 0) {
       emptyItem.appendChild(
         makeButton("btn btn-sm", "重试", () => {
-          host.refresh({ keepSelection: false });
+          host.refresh();
         })
       );
     } else if (!s.loading && s.allTools.length > 0 && host.hasActiveFilters()) {

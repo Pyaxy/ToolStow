@@ -236,7 +236,7 @@ function renderEmptyGrid(state) {
       retryBtn.className = "tui-btn";
       retryBtn.textContent = "[RETRY]";
       retryBtn.addEventListener("click", () => {
-        host.refresh({ keepSelection: false });
+        host.refresh();
       });
       box.append(msg, retryBtn);
     } else {
@@ -409,7 +409,7 @@ function bindEvents() {
 
   els.mobileBackBtn.addEventListener("click", () => {
     host.clearSelection();
-    openMobileSidebar();
+    closeMobileSidebar();
   });
 
   els.closeToolBtn.addEventListener("click", () => {

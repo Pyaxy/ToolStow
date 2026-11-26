@@ -623,6 +623,10 @@ a {
   display: none;
 }
 
+.info-popover > .btn {
+  align-self: flex-start;
+}
+
 .iframe-host {
   flex: 1;
   min-height: 0;

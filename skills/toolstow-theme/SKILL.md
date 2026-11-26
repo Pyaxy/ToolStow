@@ -275,7 +275,7 @@ Define `:root` (Light mode, `color-scheme: light`) and `:root[data-theme="dark"]
 
 ### 5.3 Reskinning Shared Plugin Primitives (`.ts-*`)
 
-Plugins build their UI with shared `.ts-*` classes from `/ui/v1/toolstow.css`. Override these thoughtfully in `ui.css` to give every plugin your theme's tactile personality (borders, hard shadows, radii, fonts, hover states) **without breaking plugin layout or contrast**:
+ToolStow appends the active theme's `ui.css` to `/ui/v1/toolstow.css`, so tools that load the shared stylesheet receive the overrides inside their iframes. Use `ui.css` for design tokens, shared `.ts-*` controls, and semantic workbench slots. Use the shell's `style.css` for the surrounding page. Tools own their actions, state, and tool-specific components (such as a cropper's handles or a chart's interactions). Keep shared controls usable and preserve their purpose and keyboard behavior when changing their appearance or moving a slot.
 
 | Category | Classes | Safe Override Tips |
 | :--- | :--- | :--- |
@@ -421,7 +421,7 @@ Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false
 2. **Icons (`icon` / `iconIsPath` / `iconUrl`)**:
    - Render `<img src="...">` ONLY when `tool.iconIsPath === true` AND `tool.iconUrl` passes `isSafeToolUrl(url)` (`typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//")`). Attach an `error` listener on `<img>` to fall back to a text glyph.
    - Otherwise render `tool.icon || "🛠️"` strictly via `textContent`.
-3. **Entry URL (`entryUrl`)**: Validate with `isSafeToolUrl(tool.entryUrl)` (`startsWith("/t/") && !startsWith("//")`) before mounting the iframe or setting the "独立打开" `<a href>`.
+3. **Entry URL (`entryUrl`)**: Validate with `isSafeToolUrl(tool.entryUrl)` (`startsWith("/t/") && !startsWith("//")`) before mounting the iframe or using the URL in an optional standalone link.
 4. **Empty `sandbox: []`**: A tool may explicitly request `sandbox: []` (fully locked-down static page with zero JS). Preserve `[]` whenever `Array.isArray(tool.sandbox)` is true — only fall back to `["allow-scripts", "allow-downloads", "allow-forms"]` if `tool.sandbox` is missing/not an array!
 5. **Network/HTTP error**: Display a non-blocking status/error banner and allow retrying without crashing the page.
 
@@ -529,7 +529,7 @@ function buildToolUrl(entryUrl, mode, accent, cacheBust = false) {
 }
 ```
 
-> **Standalone "独立打开" link**: Because `/t/{id}/*` is served under `Content-Security-Policy: sandbox` (`Origin: null`), a standalone tool tab cannot read the host's `localStorage["toolstow:mode"]`. Reuse `buildToolUrl(tool.entryUrl, mode, accent, false)` when setting the standalone `<a href>` (after validating `isSafeToolUrl(tool.entryUrl)`), and update that `href` whenever the user toggles Light/Dark mode or switches skins so new tabs open in the matching theme.
+> **Optional standalone link**. It opens a fresh tool instance in a new tab. Use `host.getStandaloneUrl(tool)` with the SDK, or validate `tool.entryUrl` and use `buildToolUrl(tool.entryUrl, mode, accent, false)` in a custom implementation. Update the link when mode or accent changes. A sandboxed `/t/{id}/*` tab uses these query parameters because it cannot read the host's `localStorage["toolstow:mode"]`.
 
 ### 7.4 Live `postMessage` Handshake (`toolstow:ready` & `toolstow:theme`)
 
@@ -596,11 +596,12 @@ window.addEventListener("message", (event) => {
 
 - **Zero unsafe HTML sinks**: Never use `.innerHTML`, `.outerHTML`, `.insertAdjacentHTML()`, or `document.write()`. Build all DOM nodes with `document.createElement()`, `textContent`, and `replaceChildren()`.
 - **Mode persistence**: Persist `"light"` / `"dark"` in host `localStorage` under `"toolstow:mode"` (wrapped in `try/catch`), falling back to `window.matchMedia("(prefers-color-scheme: dark)")`, and set `document.documentElement.dataset.theme = mode`.
-- **Deep-linking & navigation**: Support `#tool=<encodedId>` hash navigation (`hashchange` listener + restore on page load so existing `#tool=<id>` deep links open cleanly), a clear way to return to the theme's tool navigation entry (e.g., returning to the directory/list for standard shells, or stepping back out to the street/map for spatial/town themes), "刷新" (remount iframe with `_ts` cache-bust), and "独立打开" (`target="_blank" rel="noopener noreferrer"`).
+- **Deep-linking & navigation**. Support `#tool=<encodedId>` on page load and when the hash changes. Keep a clear way to return to the theme's tool navigation, such as a directory or town map. If the catalog request fails, retain the hash and resolve it after a successful retry.
+- **Optional workspace actions**. Themes choose whether and where to expose reload and standalone opening. A theme with a full-page tool view can put the standalone link in a menu or omit it. If provided, use a label that promises a new tab, such as `在新标签页打开`, with `target="_blank" rel="noopener noreferrer"`.
 - **Keyboard & accessibility**: Every navigation or control surface the theme provides (search, map pins, modal triggers, quick switcher, etc.) must be keyboard-operable with visible `:focus-visible` outlines, alongside a responsive mobile layout and `@media (prefers-reduced-motion: reduce)` for animations/marquees. Map-, town-, or shortcut-driven themes with no persistent search bar are explicitly allowed. *(Optional for search-bar themes: e.g., `Cmd/Ctrl+K` to focus search or open a quick-switcher palette without discarding an active tool iframe, and `Escape` to close overlays or clear/blur search.)*
 - **Recommended UX Principles (Soft Guidelines — Not Enforced by `validate.py`)**:
   - **Home & discovery freedom**: Full custom shells own the entire `/` layout (minimalist list, ops table, ad wall, or interactive town map), while skin-only themes inherit the built-in shell layout; simply avoid rendering the exact same tool list twice side-by-side on one screen.
-  - **Active workspace focus**: Once a user opens a tool, dedicate most of the viewport to the tool iframe — keep host chrome compact (a single top bar or unobtrusive frame) and tuck secondary metadata (`id`, version, `theme-sync`, tags) into a details popover or omit it instead of stacking multiple header rows.
+  - **Active workspace**. Themes choose the size of the tool view and which navigation, metadata, or actions surround it. A focused workspace can use a compact toolbar and put secondary actions in a details popover.
   - **New-tool discoverability**: Spatial or curated themes (e.g., mapping known tools to specific town buildings) should provide a fallback discovery surface (such as a notice board or catalog drawer) so newly uploaded tools from `/api/tools` are immediately reachable without editing the theme.
 - **Responsive & overflow guardrails (test at `320px`, `390px`, `844×390`, and `1280×600`)**:
   - **No clipped full-page backgrounds**: Put repeating wall/paper textures on `html, body` (or ensure `body { min-height: 100dvh; }`) so sparse pages (1–3 tools) fill the entire viewport without exposing a solid bottom band.
