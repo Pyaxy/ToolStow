@@ -20,33 +20,11 @@
       white-space: nowrap;
     }
 
-    .category-tabs {
-      align-self: flex-start;
-    }
-
-    .cmd-group {
-      margin-bottom: var(--ts-space-5);
-    }
-
-    .cmd-group:last-child {
-      margin-bottom: 0;
-    }
-
-    .cmd-group-title {
-      margin-bottom: var(--ts-space-2);
-    }
-
-    .cmd-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-      gap: var(--ts-space-3);
+    .cmd-collection {
+      --ts-collection-min: 380px;
     }
 
     @media (max-width: 520px) {
-      .cmd-grid {
-        grid-template-columns: 1fr;
-      }
-
       .shortcut-hint {
         display: none;
       }
@@ -80,28 +58,29 @@
   </style>
 </head>
 <body>
-  <div class="ts-page">
+  <div class="ts-workbench">
     <header class="ts-standalone-only ts-standalone-header">
       <h1>🐳 Docker 常用命令速查</h1>
     </header>
 
-    <section class="ts-stack">
-      <div class="ts-toolbar">
-        <input
-          id="filter-input"
-          class="ts-input search-input"
-          type="search"
-          placeholder="输入关键词过滤（如 logs、compose、prune、exec、port）..."
-          autocomplete="off"
-          aria-label="过滤 Docker 命令"
-        >
-        <span id="match-count" class="ts-badge ts-badge-mono">0 条</span>
-        <span class="ts-muted shortcut-hint">按 <kbd class="ts-kbd">/</kbd> 聚焦</span>
-      </div>
-      <div id="category-tabs" class="ts-tabs category-tabs" role="tablist" aria-label="命令分组"></div>
-    </section>
+    <header class="ts-wb-toolbar">
+      <input
+        id="filter-input"
+        class="ts-input search-input"
+        type="search"
+        placeholder="输入关键词过滤（如 logs、compose、prune、exec、port）..."
+        autocomplete="off"
+        aria-label="过滤 Docker 命令"
+      >
+      <span id="match-count" class="ts-badge ts-badge-mono">0 条</span>
+      <span class="ts-muted shortcut-hint">按 <kbd class="ts-kbd">/</kbd> 聚焦</span>
+    </header>
 
-    <main id="command-groups"></main>
+    <nav class="ts-wb-nav" aria-label="命令分组">
+      <div id="category-tabs" class="ts-tabs" role="tablist"></div>
+    </nav>
+
+    <main class="ts-wb-main" id="command-groups"></main>
   </div>
 
   <script>
@@ -375,15 +354,15 @@
       const frag = document.createDocumentFragment();
       for (const [catName, items] of grouped.entries()) {
         const section = document.createElement("section");
-        section.className = "cmd-group";
+        section.className = "ts-collection-group";
 
         const heading = document.createElement("h2");
-        heading.className = "ts-section-title cmd-group-title";
+        heading.className = "ts-section-title";
         heading.textContent = `${catName} (${items.length})`;
         section.appendChild(heading);
 
         const grid = document.createElement("div");
-        grid.className = "cmd-grid";
+        grid.className = "ts-collection cmd-collection";
 
         for (const item of items) {
           const card = document.createElement("article");

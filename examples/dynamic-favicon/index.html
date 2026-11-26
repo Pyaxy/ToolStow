@@ -133,13 +133,12 @@
   </style>
 </head>
 <body>
-  <div class="ts-page">
+  <div class="ts-workbench" data-aside="left">
     <header class="ts-standalone-only ts-standalone-header">
       <h1>🎨 动态强调色 Favicon 生成器</h1>
     </header>
 
-    <div class="ts-split">
-      <section class="ts-card" aria-label="图标配置">
+    <aside class="ts-wb-aside ts-card" aria-label="图标配置">
         <div class="ts-card-header">
           <h2 class="ts-section-title">图标参数</h2>
           <span class="ts-badge ts-badge-mono">
@@ -213,9 +212,9 @@
             粗体显示
           </label>
         </div>
-      </section>
+    </aside>
 
-      <section class="ts-card" aria-label="实时预览与导出">
+    <main class="ts-wb-main ts-card" aria-label="实时预览与导出">
         <div class="ts-card-header">
           <h2 class="ts-section-title">实时预览</h2>
         </div>
@@ -268,8 +267,7 @@
           <span class="ts-label">HTML 引用示例</span>
           <pre id="html-snippet" class="ts-code"></pre>
         </div>
-      </section>
-    </div>
+    </main>
   </div>
 
   <script>

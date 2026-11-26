@@ -676,11 +676,14 @@ def validate_theme_dir(
 
             module_script_paths: set[str] = set()
             has_module_scripts = False
+            loads_host_js = False
             shell_rel_dir = Path(result.shell_entry).parent
             for attrs in inspector.external_scripts:
+                raw_src = (attrs.get("src") or "").strip().split("?", 1)[0].split("#", 1)[0]
+                if raw_src == "/ui/v1/host.js":
+                    loads_host_js = True
                 if (attrs.get("type") or "").strip().lower() == "module":
                     has_module_scripts = True
-                    raw_src = (attrs.get("src") or "").strip().split("?", 1)[0].split("#", 1)[0]
                     if raw_src and not raw_src.startswith(("http://", "https://", "//", "/")):
                         normalized_src = os.path.normpath((shell_rel_dir / raw_src).as_posix())
                         if not normalized_src.startswith(".."):
@@ -705,6 +708,7 @@ def validate_theme_dir(
         else:
             module_script_paths = set()
             has_module_scripts = False
+            loads_host_js = False
 
         # Scan JS files belonging to the shell
         for rel_posix, full_path, _ in clean_files:
@@ -733,11 +737,13 @@ def validate_theme_dir(
                 )
 
         merged = "\n".join(combined_shell_code)
-        if "/api/me" not in merged:
+        uses_host_sdk = loads_host_js and ("ToolStowHost" in merged)
+
+        if not uses_host_sdk and "/api/me" not in merged:
             result.warnings.append(
                 "custom shell does not appear to fetch '/api/me' (needed for siteTitle & isAdmin)"
             )
-        if "/api/tools" not in merged:
+        if not uses_host_sdk and "/api/tools" not in merged:
             result.warnings.append(
                 "custom shell does not appear to fetch '/api/tools'"
             )
@@ -746,11 +752,11 @@ def validate_theme_dir(
                 "custom shell does not reference 'isAdmin' "
                 "(remember to show /admin link strictly when me.isAdmin === true)"
             )
-        if "toolstow:theme" not in merged:
+        if not uses_host_sdk and "toolstow:theme" not in merged:
             result.warnings.append(
                 "custom shell does not appear to send 'toolstow:theme' postMessage to plugin iframes"
             )
-        if "toolstow:ready" not in merged:
+        if not uses_host_sdk and "toolstow:ready" not in merged:
             result.warnings.append(
                 "custom shell does not appear to listen for 'toolstow:ready' from plugin iframes"
             )
