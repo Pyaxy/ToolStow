@@ -77,6 +77,16 @@
 
         <div class="wb-right">
           <button
+            id="cmd-palette-trigger"
+            class="btn btn-sm wb-search-btn"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="cmd-palette"
+            aria-label="快速搜索工具"
+            title="快速搜索工具 (⌘K)"
+          ><svg class="wb-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/><path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span class="btn-label">搜索</span><kbd class="wb-kbd" aria-hidden="true">⌘K</kbd></button>
+          <button
             id="info-toggle"
             class="btn btn-sm"
             type="button"
@@ -112,6 +122,36 @@
 
       <div id="iframe-host" class="iframe-host"></div>
     </section>
+
+    <!-- Command Palette / Quick Search overlay (preserves active tool iframe) -->
+    <div id="cmd-palette" class="cmd-palette" role="dialog" aria-modal="true" aria-label="快速搜索工具" hidden>
+      <div id="cmd-palette-backdrop" class="cmd-palette-backdrop"></div>
+      <div class="cmd-palette-panel">
+        <div class="cmd-palette-head">
+          <svg class="cmd-palette-search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <input
+            id="cmd-palette-input"
+            type="search"
+            placeholder="快速切换或搜索工具（名称、描述、标签、ID）..."
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="快速搜索工具"
+            aria-controls="cmd-palette-list"
+            aria-autocomplete="list"
+          >
+          <kbd class="cmd-palette-esc" aria-hidden="true">ESC</kbd>
+        </div>
+        <div id="cmd-palette-list" class="cmd-palette-list" role="listbox" aria-label="匹配工具"></div>
+        <div class="cmd-palette-foot" aria-hidden="true">
+          <span><kbd class="inline-kbd">↑</kbd> <kbd class="inline-kbd">↓</kbd> 选择</span>
+          <span><kbd class="inline-kbd">Enter</kbd> 打开</span>
+          <span><kbd class="inline-kbd">Esc</kbd> 关闭</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/ui/v1/host.js"></script>

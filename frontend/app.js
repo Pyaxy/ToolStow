@@ -40,6 +40,11 @@ const els = {
   standaloneLink: document.getElementById("standalone-link"),
   toolThemeToggle: document.getElementById("tool-theme-toggle"),
   iframeHost: document.getElementById("iframe-host"),
+  cmdPaletteTrigger: document.getElementById("cmd-palette-trigger"),
+  cmdPalette: document.getElementById("cmd-palette"),
+  cmdPaletteBackdrop: document.getElementById("cmd-palette-backdrop"),
+  cmdPaletteInput: document.getElementById("cmd-palette-input"),
+  cmdPaletteList: document.getElementById("cmd-palette-list"),
 };
 
 const ui = {
@@ -49,6 +54,11 @@ const ui = {
   infoOpen: false,
   lastSelectedId: null,
   switcherSignature: "",
+  paletteOpen: false,
+  paletteQuery: "",
+  paletteActiveIndex: 0,
+  paletteResults: [],
+  paletteReturnFocus: null,
 };
 
 let host = null;
@@ -332,6 +342,180 @@ function renderWorkspace(tool, s) {
   }
 }
 
+/* ───────────── command palette (active tool search) ───────────── */
+
+function filterPaletteTools(allTools, query) {
+  const q = normalizeKey(query);
+  if (!q) return allTools;
+  return allTools.filter((tool) => {
+    if (!tool || typeof tool !== "object") return false;
+    const tags = Array.isArray(tool.tags) ? tool.tags : [];
+    return (
+      normalizeKey(tool.name).includes(q) ||
+      normalizeKey(tool.description).includes(q) ||
+      normalizeKey(tool.id).includes(q) ||
+      normalizeKey(tool.category).includes(q) ||
+      tags.some((t) => normalizeKey(t).includes(q))
+    );
+  });
+}
+
+function updatePaletteActiveRow() {
+  const options = els.cmdPaletteList.querySelectorAll(".cmd-palette-item");
+  let activeOption = null;
+  options.forEach((opt, index) => {
+    const isActive = index === ui.paletteActiveIndex;
+    opt.classList.toggle("is-active", isActive);
+    opt.setAttribute("aria-selected", isActive ? "true" : "false");
+    if (isActive) activeOption = opt;
+  });
+
+  if (activeOption) {
+    els.cmdPaletteInput.setAttribute("aria-activedescendant", activeOption.id);
+    activeOption.scrollIntoView({ block: "nearest" });
+  } else {
+    els.cmdPaletteInput.removeAttribute("aria-activedescendant");
+  }
+}
+
+function selectPaletteTool(tool) {
+  if (!tool) return;
+  const currentId = host.getState().selectedId;
+  if (tool.id === currentId) {
+    closePalette({ restoreFocus: true });
+    return;
+  }
+  closePalette({ restoreFocus: false });
+  openTool(tool.id);
+}
+
+function renderPaletteList(s) {
+  const results = filterPaletteTools(s.allTools, ui.paletteQuery);
+  ui.paletteResults = results;
+
+  if (results.length === 0) {
+    ui.paletteActiveIndex = -1;
+    const empty = document.createElement("div");
+    empty.className = "cmd-palette-empty";
+    empty.textContent = s.allTools.length === 0 ? "暂无可用工具。" : "没有匹配的工具。";
+    els.cmdPaletteList.replaceChildren(empty);
+    els.cmdPaletteInput.removeAttribute("aria-activedescendant");
+    return;
+  }
+
+  if (ui.paletteActiveIndex < 0 || ui.paletteActiveIndex >= results.length) {
+    ui.paletteActiveIndex = 0;
+  }
+
+  const fragment = document.createDocumentFragment();
+  results.forEach((tool, index) => {
+    const isCurrent = tool.id === s.selectedId;
+    const isActive = index === ui.paletteActiveIndex;
+
+    const item = document.createElement("button");
+    item.type = "button";
+    item.id = `cmd-palette-opt-${index}`;
+    item.className = "cmd-palette-item";
+    if (isCurrent) item.classList.add("is-current");
+    if (isActive) item.classList.add("is-active");
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", isActive ? "true" : "false");
+
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "tool-icon cmd-palette-icon";
+    iconWrap.setAttribute("aria-hidden", "true");
+    window.ToolStowHost.renderIcon(iconWrap, tool);
+
+    const body = document.createElement("span");
+    body.className = "cmd-palette-item-body";
+
+    const titleRow = document.createElement("span");
+    titleRow.className = "cmd-palette-item-title-row";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "cmd-palette-item-name";
+    nameEl.textContent = tool.name || tool.id;
+    titleRow.appendChild(nameEl);
+
+    if (isCurrent) {
+      const currentBadge = document.createElement("span");
+      currentBadge.className = "mono-badge mono-badge-accent cmd-palette-current-badge";
+      currentBadge.textContent = "当前";
+      titleRow.appendChild(currentBadge);
+    }
+
+    const metaEl = document.createElement("span");
+    metaEl.className = "cmd-palette-item-meta";
+    const categoryText = tool.category || UNCATEGORIZED;
+    metaEl.textContent = tool.description ? `${categoryText} · ${tool.description}` : categoryText;
+
+    body.append(titleRow, metaEl);
+
+    const idEl = document.createElement("code");
+    idEl.className = "cmd-palette-item-id";
+    idEl.textContent = tool.id;
+
+    item.append(iconWrap, body, idEl);
+    item.addEventListener("mouseenter", () => {
+      if (ui.paletteActiveIndex !== index) {
+        ui.paletteActiveIndex = index;
+        updatePaletteActiveRow();
+      }
+    });
+    item.addEventListener("click", () => selectPaletteTool(tool));
+
+    fragment.appendChild(item);
+  });
+
+  els.cmdPaletteList.replaceChildren(fragment);
+  updatePaletteActiveRow();
+}
+
+function openPalette() {
+  const s = host.getState();
+  if (!s.selectedTool) return;
+
+  if (ui.paletteOpen) {
+    els.cmdPaletteInput.focus();
+    els.cmdPaletteInput.select();
+    return;
+  }
+
+  setInfoOpen(false);
+  ui.paletteReturnFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  ui.paletteOpen = true;
+  ui.paletteQuery = "";
+  ui.paletteActiveIndex = 0;
+
+  els.cmdPaletteInput.value = "";
+  els.cmdPalette.hidden = false;
+  els.cmdPaletteTrigger.setAttribute("aria-expanded", "true");
+  renderPaletteList(s);
+  els.cmdPaletteInput.focus();
+}
+
+function closePalette({ restoreFocus = true } = {}) {
+  if (!ui.paletteOpen) return;
+  ui.paletteOpen = false;
+  els.cmdPalette.hidden = true;
+  els.cmdPaletteTrigger.setAttribute("aria-expanded", "false");
+
+  const target = ui.paletteReturnFocus;
+  ui.paletteReturnFocus = null;
+  if (
+    restoreFocus &&
+    target &&
+    target !== document.body &&
+    document.contains(target) &&
+    typeof target.focus === "function"
+  ) {
+    target.focus({ preventScroll: true });
+  } else if (restoreFocus && document.activeElement === els.cmdPaletteInput) {
+    els.cmdPaletteInput.blur();
+  }
+}
+
 /* ───────────── master render ───────────── */
 
 function render(s) {
@@ -352,12 +536,14 @@ function render(s) {
     els.directoryView.hidden = true;
     els.toolView.hidden = false;
     renderWorkspace(tool, s);
+    if (ui.paletteOpen) renderPaletteList(s);
   } else {
     if (ui.lastSelectedId !== null) {
       ui.lastSelectedId = null;
       ui.switcherSignature = "";
     }
     setInfoOpen(false);
+    closePalette({ restoreFocus: false });
     els.toolView.hidden = true;
     els.directoryView.hidden = false;
     renderDirectory(s);
@@ -403,13 +589,89 @@ function bindEvents() {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
       if (host.getState().selectedTool) {
-        host.clearSelection({ updateHash: true });
+        if (ui.paletteOpen) {
+          closePalette({ restoreFocus: true });
+        } else {
+          openPalette();
+        }
+      } else {
+        focusSearch();
       }
-      focusSearch();
       return;
     }
-    if (e.key === "Escape" && ui.infoOpen) {
-      setInfoOpen(false, { restoreFocus: true });
+    if (e.key === "Escape") {
+      if (ui.paletteOpen) {
+        e.preventDefault();
+        closePalette({ restoreFocus: true });
+        return;
+      }
+      if (ui.infoOpen) {
+        setInfoOpen(false, { restoreFocus: true });
+      }
+    }
+  });
+
+  els.cmdPaletteTrigger.addEventListener("click", () => {
+    if (ui.paletteOpen) {
+      closePalette({ restoreFocus: true });
+    } else {
+      openPalette();
+    }
+  });
+
+  els.cmdPaletteBackdrop.addEventListener("click", () => {
+    closePalette({ restoreFocus: true });
+  });
+
+  els.cmdPaletteInput.addEventListener("input", (e) => {
+    ui.paletteQuery = e.target.value;
+    ui.paletteActiveIndex = 0;
+    renderPaletteList(host.getState());
+  });
+
+  els.cmdPalette.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closePalette({ restoreFocus: true });
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (ui.paletteResults.length > 0) {
+        ui.paletteActiveIndex = (ui.paletteActiveIndex + 1) % ui.paletteResults.length;
+        updatePaletteActiveRow();
+      }
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (ui.paletteResults.length > 0) {
+        ui.paletteActiveIndex =
+          (ui.paletteActiveIndex - 1 + ui.paletteResults.length) % ui.paletteResults.length;
+        updatePaletteActiveRow();
+      }
+      return;
+    }
+    if (e.key === "Enter" && document.activeElement === els.cmdPaletteInput) {
+      e.preventDefault();
+      const chosen = ui.paletteResults[ui.paletteActiveIndex];
+      if (chosen) selectPaletteTool(chosen);
+      return;
+    }
+    if (e.key === "Tab") {
+      const focusables = [
+        els.cmdPaletteInput,
+        ...Array.from(els.cmdPaletteList.querySelectorAll(".cmd-palette-item")),
+      ];
+      if (focusables.length === 0) return;
+      const idx = focusables.indexOf(document.activeElement);
+      const nextIdx = e.shiftKey
+        ? (idx <= 0 ? focusables.length - 1 : idx - 1)
+        : (idx + 1) % focusables.length;
+      e.preventDefault();
+      focusables[nextIdx].focus();
     }
   });
 
