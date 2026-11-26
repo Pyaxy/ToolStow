@@ -3104,3 +3104,34 @@ async fn theme_assets_endpoint_and_custom_theme_cors_and_security() {
     assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
     assert_eq!(read_body_bytes(resp).await, shell_css);
 }
+
+#[tokio::test]
+async fn healthz_returns_ok_and_cannot_be_shadowed_by_custom_theme() {
+    let env = build_test_env(None, None, 50, false, false);
+    fs::create_dir_all(&env.theme_dir).unwrap();
+    fs::write(env.theme_dir.join("index.html"), "<!doctype html><h1>Custom</h1>").unwrap();
+    fs::write(env.theme_dir.join("healthz"), "shadowed-file").unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    let body = read_body_json(resp).await;
+    assert_eq!(
+        body,
+        json!({
+            "status": "ok",
+            "version": env!("CARGO_PKG_VERSION"),
+        })
+    );
+}

@@ -56,3 +56,7 @@ jobs:
       # 步骤 7：与 Release 共用同一打包入口，自动发现并校验/打包全部示例主题与工具合集
       - name: Validate and bundle example tools and themes
         run: python3 scripts/bundle_examples.py --require-node --out-dir /tmp/toolstow-ci-bundles
+
+      # 步骤 8：校验 Docker Compose 配置语法
+      - name: Validate Docker Compose config
+        run: docker compose -f compose.yml config --quiet
