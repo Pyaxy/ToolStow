@@ -53,23 +53,41 @@
   --ts-code-ink: #f5f0e8;
 }
 
+html,
+body {
+  min-height: 100dvh;
+  background: var(--ts-canvas);
+}
+
 /* Editorial serif accents & softer tactile cards across shell and plugins */
 .brand,
+#brand-title,
 .empty-hero h1,
+#empty-title,
+.dir-header h1,
+.directory-header h1,
 .tool-title-row h1,
+#active-tool-name,
+.workspace-bar h1,
 .ts-standalone-header h1,
-.ts-section-title {
+.ts-section-title,
+.ts-collection-group > h2,
+.ts-collection-group > h3 {
   font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", serif;
   letter-spacing: -0.01em;
 }
 
 .ts-card,
-.tool-card {
+.tool-card,
+.ts-empty,
+.tool-info-popover {
   box-shadow: 0 2px 8px rgba(41, 37, 36, 0.05);
 }
 
 :root[data-theme="dark"] .ts-card,
-:root[data-theme="dark"] .tool-card {
+:root[data-theme="dark"] .tool-card,
+:root[data-theme="dark"] .ts-empty,
+:root[data-theme="dark"] .tool-info-popover {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 }
 

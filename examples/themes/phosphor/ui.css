@@ -1,0 +1,241 @@
+/* ==========================================================================
+   ToolStow Theme Cascade: Phosphor CRT (ui.css)
+   Dark-only NOC CRT phosphor terminal theme (P1 Green / P3 Amber / P4 Ice).
+   Applies phosphor glow, htop-style frames, CRT scanlines, and compact
+   workbench readout across BOTH the host shell and embedded/standalone tools.
+   ========================================================================== */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* P1 Green Phosphor (Default) */
+  --ts-canvas: #050805;
+  --ts-surface: #09100a;
+  --ts-surface-hover: #0e1a10;
+  --ts-border: #163820;
+  --ts-border-strong: #235c34;
+  --ts-ink: #b8ffcb;
+  --ts-ink-secondary: #7fe69a;
+  --ts-ink-muted: #4a8c5c;
+  --ts-inverted-bg: #33ff66;
+  --ts-inverted-bg-hover: #5cff85;
+  --ts-inverted-ink: #040805;
+  --ts-accent: #33ff66;
+  --ts-danger: #ff5555;
+  --ts-danger-bg: #1e0808;
+  --ts-danger-border: #5c1919;
+  --ts-success: #33ff66;
+  --ts-code-bg: #030503;
+  --ts-code-ink: #b8ffcb;
+
+  --ts-radius-sm: 0px;
+  --ts-radius-md: 0px;
+
+  --ts-font-sans: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --ts-font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+/* P3 Amber Phosphor Variant */
+:root[data-phosphor="amber"],
+:root[data-theme="dark"][data-phosphor="amber"] {
+  color-scheme: dark;
+
+  --ts-canvas: #080602;
+  --ts-surface: #110c04;
+  --ts-surface-hover: #1b1407;
+  --ts-border: #3d2a08;
+  --ts-border-strong: #66460e;
+  --ts-ink: #ffe0a3;
+  --ts-ink-secondary: #f2bf5e;
+  --ts-ink-muted: #997430;
+  --ts-inverted-bg: #ffb000;
+  --ts-inverted-bg-hover: #ffc43d;
+  --ts-inverted-ink: #080602;
+  --ts-accent: #ffb000;
+  --ts-success: #ffb000;
+  --ts-code-bg: #050401;
+  --ts-code-ink: #ffe0a3;
+}
+
+/* P4 Ice / Cyan Phosphor Variant */
+:root[data-phosphor="ice"],
+:root[data-theme="dark"][data-phosphor="ice"] {
+  color-scheme: dark;
+
+  --ts-canvas: #03070b;
+  --ts-surface: #071018;
+  --ts-surface-hover: #0c1a27;
+  --ts-border: #123147;
+  --ts-border-strong: #1f5378;
+  --ts-ink: #cceeff;
+  --ts-ink-secondary: #7dd3fc;
+  --ts-ink-muted: #4682a3;
+  --ts-inverted-bg: #38bdf8;
+  --ts-inverted-bg-hover: #7dd3fc;
+  --ts-inverted-ink: #03070b;
+  --ts-accent: #38bdf8;
+  --ts-success: #38bdf8;
+  --ts-code-bg: #020508;
+  --ts-code-ink: #cceeff;
+}
+
+/* Full-Viewport Phosphor Surface & CRT Scanline + Vignette Overlay */
+html,
+body {
+  min-height: 100dvh;
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--ts-ink) 18%, transparent);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background:
+    radial-gradient(
+      ellipse at center,
+      transparent 58%,
+      rgba(0, 0, 0, 0.48) 100%
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.22) 3px,
+      rgba(0, 0, 0, 0.22) 4px
+    );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after {
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0.14) 3px,
+      rgba(0, 0, 0, 0.14) 4px
+    );
+  }
+}
+
+/* htop-Style Frames, Phosphor Glow & Zero Radius */
+.ts-card,
+.ts-empty,
+.ts-btn,
+.ts-input,
+.ts-textarea,
+.ts-select,
+.ts-tabs,
+.ts-tab,
+.ts-badge,
+.ts-badge-mono,
+.ts-kbd,
+.ts-code,
+.ts-code-row,
+.ts-toast {
+  border-radius: 0;
+}
+
+.ts-card {
+  border: 1px solid var(--ts-border-strong);
+  background: var(--ts-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ts-accent) 10%, transparent);
+}
+
+.ts-section-title,
+.ts-standalone-header h1 {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ts-accent);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--ts-accent) 44%, transparent);
+}
+
+.ts-section-title {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--ts-border);
+}
+
+.ts-standalone-header {
+  border-bottom: 1px solid var(--ts-border-strong);
+}
+
+.ts-btn {
+  border-color: var(--ts-border-strong);
+  letter-spacing: 0.03em;
+}
+
+.ts-btn:hover:not(:disabled),
+.ts-btn-primary,
+.ts-btn-accent,
+.ts-tab.active {
+  background: var(--ts-accent);
+  border-color: var(--ts-accent);
+  color: var(--ts-inverted-ink);
+  text-shadow: none;
+  font-weight: 700;
+}
+
+.ts-btn-primary:hover:not(:disabled),
+.ts-btn-accent:hover:not(:disabled) {
+  background: var(--ts-inverted-bg-hover);
+  border-color: var(--ts-inverted-bg-hover);
+  color: var(--ts-inverted-ink);
+  opacity: 1;
+}
+
+.ts-btn-danger:hover:not(:disabled) {
+  background: var(--ts-danger-bg);
+  border-color: var(--ts-danger);
+  color: var(--ts-danger);
+}
+
+.ts-tabs {
+  border-color: var(--ts-border-strong);
+  background: var(--ts-surface);
+}
+
+.ts-input:focus,
+.ts-textarea:focus,
+.ts-select:focus {
+  border-color: var(--ts-accent);
+  box-shadow: 0 0 0 1px var(--ts-accent);
+}
+
+.ts-btn:focus-visible,
+.ts-tab:focus-visible {
+  outline: 1px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.ts-badge-mono {
+  color: var(--ts-accent);
+  border-color: var(--ts-border-strong);
+}
+
+/* Compact 1-Column Dense Terminal Readout for .ts-workbench */
+.ts-workbench {
+  max-width: 1040px;
+  gap: var(--ts-space-3);
+}
+
+.ts-workbench > .ts-wb-toolbar,
+.ts-workbench > .ts-wb-nav {
+  padding: var(--ts-space-2) var(--ts-space-3);
+  border: 1px solid var(--ts-border);
+  background: var(--ts-surface);
+}
+
+.ts-workbench .ts-collection {
+  --ts-collection-min: 100%;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.ts-workbench .ts-collection-group {
+  gap: 6px;
+}

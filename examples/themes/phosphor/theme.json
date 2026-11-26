@@ -1,0 +1,8 @@
+{
+  "short": "phosphor",
+  "name": "Phosphor CRT",
+  "version": "1.0.0",
+  "description": "Dark-only NOC phosphor terminal theme with CRT scanlines, glow typography, and P1/P3/P4 phosphor switch",
+  "author": "ToolStow",
+  "preview": "preview.svg"
+}

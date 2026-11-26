@@ -718,10 +718,12 @@ a {
   background: var(--ts-canvas);
 }
 
-.tui-iframe {
+.tui-iframe,
+.tui-iframe-host > iframe {
   width: 100%;
   height: 100%;
   border: 0;
+  display: block;
   background: var(--ts-canvas);
 }
 
@@ -807,5 +809,21 @@ a {
 
   .tui-landing {
     padding: 12px;
+  }
+}
+
+@media (max-width: 560px) {
+  .tui-topbar {
+    height: auto;
+    min-height: var(--tui-topbar-h);
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    gap: 6px 8px;
+  }
+
+  .tui-search-wrap {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
   }
 }
