@@ -160,7 +160,8 @@ Because tools run in an opaque origin (`Origin: null`):
 3. **File downloads**
    - Include `"allow-downloads"` in `manifest.json`'s `sandbox` array, and export files via `Blob` + `URL.createObjectURL()` + `<a download="filename">`.
 4. **External links (`<a target="_blank" rel="noopener noreferrer">`)**
-   - Opening external URLs from inside a sandboxed tool requires **both** `"allow-popups"` and `"allow-popups-to-escape-sandbox"` in `manifest.json`'s `sandbox` array (without `"allow-popups"`, clicks are silently blocked; without `"allow-popups-to-escape-sandbox"`, the opened destination tab remains trapped in the opaque sandbox).
+   - Include `"allow-popups"` in `manifest.json`'s `sandbox` array so external links can open in a new tab (without it, browser popup/tab opening is silently blocked).
+   - Add `"allow-popups-to-escape-sandbox"` **only** if the destination site genuinely needs to run without inherited sandbox restrictions (for example, external web apps or interactive pages that break inside an opaque sandbox). Leave it off for ordinary read-only external links.
 5. **No calls to ToolStow host admin APIs**
    - All management endpoints under `/api/admin/*` require authentication and reject `Origin: null` and cross-site requests. Tools must not attempt to mutate host state or embed secrets.
 6. **Safe DOM rendering**
