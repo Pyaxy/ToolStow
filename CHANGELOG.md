@@ -2,6 +2,22 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.3.4] - 2026-11-26
+
+### Added
+- **Admin release update checker.** `/admin` → 「站点设置与 API」 reads the running version from `/healthz`, lets admins manually check GitHub `releases/latest` (with an optional 24-hour auto-check toggle, disabled by default), and surfaces an update badge and release link when a newer stable version is published.
+- **Admin theme palette isolation.** Added `/admin/ui.css` serving the built-in defaults and a script-free `#theme-palette` bridge so `/admin` inherits the active theme's `--ts-*` colors and color scheme (with live updates on theme activate/overwrite/delete) without letting shell or tool selectors break admin controls.
+- **Technical architecture doc & upgrade guide.** Added [docs/architecture.md](docs/architecture.md) for developers and AI Agents, and added Docker / single-binary upgrade instructions to the GitHub Release notes template.
+
+### Changed
+- **User-focused `README.md`.** Simplified `README.md` for end users by moving internal architecture/SDK details to `docs/architecture.md` and adding a plain-language guide on creating your own tools.
+- **Example directory layout.** Moved bundled example tools into `examples/tools/` (alongside `examples/themes/`) and updated `scripts/bundle_examples.py`, integration tests, `docs/deployment.md`, and `docs/requirements.md`.
+- Bumped crate version to `0.3.4` (`toolstow --version`).
+
+### Fixed
+- **CI & Release smoke checks.** Check each built-in JS file individually with `node --check` (including `ui/v1/host.js`), verify `/healthz` and `/ui/v1/host.js` in release smoke tests, and capture `curl` responses before `grep` to avoid `pipefail` `SIGPIPE` exits.
+- **Admin responsive wrapping & `.gitignore`.** Prevented topbar/API path overflow in `/admin` below `680px` and added `/dist` to `.gitignore`.
+
 ## [0.3.3] - 2026-11-26
 
 ### Added
