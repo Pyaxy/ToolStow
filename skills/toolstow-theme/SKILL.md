@@ -13,7 +13,7 @@ ToolStow's single Rust binary **only consumes built static artifacts** — it ne
 
 - **Total visual ownership**: Colors, accent, typography, radii, light/dark palettes, textures, and control appearance are owned **100% by the theme** (ToolStow has no global accent picker).
 - **Strict route isolation**: `/api/*`, `/admin*`, `/t/*`, and `/ui/*` are locked on the backend and can **never** be shadowed by a theme.
-- **No server restart on theme edits or switches**: ToolStow resolves the active theme from `<data-dir>/themes/<short>/` dynamically and serves theme assets with `Cache-Control: no-cache`.
+- **No server restart on theme edits or switches**: ToolStow resolves the active theme from `<data-dir>/themes/<short>/` dynamically and serves theme-dependent assets with `Cache-Control: no-store`.
 - **Two theme modes under one manifest**:
 
 | Mode | Required Files | What ToolStow Serves | Best For |
@@ -112,7 +112,7 @@ my-spa-theme/
 
 ### Path A — Direct Drop-In Live Dev (Recommended for Vanilla & Skin-Only Themes)
 
-ToolStow reads active theme files directly from `<data-dir>/themes/<short>/` with `Cache-Control: no-cache`, so edits take effect immediately on browser reload with **zero server restart**:
+ToolStow reads active theme files directly from `<data-dir>/themes/<short>/` with `Cache-Control: no-store`, so edits take effect immediately on browser reload with **zero server restart**:
 
 1. **Start a local ToolStow instance** (default `http://127.0.0.1:8080`; use an admin key of at least 16 characters to avoid startup length warnings):
    ```bash
@@ -177,7 +177,7 @@ Before packaging, build `npm run build` and assemble a clean deliverable folder 
 
 ## 5. Styling Host & Plugins Together (`ui.css` & Theme Assets)
 
-ToolStow serves its shared design stylesheet at **`GET /ui/v1/toolstow.css`** (`Cache-Control: no-cache`). Whenever your theme is active and includes a root-level `ui.css`, ToolStow automatically appends your `ui.css` to the end of `/ui/v1/toolstow.css`.
+ToolStow serves its shared design stylesheet at **`GET /ui/v1/toolstow.css`** (`Cache-Control: no-store`). Whenever your theme is active and includes a root-level `ui.css`, ToolStow automatically appends your `ui.css` to the end of `/ui/v1/toolstow.css`.
 
 Because both your shell and every ToolStow plugin load `/ui/v1/toolstow.css`, defining your design tokens and `.ts-*` overrides in `ui.css` reskins **every installed plugin automatically** with zero plugin modifications.
 
@@ -319,7 +319,7 @@ body {
 ```
 
 **Backend Headers & Security Rules for `/ui/v1/theme-assets/{*path}`**:
-- **CORS-enabled for sandboxed plugins**: Served on `GET`/`HEAD` with `Access-Control-Allow-Origin: *`, `Cache-Control: no-cache`, and `X-Content-Type-Options: nosniff` — so `@font-face` fonts and SVG/image textures work identically on `/` **and** inside `Origin: null` sandboxed plugin iframes.
+- **CORS-enabled for sandboxed plugins**: Served on `GET`/`HEAD` with `Access-Control-Allow-Origin: *`, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff` — so `@font-face` fonts and SVG/image textures work identically on `/` **and** inside `Origin: null` sandboxed plugin iframes.
 - **CSP sandbox on active markup**: `.svg`, `.html`, and `.xhtml` responses automatically include `Content-Security-Policy: sandbox;`.
 - **Path restrictions**: Resolved strictly inside the active theme root (or legacy `data/theme/` when `activeTheme === "default"`). Rejects `..`, `\`, `:`, leading/trailing `/`, any dot-prefixed hidden segment (`.git`, `.env`, `.DS_Store`), `theme.json` (`404`), and symlink escapes (`403`).
 

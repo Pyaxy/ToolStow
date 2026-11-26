@@ -134,6 +134,7 @@ tools.example.com {
 
 - Caddy 默认会透传 `X-Forwarded-Proto: https` 和 `Host`，ToolStow 会自动为管理员 Session Cookie 附加 `Secure` 属性（同时配合 `.env` 中的 `TOOLSTOW_COOKIE_SECURE=true` 双保险）。
 - 如需为 `/admin` 叠加额外访问控制（如 IP 白名单或 Zero Trust / OAuth），可直接对 `/admin*` 与 `/api/admin/*` 路径规则加保护，无需修改 ToolStow 源码。
+- **若前置 Cloudflare 代理（CDN / 小黄云）**：ToolStow 会随主题切换在同一路径（如 `/`、`/app.js`、`/style.css`、`/ui/v1/toolstow.css`、`/ui/v1/theme-assets/*`）下返回不同主题的资源并声明 `Cache-Control: no-store`。请勿在 Cloudflare 覆盖更高的浏览器缓存 TTL（保持 `Respect Existing Headers`，或配置遵循源站 `no-store` 的 Cache Rule），否则切换主题后浏览器仍可能复用旧脚本导致页面初始化失败。
 
 ---
 
@@ -240,6 +241,6 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/r
 ### 6.5 路由安全锁定、`/ui/v1/theme-assets/` 与旧版 `data/theme/` 向后兼容
 
 - `/admin*`、`/api/*`、`/t/*` 与 `/ui/*`（`/ui/v1/toolstow.css`、`/ui/v1/theme.js`、`/ui/v1/host.js`、`/ui/v1/theme-assets/{*path}`，其余未知 `/ui/*` 路径一律返回 `404`）始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱边界。
-- **跨沙箱主题静态资源（`GET /ui/v1/theme-assets/{*path}`）**：无论当前启用的是**纯皮肤主题**还是**完整自定义前台**（或 `default` 下的旧版 `data/theme/`），主题内自带的 `.woff2` 字体、背景图与 SVG 纹理均可通过 `/ui/v1/theme-assets/<rel-path>` 加载；后端固定返回 `Access-Control-Allow-Origin: *`、`Cache-Control: no-cache`、`X-Content-Type-Options: nosniff`（对 `.svg`/`.html` 额外附带 `Content-Security-Policy: sandbox;`），并拒绝点开头路径、越界路径、`theme.json` 与符号链接逃逸（`403 Forbidden`），确保字体与纹理在公开首页 `/` 与 `Origin: null` 沙箱插件 iframe 内一致生效。
+- **跨沙箱主题静态资源（`GET /ui/v1/theme-assets/{*path}`）**：无论当前启用的是**纯皮肤主题**还是**完整自定义前台**（或 `default` 下的旧版 `data/theme/`），主题内自带的 `.woff2` 字体、背景图与 SVG 纹理均可通过 `/ui/v1/theme-assets/<rel-path>` 加载；后端固定返回 `Access-Control-Allow-Origin: *`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`（对 `.svg`/`.html` 额外附带 `Content-Security-Policy: sandbox;`），并拒绝点开头路径、越界路径、`theme.json` 与符号链接逃逸（`403 Forbidden`），确保字体与纹理在公开首页 `/` 与 `Origin: null` 沙箱插件 iframe 内一致生效。
 - 后端对主题静态文件与 `ui.css` 均执行规范路径 Containment 校验，禁止通过符号链接逃逸出主题目录（越界返回 `403 Forbidden`）。
 - **向后兼容**：当 `activeTheme` 为 `"default"` 时，仍保留旧版单目录 `/opt/toolstow/data/theme/`（`index.html` / `ui.css`）的自动覆盖逻辑；切换至任意已安装命名主题后，不再混入旧版 `data/theme/ui.css`。

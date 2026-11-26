@@ -207,8 +207,8 @@ data/
 
 | 方法与路径 | 鉴权要求 | 说明 |
 | :--- | :--- | :--- |
-| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳：优先解析 `activeTheme` 对应 `data/themes/<short>/` 的 `web_root`（`dist/` 或根目录 `index.html`）；若当前主题为纯皮肤包（无 `index.html`）则返回内嵌前端；当 `activeTheme="default"` 时兼容旧版 `data/theme/` 或回退内嵌前端。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定 |
-| `GET /ui/v1/toolstow.css`（及 `HEAD`） | 无 | 返回内嵌共享基础样式（`text/css; charset=utf-8`，`Cache-Control: no-cache`，`X-Content-Type-Options: nosniff`）；按当前 `activeTheme` 自动追加该主题 `ui.css`（或 `"default"` 时兼容旧版 `data/theme/ui.css`），符号链接逃逸返回 `403` |
+| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳（`Cache-Control: no-store`，含缺失时的 `404`）：优先解析 `activeTheme` 对应 `data/themes/<short>/` 的 `web_root`（`dist/` 或根目录 `index.html`）；若当前主题为纯皮肤包（无 `index.html`）则返回内嵌前端；当 `activeTheme="default"` 时兼容旧版 `data/theme/` 或回退内嵌前端。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定 |
+| `GET /ui/v1/toolstow.css`（及 `HEAD`） | 无 | 返回内嵌共享基础样式（`text/css; charset=utf-8`，`Cache-Control: no-store`，`X-Content-Type-Options: nosniff`）；按当前 `activeTheme` 自动追加该主题 `ui.css`（或 `"default"` 时兼容旧版 `data/theme/ui.css`），符号链接逃逸返回 `403` |
 | `GET /ui/v1/theme.js`（及 `HEAD`） | 无 | 返回内嵌共享主题桥接与辅助脚本（`text/javascript; charset=utf-8`，`Cache-Control: no-cache`，`X-Content-Type-Options: nosniff`） |
 | `GET /ui/{*path}` | 无 | 严格锁定前缀兜底：未知共享资产路径一律返回 `404 Not Found` JSON，永不回退至外置主题目录 |
 | `GET /api/me` | 无（读取当前 Cookie 状态） | 返回 `{ siteTitle, siteDescription, defaultAccent, isAdmin, adminEnabled, activeTheme, themeSource }`；`themeSource` 为 `"custom"` 或 `"embedded"`；公共前端仅当 `isAdmin === true` 时显示「管理 / 设置」入口 |
