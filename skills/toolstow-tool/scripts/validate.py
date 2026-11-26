@@ -116,6 +116,8 @@ class _HtmlInspector(HTMLParser):
         self.external_scripts: List[Dict[str, Optional[str]]] = []
         self.inline_scripts: List[Tuple[str, str]] = []  # (type_attr, source)
         self.inline_styles: List[str] = []
+        self.iframe_sandbox_attrs: List[str] = []
+        self.meta_csp_contents: List[str] = []
         self._in_script = False
         self._script_type = ""
         self._script_has_src = False
@@ -130,6 +132,12 @@ class _HtmlInspector(HTMLParser):
             rel = (attr_map.get("rel") or "").lower().split()
             if "stylesheet" in rel:
                 self.stylesheets.append(attr_map)
+        elif tag_l == "iframe":
+            if "sandbox" in attr_map:
+                self.iframe_sandbox_attrs.append(attr_map.get("sandbox") or "")
+        elif tag_l == "meta":
+            if (attr_map.get("http-equiv") or "").strip().lower() == "content-security-policy":
+                self.meta_csp_contents.append(attr_map.get("content") or "")
         elif tag_l == "script":
             self._in_script = True
             self._script_type = (attr_map.get("type") or "").strip().lower()
@@ -387,6 +395,22 @@ def iter_clean_files(root: Path) -> Tuple[List[Tuple[str, Path, int]], List[str]
     return files, errors
 
 
+def _scan_css_workbench_overrides(
+    css_src: str,
+    label: str,
+    result: ValidationResult,
+) -> None:
+    stripped_css = CSS_COMMENT_RE.sub("", css_src)
+    for sel_match in CSS_RULE_RE.finditer(stripped_css):
+        selector = " ".join(sel_match.group(1).split())
+        body = sel_match.group(2)
+        if WB_SLOT_SELECTOR_RE.search(selector) and WB_LAYOUT_OVERRIDE_RE.search(body):
+            result.warnings.append(
+                f"{label}: layout positioning rule on '{selector}' "
+                "(let themes control .ts-workbench and .ts-wb-* slot placement via ui.css)"
+            )
+
+
 def _scan_js_hygiene(
     js_code: str,
     label: str,
@@ -633,9 +657,13 @@ def validate_tool_dir(
             except Exception as exc:  # pragma: no cover - HTMLParser rarely raises
                 result.warnings.append(f"HTML parser warning on '{entry_rel}': {exc}")
 
-            if ALLOW_SAME_ORIGIN_RE.search(html_text):
+            if any(ALLOW_SAME_ORIGIN_RE.search(val) for val in inspector.iframe_sandbox_attrs):
                 result.errors.append(
-                    f"{entry_rel}: references disallowed 'allow-same-origin'"
+                    f"{entry_rel}: <iframe sandbox> uses disallowed 'allow-same-origin'"
+                )
+            if any(ALLOW_SAME_ORIGIN_RE.search(val) for val in inspector.meta_csp_contents):
+                result.errors.append(
+                    f"{entry_rel}: CSP <meta> uses disallowed 'allow-same-origin'"
                 )
 
             has_css = any(
@@ -689,15 +717,7 @@ def validate_tool_dir(
 
             # Inline <style> blocks: warn if tool hardcodes layout positioning on workbench slots
             for idx, style_src in enumerate(inspector.inline_styles, start=1):
-                stripped_css = CSS_COMMENT_RE.sub("", style_src)
-                for sel_match in CSS_RULE_RE.finditer(stripped_css):
-                    selector = " ".join(sel_match.group(1).split())
-                    body = sel_match.group(2)
-                    if WB_SLOT_SELECTOR_RE.search(selector) and WB_LAYOUT_OVERRIDE_RE.search(body):
-                        result.warnings.append(
-                            f"{entry_rel}#style[{idx}]: layout positioning rule on '{selector}' "
-                            "(let themes control .ts-workbench and .ts-wb-* slot placement via ui.css)"
-                        )
+                _scan_css_workbench_overrides(style_src, f"{entry_rel}#style[{idx}]", result)
 
             # Inline <script> blocks
             for idx, (script_type, script_src) in enumerate(inspector.inline_scripts, start=1):
@@ -710,7 +730,7 @@ def validate_tool_dir(
                         is_module=(script_type == "module"),
                     )
 
-    # Check all standalone .js / .mjs files
+    # Check all standalone .js / .mjs / .css files
     for rel_posix, full_path, _ in clean_files:
         lower = rel_posix.lower()
         if lower.endswith((".js", ".mjs")):
@@ -726,6 +746,13 @@ def validate_tool_dir(
                 node_bin,
                 is_module=lower.endswith(".mjs"),
             )
+        elif lower.endswith(".css"):
+            try:
+                css_text = full_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                result.errors.append(f"failed to read '{rel_posix}' as UTF-8: {exc}")
+                continue
+            _scan_css_workbench_overrides(css_text, rel_posix, result)
 
     return result
 
