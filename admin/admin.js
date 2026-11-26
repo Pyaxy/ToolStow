@@ -13,7 +13,16 @@ const state = {
   toastTimer: null,
   dragDepth: 0,
   themeDragDepth: 0,
+  activeTab: "tools",
+  html: null, // active single-HTML ingestion session (see openHtmlDialog)
 };
+
+const TAB_NAMES = ["tools", "themes", "settings"];
+const TOOL_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MAX_HTML_BYTES = 8 * 1024 * 1024;
+const SDK_CSS_PATH = "/ui/v1/toolstow.css";
+const DEFAULT_TOOL_ICON = "🛠️";
+const STANDARD_CATEGORIES = ["效率", "开发", "文本", "设计", "数据", "实用工具", "学习", "娱乐"];
 
 const els = {
   bootView: document.getElementById("boot-view"),
@@ -44,6 +53,31 @@ const els = {
   uploadFileInput: document.getElementById("upload-file-input"),
   uploadDropzone: document.getElementById("upload-dropzone"),
   uploadStatus: document.getElementById("upload-status"),
+  pasteHtmlBtn: document.getElementById("paste-html-btn"),
+
+  // Top-level tabs
+  mainTabs: Array.from(document.querySelectorAll(".main-tab")),
+  tabPanels: Array.from(document.querySelectorAll(".tab-panel")),
+
+  // Single-HTML ingestion dialog
+  htmlDialog: document.getElementById("html-dialog"),
+  htmlForm: document.getElementById("html-form"),
+  htmlCloseBtn: document.getElementById("html-close-btn"),
+  htmlCancelBtn: document.getElementById("html-cancel-btn"),
+  htmlSubmitBtn: document.getElementById("html-submit-btn"),
+  htmlSourceField: document.getElementById("html-source-field"),
+  htmlSource: document.getElementById("html-source"),
+  htmlName: document.getElementById("html-name"),
+  htmlId: document.getElementById("html-id"),
+  htmlIdHint: document.getElementById("html-id-hint"),
+  htmlCategory: document.getElementById("html-category"),
+  htmlCategoryOptions: document.getElementById("html-category-options"),
+  htmlIcon: document.getElementById("html-icon"),
+  htmlDesc: document.getElementById("html-desc"),
+  htmlDraft: document.getElementById("html-draft"),
+  htmlInjectSdk: document.getElementById("html-inject-sdk"),
+  htmlError: document.getElementById("html-error"),
+  htmlPreviewFrame: document.getElementById("html-preview-frame"),
 
   // Tools Manager
   filterTabs: Array.from(document.querySelectorAll(".filter-tab")),
@@ -265,6 +299,7 @@ function showDashboardView() {
 }
 
 function handleUnauthorized() {
+  closeHtmlDialog();
   state.tools = [];
   state.themes = [];
   setThemeUploadStatus("");
@@ -358,7 +393,7 @@ function renderToolsTable() {
     els.toolsEmpty.hidden = false;
     els.toolsEmpty.textContent =
       state.tools.length === 0
-        ? "尚未安装任何工具。可在上方上传 .zip 工具包。"
+        ? "尚未安装任何工具。可在上方收录 .zip 工具包或单文件 HTML。"
         : "当前筛选条件下没有匹配的工具。";
     els.toolsTbody.replaceChildren();
     return;
@@ -1248,11 +1283,429 @@ async function checkSession() {
 function initCurlExample() {
   const origin = window.location.origin || "http://127.0.0.1:8080";
   els.curlExample.textContent = [
+    "# 上传 .zip 工具包",
     "curl -X POST \\",
     '  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \\',
     '  -F "file=@my-tool.zip" \\',
     `  ${origin}/api/admin/tools/upload`,
+    "",
+    "# 收录单文件 HTML 工具",
+    "curl -X POST \\",
+    '  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \\',
+    '  -H "Content-Type: application/json" \\',
+    `  -d '{"id":"hello","name":"Hello","html":"<h1>Hello</h1>","draft":true}' \\`,
+    `  ${origin}/api/admin/tools/html`,
   ].join("\n");
+}
+
+/* ───────────── Top-level tabs ───────────── */
+
+function setActiveTab(name, { focus = false, updateHash = true } = {}) {
+  const next = TAB_NAMES.includes(name) ? name : "tools";
+  state.activeTab = next;
+
+  for (const tab of els.mainTabs) {
+    const active = tab.dataset.tab === next;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+    tab.tabIndex = active ? 0 : -1;
+    if (active && focus) tab.focus();
+  }
+  for (const panel of els.tabPanels) {
+    panel.hidden = panel.id !== `panel-${next}`;
+  }
+
+  if (updateHash) {
+    try {
+      const base = `${window.location.pathname}${window.location.search}`;
+      history.replaceState(null, "", next === "tools" ? base : `${base}#${next}`);
+    } catch {
+      // Ignore history errors.
+    }
+  }
+}
+
+function handleTabKeydown(event) {
+  const idx = TAB_NAMES.indexOf(state.activeTab);
+  let nextIdx = -1;
+  if (event.key === "ArrowRight") nextIdx = (idx + 1) % TAB_NAMES.length;
+  else if (event.key === "ArrowLeft") nextIdx = (idx - 1 + TAB_NAMES.length) % TAB_NAMES.length;
+  else if (event.key === "Home") nextIdx = 0;
+  else if (event.key === "End") nextIdx = TAB_NAMES.length - 1;
+  if (nextIdx < 0) return;
+  event.preventDefault();
+  setActiveTab(TAB_NAMES[nextIdx], { focus: true });
+}
+
+/* ───────────── Unified ingestion (.zip / .html / paste) ───────────── */
+
+function ingestFile(file) {
+  if (!file) return;
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".zip")) {
+    uploadZipFile(file);
+    return;
+  }
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+    openHtmlFromFile(file);
+    return;
+  }
+  els.uploadFileInput.value = "";
+  setUploadStatus("仅支持 .zip 工具包或 .html / .htm 单文件。", "error");
+}
+
+async function openHtmlFromFile(file) {
+  els.uploadFileInput.value = "";
+  if (file.size > MAX_HTML_BYTES) {
+    setUploadStatus(`HTML 文件过大（上限 ${Math.round(MAX_HTML_BYTES / 1024 / 1024)} MB）。`, "error");
+    return;
+  }
+  try {
+    const text = await file.text();
+    if (!text.trim()) {
+      setUploadStatus("HTML 文件内容为空。", "error");
+      return;
+    }
+    setUploadStatus("");
+    openHtmlDialog({ html: text, fileName: file.name, pasteMode: false });
+  } catch {
+    setUploadStatus("读取 HTML 文件失败，请重试。", "error");
+  }
+}
+
+function slugifyAscii(text) {
+  return String(text || "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function clampSlug(slug, max = 48) {
+  return slug.slice(0, max).replace(/-+$/, "");
+}
+
+function shortHash(text) {
+  // FNV-1a 32-bit, base36, padded to a stable 6 chars.
+  let hash = 0x811c9dc5;
+  const input = String(text || "");
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(6, "0").slice(0, 6);
+}
+
+function deriveToolId({ title, fileName, html }) {
+  const fromTitle = clampSlug(slugifyAscii(title));
+  if (fromTitle) return fromTitle;
+  const stem = String(fileName || "").replace(/\.[^.]+$/, "");
+  const fromFile = clampSlug(slugifyAscii(stem));
+  if (fromFile) return fromFile;
+  return `html-tool-${shortHash(html || title || fileName)}`;
+}
+
+function parseHtmlMetadata(html) {
+  let title = "";
+  let description = "";
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    title = (doc.title || "").replace(/\s+/g, " ").trim();
+    for (const meta of doc.querySelectorAll("meta")) {
+      if ((meta.getAttribute("name") || "").trim().toLowerCase() === "description") {
+        description = (meta.getAttribute("content") || "").replace(/\s+/g, " ").trim();
+        break;
+      }
+    }
+  } catch {
+    // Ignore parse failures; the user can fill the fields manually.
+  }
+  return { title: title.slice(0, 80), description: description.slice(0, 240) };
+}
+
+function htmlReferencesSdk(html) {
+  return typeof html === "string" && html.includes(SDK_CSS_PATH);
+}
+
+function setHtmlError(message) {
+  els.htmlError.textContent = message || "";
+  els.htmlError.hidden = !message;
+}
+
+function setHtmlSubmitting(submitting) {
+  if (state.html) state.html.submitting = submitting;
+  els.htmlSubmitBtn.disabled = submitting;
+  els.htmlSubmitBtn.textContent = submitting ? "收录中..." : "收录工具";
+}
+
+function updateHtmlIdHint() {
+  const value = els.htmlId.value.trim();
+  let message = "仅限小写字母、数字与连字符，例如 my-tool";
+  let kind = "info";
+  if (value) {
+    if (TOOL_ID_PATTERN.test(value)) {
+      message = `✓ 格式有效 · 访问路径 /t/${value}/`;
+      kind = "success";
+    } else {
+      message = "✗ 格式无效：需匹配 ^[a-z0-9]+(?:-[a-z0-9]+)*$（小写字母/数字，以单个连字符分隔）";
+      kind = "error";
+    }
+  } else {
+    message = "请填写 ID（小写字母、数字与连字符）";
+    kind = "error";
+  }
+  els.htmlIdHint.textContent = message;
+  els.htmlIdHint.dataset.kind = kind;
+}
+
+function refreshHtmlPreview() {
+  els.htmlPreviewFrame.srcdoc = state.html ? state.html.html : "";
+}
+
+function schedulePreviewRefresh() {
+  if (!state.html) return;
+  if (state.html.previewTimer) window.clearTimeout(state.html.previewTimer);
+  state.html.previewTimer = window.setTimeout(refreshHtmlPreview, 250);
+}
+
+function populateCategoryOptions() {
+  const seen = new Set();
+  const names = [];
+  const add = (name) => {
+    const trimmed = typeof name === "string" ? name.trim() : "";
+    const key = trimmed.toLowerCase();
+    if (!trimmed || seen.has(key)) return;
+    seen.add(key);
+    names.push(trimmed);
+  };
+  for (const tool of state.tools) add(tool.category);
+  for (const name of STANDARD_CATEGORIES) add(name);
+
+  const fragment = document.createDocumentFragment();
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    fragment.appendChild(opt);
+  }
+  els.htmlCategoryOptions.replaceChildren(fragment);
+}
+
+// Re-derive auto-filled fields from the current HTML unless the user already edited them.
+function applyHtmlMetadataDefaults() {
+  const session = state.html;
+  if (!session) return;
+  const meta = parseHtmlMetadata(session.html);
+
+  if (!session.nameTouched) {
+    els.htmlName.value = meta.title;
+  }
+  if (!session.descTouched) {
+    els.htmlDesc.value = meta.description;
+  }
+  if (!session.idTouched) {
+    els.htmlId.value = deriveToolId({
+      title: els.htmlName.value.trim() || meta.title,
+      fileName: session.fileName,
+      html: session.html,
+    });
+  }
+  if (!session.injectTouched) {
+    els.htmlInjectSdk.checked = !htmlReferencesSdk(session.html);
+  }
+  updateHtmlIdHint();
+}
+
+function openHtmlDialog({ html = "", fileName = "", pasteMode = false } = {}) {
+  if (typeof els.htmlDialog.showModal !== "function") {
+    setUploadStatus("当前浏览器不支持 <dialog>，请改用 .zip 上传或 API。", "error");
+    return;
+  }
+
+  if (state.html && state.html.previewTimer) window.clearTimeout(state.html.previewTimer);
+  state.html = {
+    html,
+    fileName,
+    pasteMode,
+    nameTouched: false,
+    descTouched: false,
+    idTouched: false,
+    injectTouched: false,
+    submitting: false,
+    previewTimer: null,
+  };
+
+  els.htmlSourceField.hidden = !pasteMode;
+  els.htmlSource.value = html;
+  els.htmlCategory.value = "";
+  els.htmlIcon.value = DEFAULT_TOOL_ICON;
+  els.htmlDraft.checked = false;
+  setHtmlError("");
+  setHtmlSubmitting(false);
+  populateCategoryOptions();
+  applyHtmlMetadataDefaults();
+  refreshHtmlPreview();
+
+  if (!els.htmlDialog.open) els.htmlDialog.showModal();
+  (pasteMode ? els.htmlSource : els.htmlName).focus();
+}
+
+function closeHtmlDialog() {
+  if (els.htmlDialog.open) {
+    els.htmlDialog.close();
+  } else {
+    resetHtmlSession();
+  }
+}
+
+function resetHtmlSession() {
+  if (state.html && state.html.previewTimer) window.clearTimeout(state.html.previewTimer);
+  state.html = null;
+  // Stop any running preview scripts.
+  els.htmlPreviewFrame.srcdoc = "";
+  setHtmlSubmitting(false);
+}
+
+function readHtmlPayload() {
+  const session = state.html;
+  const payload = {
+    id: els.htmlId.value.trim(),
+    name: els.htmlName.value.trim(),
+    html: session ? session.html : "",
+    icon: els.htmlIcon.value.trim() || DEFAULT_TOOL_ICON,
+    draft: els.htmlDraft.checked,
+    injectSdk: els.htmlInjectSdk.checked,
+  };
+  const description = els.htmlDesc.value.trim();
+  const category = els.htmlCategory.value.trim();
+  if (description) payload.description = description;
+  if (category) payload.category = category;
+  return payload;
+}
+
+function validateHtmlPayload(payload) {
+  if (!payload.html || !payload.html.trim()) return "HTML 内容不能为空。";
+  if (!payload.name) return "请填写工具名称。";
+  if (!payload.id) return "请填写工具 ID。";
+  if (!TOOL_ID_PATTERN.test(payload.id)) {
+    return "ID 格式无效：仅限小写字母、数字与连字符（例如 my-tool）。";
+  }
+  return "";
+}
+
+async function submitHtmlIngest(overwrite = false) {
+  const session = state.html;
+  if (!session || session.submitting) return;
+
+  const payload = readHtmlPayload();
+  const validationError = validateHtmlPayload(payload);
+  if (validationError) {
+    setHtmlError(validationError);
+    return;
+  }
+
+  setHtmlError("");
+  setHtmlSubmitting(true);
+
+  try {
+    const endpoint = overwrite
+      ? "/api/admin/tools/html?overwrite=true"
+      : "/api/admin/tools/html?overwrite=false";
+    const res = await apiRequest(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+
+    const body = await readJsonSafe(res);
+
+    if (res.status === 409 && !overwrite && (!body || !body.code || body.code === "TOOL_EXISTS")) {
+      openConfirmDialog({
+        title: "工具已存在，确认覆盖？",
+        message: formatOverwritePrompt(body, payload.id),
+        confirmLabel: "确认覆盖",
+        confirmKind: "primary",
+        onConfirm: () => {
+          submitHtmlIngest(true);
+        },
+        onCancel: () => {
+          setHtmlError(`已取消覆盖：${payload.id}（可修改 ID 后重试）`);
+        },
+      });
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error(parseErrorPayload(body, `收录失败 (HTTP ${res.status})`));
+    }
+
+    const tool = body && body.id ? body : body && body.entry ? body.entry : null;
+    const actionLabel = res.status === 201 ? "已收录" : "已覆盖更新";
+    const info = tool || payload;
+    const draftSuffix = info.draft ? "（草稿状态）" : "";
+    const msg = `${actionLabel}：${info.name || payload.name} (${info.id || payload.id})${draftSuffix}`;
+
+    closeHtmlDialog();
+    setUploadStatus(msg, "success");
+    showToast(msg, "info");
+    await fetchAdminTools();
+  } catch (err) {
+    setHtmlError(err.message || "收录失败");
+  } finally {
+    setHtmlSubmitting(false);
+  }
+}
+
+function bindHtmlDialogEvents() {
+  els.pasteHtmlBtn.addEventListener("click", () => {
+    openHtmlDialog({ html: "", fileName: "", pasteMode: true });
+  });
+
+  els.htmlForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitHtmlIngest(false);
+  });
+
+  els.htmlCloseBtn.addEventListener("click", closeHtmlDialog);
+  els.htmlCancelBtn.addEventListener("click", closeHtmlDialog);
+  els.htmlDialog.addEventListener("close", resetHtmlSession);
+
+  els.htmlSource.addEventListener("input", () => {
+    if (!state.html) return;
+    state.html.html = els.htmlSource.value;
+    applyHtmlMetadataDefaults();
+    schedulePreviewRefresh();
+  });
+
+  els.htmlName.addEventListener("input", () => {
+    if (!state.html) return;
+    state.html.nameTouched = true;
+    if (!state.html.idTouched) {
+      els.htmlId.value = deriveToolId({
+        title: els.htmlName.value.trim(),
+        fileName: state.html.fileName,
+        html: state.html.html,
+      });
+      updateHtmlIdHint();
+    }
+  });
+
+  els.htmlId.addEventListener("input", () => {
+    if (state.html) state.html.idTouched = true;
+    updateHtmlIdHint();
+  });
+
+  els.htmlDesc.addEventListener("input", () => {
+    if (state.html) state.html.descTouched = true;
+  });
+
+  els.htmlInjectSdk.addEventListener("change", () => {
+    if (state.html) state.html.injectTouched = true;
+  });
 }
 
 function bindEvents() {
@@ -1269,6 +1722,14 @@ function bindEvents() {
   els.loginForm.addEventListener("submit", handleLoginSubmit);
   els.logoutBtn.addEventListener("click", handleLogout);
 
+  // Top-level tabs
+  for (const tab of els.mainTabs) {
+    tab.addEventListener("click", () => setActiveTab(tab.dataset.tab));
+    tab.addEventListener("keydown", handleTabKeydown);
+  }
+
+  bindHtmlDialogEvents();
+
   // Upload picker & dropzone
   const openPicker = () => els.uploadFileInput.click();
   els.uploadPickBtn.addEventListener("click", openPicker);
@@ -1282,7 +1743,7 @@ function bindEvents() {
 
   els.uploadFileInput.addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
-    if (file) uploadZipFile(file);
+    if (file) ingestFile(file);
   });
 
   const hasFiles = (e) =>
@@ -1315,7 +1776,7 @@ function bindEvents() {
     state.dragDepth = 0;
     els.uploadDropzone.classList.remove("drag-over");
     const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file) uploadZipFile(file);
+    if (file) ingestFile(file);
   });
 
   // Tools filter & search
@@ -1430,6 +1891,7 @@ async function bootstrap() {
   initTheme();
   initCurlExample();
   bindEvents();
+  setActiveTab(window.location.hash.replace(/^#/, ""), { updateHash: false });
   await checkSession();
 }
 

@@ -14,7 +14,7 @@
     <span>正在检查会话状态...</span>
   </div>
 
-  <!-- Single-Key Login View (CPA management.html inspired) -->
+  <!-- Single-Key Login View -->
   <main id="login-view" class="login-shell" hidden>
     <div class="login-topbar">
       <a href="/" class="btn btn-sm">← 返回站点</a>
@@ -91,257 +91,364 @@
     <div id="global-toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <main class="container">
-      <!-- Monochrome Metric Strip -->
-      <section class="stats-grid" aria-label="工具概览">
-        <div class="stat-card">
-          <span class="stat-label">全部工具</span>
-          <span id="stat-total" class="stat-value">0</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">已发布</span>
-          <span id="stat-published" class="stat-value">0</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">草稿</span>
-          <span id="stat-draft" class="stat-value">0</span>
-        </div>
-      </section>
+      <!-- Top-level tabs -->
+      <nav class="main-tabs" role="tablist" aria-label="管理分区">
+        <button id="main-tab-tools" class="main-tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-tools" data-tab="tools">工具管理</button>
+        <button id="main-tab-themes" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-themes" data-tab="themes" tabindex="-1">主题管理</button>
+        <button id="main-tab-settings" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-settings" data-tab="settings" tabindex="-1">站点设置与 API</button>
+      </nav>
 
-      <!-- Upload Zone Card -->
-      <section class="card" aria-labelledby="upload-card-title">
-        <div class="card-header">
-          <div>
-            <h2 id="upload-card-title" class="card-title">上传工具包</h2>
-            <p class="card-desc">拖入或选择包含 <code>manifest.json</code> 的 <code>.zip</code> 压缩包（同名 <code>id</code> 将弹出覆盖确认）。</p>
+      <!-- ═══ Tab 1: 工具管理 ═══ -->
+      <section id="panel-tools" class="tab-panel" role="tabpanel" aria-labelledby="main-tab-tools">
+        <!-- Compact stats strip -->
+        <section class="stats-grid" aria-label="工具概览">
+          <div class="stat-card">
+            <span class="stat-label">全部</span>
+            <span id="stat-total" class="stat-value">0</span>
           </div>
-          <button id="upload-pick-btn" class="btn btn-primary btn-sm" type="button">选择 .zip 文件</button>
-        </div>
-
-        <input id="upload-file-input" type="file" accept=".zip,application/zip" hidden>
-
-        <div
-          id="upload-dropzone"
-          class="dropzone"
-          tabindex="0"
-          role="button"
-          aria-label="拖拽或点击上传 .zip 工具包"
-        >
-          <div class="dropzone-title">拖拽 <code>.zip</code> 到此处，或点击选择文件</div>
-          <div class="dropzone-sub">后端自动校验 manifest、路径安全与解压限额</div>
-        </div>
-
-        <div id="upload-status" class="inline-feedback" role="status" aria-live="polite" hidden></div>
-      </section>
-
-      <!-- Tools Manager Card -->
-      <section class="card" aria-labelledby="tools-card-title">
-        <div class="card-header card-header-wrap">
-          <div>
-            <h2 id="tools-card-title" class="card-title">工具管理</h2>
-            <p class="card-desc">控制工具发布状态、在线预览草稿或移除已安装工具。</p>
+          <div class="stat-card">
+            <span class="stat-label">已发布</span>
+            <span id="stat-published" class="stat-value">0</span>
           </div>
-
-          <div class="tools-controls">
-            <div class="filter-tabs" role="tablist" aria-label="状态筛选">
-              <button
-                type="button"
-                class="filter-tab active"
-                data-filter="all"
-                role="tab"
-                aria-selected="true"
-              >
-                <span>全部</span>
-                <span id="tab-count-all" class="tab-count">0</span>
-              </button>
-              <button
-                type="button"
-                class="filter-tab"
-                data-filter="published"
-                role="tab"
-                aria-selected="false"
-              >
-                <span>已发布</span>
-                <span id="tab-count-published" class="tab-count">0</span>
-              </button>
-              <button
-                type="button"
-                class="filter-tab"
-                data-filter="draft"
-                role="tab"
-                aria-selected="false"
-              >
-                <span>草稿</span>
-                <span id="tab-count-draft" class="tab-count">0</span>
-              </button>
-            </div>
-
-            <div class="tools-search-row">
-              <input
-                id="tools-search-input"
-                type="search"
-                class="input input-sm"
-                placeholder="筛选名称、ID、分类..."
-                autocomplete="off"
-                spellcheck="false"
-                aria-label="筛选工具"
-              >
-              <button id="refresh-tools-btn" class="btn btn-sm" type="button">刷新</button>
-            </div>
+          <div class="stat-card">
+            <span class="stat-label">草稿</span>
+            <span id="stat-draft" class="stat-value">0</span>
           </div>
-        </div>
-
-        <div id="tools-table-wrap" class="table-wrap">
-          <table class="tools-table">
-            <thead>
-              <tr>
-                <th>工具</th>
-                <th>ID</th>
-                <th>版本</th>
-                <th>分类</th>
-                <th>状态</th>
-                <th class="col-actions">操作</th>
-              </tr>
-            </thead>
-            <tbody id="tools-tbody"></tbody>
-          </table>
-        </div>
-
-        <div id="tools-empty" class="empty-box" hidden>暂无符合条件的工具。</div>
-      </section>
-
-      <!-- Theme Management Card -->
-      <section class="card" aria-labelledby="themes-card-title">
-        <div class="card-header card-header-wrap">
-          <div>
-            <div class="card-title-row">
-              <h2 id="themes-card-title" class="card-title">主题管理</h2>
-              <span id="themes-count-badge" class="mono-badge">0 个主题</span>
-            </div>
-            <p class="card-desc">上传、切换或删除公开前台主题包（包含 <code>theme.json</code>，支持完整主题或纯 <code>ui.css</code> 皮肤）。</p>
-          </div>
-
-          <div class="card-header-actions">
-            <button id="theme-upload-pick-btn" class="btn btn-primary btn-sm" type="button">选择主题 .zip</button>
-            <button id="refresh-themes-btn" class="btn btn-sm" type="button">刷新</button>
-          </div>
-        </div>
-
-        <input id="theme-upload-file-input" type="file" accept=".zip,application/zip" hidden>
-
-        <div
-          id="theme-upload-dropzone"
-          class="dropzone dropzone-compact"
-          tabindex="0"
-          role="button"
-          aria-label="拖拽或点击上传 .zip 主题包"
-        >
-          <div class="dropzone-title">拖拽主题 <code>.zip</code> 到此处，或点击选择文件</div>
-          <div class="dropzone-sub">自动校验 <code>theme.json</code>、路径安全与解压限额（同名 <code>short</code> 将弹出覆盖确认）</div>
-        </div>
-
-        <div id="theme-upload-status" class="inline-feedback" role="status" aria-live="polite" hidden></div>
-
-        <div id="themes-grid" class="themes-grid" aria-live="polite"></div>
-
-        <div id="themes-empty" class="empty-box" hidden>暂无可用主题。</div>
-      </section>
-
-      <!-- Two-Column Lower Grid: Site Settings + AI API Reference -->
-      <div class="lower-grid">
-        <!-- Site Settings Card -->
-        <section class="card" aria-labelledby="settings-card-title">
-          <div class="card-header">
-            <div>
-              <h2 id="settings-card-title" class="card-title">站点设置</h2>
-              <p class="card-desc">持久化至 <code>settings.json</code>，立即生效于公开站点。</p>
-            </div>
-          </div>
-
-          <form id="settings-form" class="settings-form" novalidate>
-            <div class="field">
-              <label for="setting-site-title" class="field-label">站点标题</label>
-              <input
-                id="setting-site-title"
-                type="text"
-                class="input"
-                maxlength="80"
-                placeholder="ToolStow"
-                required
-              >
-            </div>
-
-            <div class="field">
-              <label for="setting-site-desc" class="field-label">站点描述</label>
-              <textarea
-                id="setting-site-desc"
-                class="input textarea"
-                rows="3"
-                maxlength="240"
-                placeholder="Personal Micro-App Toolbox"
-              ></textarea>
-            </div>
-
-            <div class="settings-footer">
-              <button id="save-settings-btn" class="btn btn-primary" type="submit">保存设置</button>
-              <span id="settings-feedback" class="inline-status" role="status" aria-live="polite"></span>
-            </div>
-          </form>
         </section>
 
-        <!-- AI API Reference Card -->
-        <section class="card" aria-labelledby="api-ref-title">
-          <div class="card-header">
+        <!-- Unified ingestion card -->
+        <section class="card" aria-labelledby="upload-card-title">
+          <div class="card-header card-header-wrap">
             <div>
-              <h2 id="api-ref-title" class="card-title">AI / 自动化 API 参考</h2>
-              <p class="card-desc">使用 <code>Authorization: Bearer $TOOLSTOW_API_KEY</code> 访问（不可用于登录后台或修改站点设置）。</p>
+              <h2 id="upload-card-title" class="card-title">收录工具</h2>
+              <p class="card-desc">拖入 <code>.zip</code> 工具包（含 <code>manifest.json</code>）或单个 <code>.html</code> / <code>.htm</code> 文件，也可直接粘贴 HTML 并实时预览。</p>
+            </div>
+            <div class="card-header-actions">
+              <button id="paste-html-btn" class="btn btn-sm" type="button">粘贴 HTML</button>
+              <button id="upload-pick-btn" class="btn btn-primary btn-sm" type="button">选择文件</button>
             </div>
           </div>
 
-          <ul class="api-list">
-            <li class="api-item">
-              <div class="api-sig">
-                <span class="http-method">GET</span>
-                <code class="api-path">/api/admin/tools</code>
-              </div>
-              <span class="api-desc">列出所有工具（包含草稿）</span>
-            </li>
-            <li class="api-item">
-              <div class="api-sig">
-                <span class="http-method">POST</span>
-                <code class="api-path">/api/admin/tools/upload</code>
-              </div>
-              <span class="api-desc"><code>multipart/form-data</code> 字段 <code>file</code> 上传或覆盖 .zip</span>
-            </li>
-            <li class="api-item">
-              <div class="api-sig">
-                <span class="http-method">PATCH</span>
-                <code class="api-path">/api/admin/tools/{id}</code>
-              </div>
-              <span class="api-desc">JSON <code>{"draft": true | false}</code> 切换发布状态</span>
-            </li>
-            <li class="api-item">
-              <div class="api-sig">
-                <span class="http-method">DELETE</span>
-                <code class="api-path">/api/admin/tools/{id}</code>
-              </div>
-              <span class="api-desc">删除指定工具及其目录</span>
-            </li>
-          </ul>
+          <input id="upload-file-input" type="file" accept=".zip,.html,.htm,application/zip,text/html" hidden>
 
-          <div class="code-box">
-            <div class="code-box-head">
-              <span class="code-box-label">cURL 示例</span>
-              <button id="copy-curl-btn" class="btn-ghost" type="button">复制</button>
+          <div
+            id="upload-dropzone"
+            class="dropzone"
+            tabindex="0"
+            role="button"
+            aria-label="拖拽或点击收录 .zip 工具包或 .html 单文件"
+          >
+            <div class="dropzone-title">拖拽 <code>.zip</code> / <code>.html</code> 到此处，或点击选择文件</div>
+            <div class="dropzone-sub">.zip 由后端校验 manifest 与路径安全；.html 将打开预览窗口，确认后收录（同名 <code>id</code> 将弹出覆盖确认）</div>
+          </div>
+
+          <div id="upload-status" class="inline-feedback" role="status" aria-live="polite" hidden></div>
+        </section>
+
+        <!-- Tools table -->
+        <section class="card" aria-labelledby="tools-card-title">
+          <div class="card-header card-header-wrap">
+            <div>
+              <h2 id="tools-card-title" class="card-title">已安装工具</h2>
+              <p class="card-desc">控制工具发布状态、在线预览草稿或移除已安装工具。</p>
             </div>
-            <pre id="curl-example" class="code-pre">curl -X POST \
+
+            <div class="tools-controls">
+              <div class="filter-tabs" role="tablist" aria-label="状态筛选">
+                <button
+                  type="button"
+                  class="filter-tab active"
+                  data-filter="all"
+                  role="tab"
+                  aria-selected="true"
+                >
+                  <span>全部</span>
+                  <span id="tab-count-all" class="tab-count">0</span>
+                </button>
+                <button
+                  type="button"
+                  class="filter-tab"
+                  data-filter="published"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  <span>已发布</span>
+                  <span id="tab-count-published" class="tab-count">0</span>
+                </button>
+                <button
+                  type="button"
+                  class="filter-tab"
+                  data-filter="draft"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  <span>草稿</span>
+                  <span id="tab-count-draft" class="tab-count">0</span>
+                </button>
+              </div>
+
+              <div class="tools-search-row">
+                <input
+                  id="tools-search-input"
+                  type="search"
+                  class="input input-sm"
+                  placeholder="筛选名称、ID、分类..."
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="筛选工具"
+                >
+                <button id="refresh-tools-btn" class="btn btn-sm" type="button">刷新</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="tools-table-wrap" class="table-wrap">
+            <table class="tools-table">
+              <thead>
+                <tr>
+                  <th>工具</th>
+                  <th>ID</th>
+                  <th>版本</th>
+                  <th>分类</th>
+                  <th>状态</th>
+                  <th class="col-actions">操作</th>
+                </tr>
+              </thead>
+              <tbody id="tools-tbody"></tbody>
+            </table>
+          </div>
+
+          <div id="tools-empty" class="empty-box" hidden>暂无符合条件的工具。</div>
+        </section>
+      </section>
+
+      <!-- ═══ Tab 2: 主题管理 ═══ -->
+      <section id="panel-themes" class="tab-panel" role="tabpanel" aria-labelledby="main-tab-themes" hidden>
+        <section class="card" aria-labelledby="themes-card-title">
+          <div class="card-header card-header-wrap">
+            <div>
+              <div class="card-title-row">
+                <h2 id="themes-card-title" class="card-title">主题包</h2>
+                <span id="themes-count-badge" class="mono-badge">0 个主题</span>
+              </div>
+              <p class="card-desc">上传、切换或删除公开前台主题包（包含 <code>theme.json</code>，支持完整主题或纯 <code>ui.css</code> 皮肤）。</p>
+            </div>
+
+            <div class="card-header-actions">
+              <button id="theme-upload-pick-btn" class="btn btn-primary btn-sm" type="button">选择主题 .zip</button>
+              <button id="refresh-themes-btn" class="btn btn-sm" type="button">刷新</button>
+            </div>
+          </div>
+
+          <input id="theme-upload-file-input" type="file" accept=".zip,application/zip" hidden>
+
+          <div
+            id="theme-upload-dropzone"
+            class="dropzone dropzone-compact"
+            tabindex="0"
+            role="button"
+            aria-label="拖拽或点击上传 .zip 主题包"
+          >
+            <div class="dropzone-title">拖拽主题 <code>.zip</code> 到此处，或点击选择文件</div>
+            <div class="dropzone-sub">自动校验 <code>theme.json</code>、路径安全与解压限额（同名 <code>short</code> 将弹出覆盖确认）</div>
+          </div>
+
+          <div id="theme-upload-status" class="inline-feedback" role="status" aria-live="polite" hidden></div>
+
+          <div id="themes-grid" class="themes-grid" aria-live="polite"></div>
+
+          <div id="themes-empty" class="empty-box" hidden>暂无可用主题。</div>
+        </section>
+      </section>
+
+      <!-- ═══ Tab 3: 站点设置与 API ═══ -->
+      <section id="panel-settings" class="tab-panel" role="tabpanel" aria-labelledby="main-tab-settings" hidden>
+        <div class="lower-grid">
+          <!-- Site Settings Card -->
+          <section class="card" aria-labelledby="settings-card-title">
+            <div class="card-header">
+              <div>
+                <h2 id="settings-card-title" class="card-title">站点设置</h2>
+                <p class="card-desc">持久化至 <code>settings.json</code>，立即生效于公开站点。</p>
+              </div>
+            </div>
+
+            <form id="settings-form" class="settings-form" novalidate>
+              <div class="field">
+                <label for="setting-site-title" class="field-label">站点标题</label>
+                <input
+                  id="setting-site-title"
+                  type="text"
+                  class="input"
+                  maxlength="80"
+                  placeholder="ToolStow"
+                  required
+                >
+              </div>
+
+              <div class="field">
+                <label for="setting-site-desc" class="field-label">站点描述</label>
+                <textarea
+                  id="setting-site-desc"
+                  class="input textarea"
+                  rows="3"
+                  maxlength="240"
+                  placeholder="Personal Micro-App Toolbox"
+                ></textarea>
+              </div>
+
+              <div class="settings-footer">
+                <button id="save-settings-btn" class="btn btn-primary" type="submit">保存设置</button>
+                <span id="settings-feedback" class="inline-status" role="status" aria-live="polite"></span>
+              </div>
+            </form>
+          </section>
+
+          <!-- AI API Reference Card -->
+          <section class="card" aria-labelledby="api-ref-title">
+            <div class="card-header">
+              <div>
+                <h2 id="api-ref-title" class="card-title">AI / 自动化 API 参考</h2>
+                <p class="card-desc">使用 <code>Authorization: Bearer $TOOLSTOW_API_KEY</code> 访问（不可用于登录后台或修改站点设置）。</p>
+              </div>
+            </div>
+
+            <ul class="api-list">
+              <li class="api-item">
+                <div class="api-sig">
+                  <span class="http-method">GET</span>
+                  <code class="api-path">/api/admin/tools</code>
+                </div>
+                <span class="api-desc">列出所有工具（包含草稿）</span>
+              </li>
+              <li class="api-item">
+                <div class="api-sig">
+                  <span class="http-method">POST</span>
+                  <code class="api-path">/api/admin/tools/upload</code>
+                </div>
+                <span class="api-desc"><code>multipart/form-data</code> 字段 <code>file</code> 上传或覆盖 .zip</span>
+              </li>
+              <li class="api-item">
+                <div class="api-sig">
+                  <span class="http-method">POST</span>
+                  <code class="api-path">/api/admin/tools/html</code>
+                </div>
+                <span class="api-desc">JSON <code>{"id","name","html","description","category","icon","draft","injectSdk"}</code> 收录单文件 HTML 工具（<code>?overwrite=true</code> 覆盖）</span>
+              </li>
+              <li class="api-item">
+                <div class="api-sig">
+                  <span class="http-method">PATCH</span>
+                  <code class="api-path">/api/admin/tools/{id}</code>
+                </div>
+                <span class="api-desc">JSON <code>{"draft": true | false}</code> 切换发布状态</span>
+              </li>
+              <li class="api-item">
+                <div class="api-sig">
+                  <span class="http-method">DELETE</span>
+                  <code class="api-path">/api/admin/tools/{id}</code>
+                </div>
+                <span class="api-desc">删除指定工具及其目录</span>
+              </li>
+            </ul>
+
+            <div class="code-box">
+              <div class="code-box-head">
+                <span class="code-box-label">cURL 示例</span>
+                <button id="copy-curl-btn" class="btn-ghost" type="button">复制</button>
+              </div>
+              <pre id="curl-example" class="code-pre">curl -X POST \
   -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
   -F "file=@my-tool.zip" \
   http://127.0.0.1:8080/api/admin/tools/upload</pre>
-          </div>
-        </section>
-      </div>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
   </div>
+
+  <!-- Single-file HTML ingestion + live preview -->
+  <dialog id="html-dialog" class="html-dialog" aria-labelledby="html-dialog-title">
+    <form id="html-form" class="html-form" novalidate>
+      <div class="html-dialog-head">
+        <h3 id="html-dialog-title" class="dialog-title">收录单文件 HTML 工具</h3>
+        <button id="html-close-btn" class="btn-ghost" type="button" aria-label="关闭">✕</button>
+      </div>
+
+      <div class="html-dialog-body">
+        <div class="html-fields">
+          <div id="html-source-field" class="field" hidden>
+            <label for="html-source" class="field-label">HTML 源码</label>
+            <textarea
+              id="html-source"
+              class="input textarea html-source"
+              rows="8"
+              spellcheck="false"
+              placeholder="粘贴完整的 HTML 文档..."
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <label for="html-name" class="field-label">名称</label>
+            <input id="html-name" type="text" class="input" maxlength="80" autocomplete="off" placeholder="例如：JSON 格式化">
+          </div>
+
+          <div class="field">
+            <label for="html-id" class="field-label">ID (URL 标识)</label>
+            <input id="html-id" type="text" class="input input-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="my-tool" aria-describedby="html-id-hint">
+            <span id="html-id-hint" class="field-hint" data-kind="info">仅限小写字母、数字与连字符，例如 my-tool</span>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="html-category" class="field-label">分类</label>
+              <input id="html-category" type="text" class="input" list="html-category-options" maxlength="40" autocomplete="off" placeholder="未分类">
+              <datalist id="html-category-options"></datalist>
+            </div>
+            <div class="field field-icon">
+              <label for="html-icon" class="field-label">图标</label>
+              <input id="html-icon" type="text" class="input" maxlength="8" autocomplete="off" value="🛠️">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="html-desc" class="field-label">描述</label>
+            <textarea id="html-desc" class="input textarea" rows="2" maxlength="240" placeholder="一句话说明这个工具"></textarea>
+          </div>
+
+          <label class="check-row">
+            <input id="html-draft" type="checkbox">
+            <span>保存为草稿 (draft)</span>
+          </label>
+          <label class="check-row">
+            <input id="html-inject-sdk" type="checkbox" checked>
+            <span>自动注入 ToolStow 主题 SDK</span>
+          </label>
+
+          <div id="html-error" class="alert alert-error" role="alert" hidden></div>
+        </div>
+
+        <div class="html-preview">
+          <div class="html-preview-head">
+            <span class="field-label">实时预览</span>
+            <span class="muted-note">沙盒运行，展示原始 HTML</span>
+          </div>
+          <iframe
+            id="html-preview-frame"
+            class="html-preview-frame"
+            title="HTML 工具预览"
+            sandbox="allow-scripts allow-forms"
+            referrerpolicy="no-referrer"
+          ></iframe>
+        </div>
+      </div>
+
+      <div class="html-dialog-foot">
+        <button id="html-cancel-btn" class="btn btn-sm" type="button">取消</button>
+        <button id="html-submit-btn" class="btn btn-primary btn-sm" type="submit">收录工具</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- Monochrome Confirmation Dialog (Delete / Overwrite) -->
   <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title">
