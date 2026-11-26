@@ -2,6 +2,23 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.3.3] - 2026-11-26
+
+### Added
+- **Single-file HTML import.** Drop an HTML file or paste its source in `/admin`, preview it in a sandbox, and save it as a tool with optional shared UI integration. Automated clients can use `/api/admin/tools/import/html`.
+- **Host SDK and semantic workbench slots.** Full themes can use `/ui/v1/host.js` for tool discovery, deep links, iframe mounting, and theme sync. Tools can expose shared slots for themes to rearrange through CSS.
+- **Phosphor theme.** Added a dark CRT-style theme with green, amber, and ice palettes. The selected palette follows tools opened in a new tab.
+
+### Changed
+- Simplified the default homepage to a searchable tool list that refreshes when revisited. Moved the new-tab action into the active tool's details.
+- Reorganized the admin console around tool collection, tool management, and theme settings. Updated the tool and theme development guides for the new layouts and SDKs.
+- Bumped crate version to `0.3.3` (`toolstow --version`).
+
+### Fixed
+- Preserve the active tool and its inputs while searching, and restore the requested tool after its deep link is retried.
+- Keep keyboard focus and result highlighting in sync in the default search dialog. Tools using the shared SDK can forward `Cmd/Ctrl+K` to open it.
+- Remove duplicate tag filters and fix narrow-screen metadata overflow, drawer focus, and control contrast in the bundled themes.
+
 ## [0.3.2] - 2026-11-26
 
 ### Added
