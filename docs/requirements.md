@@ -317,6 +317,7 @@ toolstow/
 ├── .gitignore                # 忽略 /target, /tools, /data, /dist, /dist-docker, .env 等产物
 ├── docs/
 │   ├── requirements.md       # 完整项目需求与技术规格书
+│   ├── architecture.md       # 架构设计、UI SDK、沙箱安全与开发校验指南
 │   ├── deployment.md         # VPS 部署、反代 HTTPS 与自定义主题指南
 │   ├── ai-tool-skill.md      # 已迁移至 skills/toolstow-tool/ 的历史跳转说明
 │   └── ai-theme-skill.md     # 已迁移至 skills/toolstow-theme/ 的历史跳转说明
