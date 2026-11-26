@@ -30,6 +30,7 @@ EXAMPLES_DIR = REPO_ROOT / "examples"
 
 def discover_examples() -> Tuple[List[Path], List[Path]]:
     themes_root = EXAMPLES_DIR / "themes"
+    tools_root = EXAMPLES_DIR / "tools"
     themes = sorted(
         p.parent
         for p in themes_root.glob("*/theme.json")
@@ -37,10 +38,8 @@ def discover_examples() -> Tuple[List[Path], List[Path]]:
     )
     plugins = sorted(
         p.parent
-        for p in EXAMPLES_DIR.glob("*/manifest.json")
-        if p.is_file()
-        and p.parent.name != "themes"
-        and not p.parent.name.startswith(".")
+        for p in tools_root.glob("*/manifest.json")
+        if p.is_file() and not p.parent.name.startswith(".")
     )
     return themes, plugins
 
@@ -121,7 +120,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("ERROR: no example themes found under examples/themes/*/theme.json", file=sys.stderr)
         return 1
     if not plugins:
-        print("ERROR: no example plugins found under examples/*/manifest.json", file=sys.stderr)
+        print("ERROR: no example plugins found under examples/tools/*/manifest.json", file=sys.stderr)
         return 1
 
     print(
