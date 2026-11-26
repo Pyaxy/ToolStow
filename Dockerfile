@@ -3,7 +3,7 @@
 # =========================================================
 # Stage 1: Minimal non-root Alpine runtime base
 # =========================================================
-FROM alpine:3.21 AS runtime-base
+FROM alpine:3.24 AS runtime-base
 
 RUN apk add --no-cache ca-certificates \
     && addgroup -g 1000 -S toolstow \

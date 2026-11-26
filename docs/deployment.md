@@ -52,13 +52,15 @@ TOOLSTOW_API_KEY=<另一把 64 位随机十六进制 API Key>
 
 容器镜像内置以下默认配置（以非 root 用户 `1000:1000` 运行，并通过 `GET /healthz` 提供内置健康检查）：
 - `TOOLSTOW_HOST=0.0.0.0`（覆盖裸机默认 `127.0.0.1`，确保容器端口映射可访问）
-- `TOOLSTOW_PORT=8080`
+- `TOOLSTOW_PORT=8080`（如需调整宿主机访问端口，直接改端口映射 `-p 127.0.0.1:<宿主机端口>:8080`；若要改动容器内部监听端口，请通过环境变量 `TOOLSTOW_PORT` 修改并同步更新端口映射，勿用 `--port` 覆盖，以免内置 `HEALTHCHECK` 探测失配）
 - `TOOLSTOW_DATA_DIR=/data`
 
-### 3.1 使用 `compose.yml` 快速启动
+### 3.1 使用 [compose.yml](../compose.yml) 快速启动
+
+在同目录准备 [compose.yml](../compose.yml) 与可选的 [.env.example](../.env.example)（重命名为 `.env`）：
 
 ```bash
-# 1. 下载 compose.yml 与 .env.example
+# 1. 配置密钥（可选，不配则以只读模式运行）
 cp .env.example .env
 # 编辑 .env 填入 TOOLSTOW_ADMIN_KEY 与 TOOLSTOW_API_KEY（容器环境下若直接用 compose.yml，已默认覆盖 HOST=0.0.0.0 与 DATA_DIR=/data）
 chmod 600 .env

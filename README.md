@@ -65,6 +65,8 @@ chmod 600 .env
 
 ### 3. 使用 Docker / Docker Compose 运行（支持 `linux/amd64` / `linux/arm64`）
 
+下载仓库中的 [compose.yml](compose.yml)（如需启用管理密钥，可在同目录放一份基于 [.env.example](.env.example) 修改的 `.env`），然后启动：
+
 ```bash
 # 拉取预构建镜像并启动（默认使用 compose.yml 中的 TOOLSTOW_HOST=0.0.0.0 与 /data 持久化卷）
 docker compose up -d

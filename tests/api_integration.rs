@@ -3109,7 +3109,11 @@ async fn theme_assets_endpoint_and_custom_theme_cors_and_security() {
 async fn healthz_returns_ok_and_cannot_be_shadowed_by_custom_theme() {
     let env = build_test_env(None, None, 50, false, false);
     fs::create_dir_all(&env.theme_dir).unwrap();
-    fs::write(env.theme_dir.join("index.html"), "<!doctype html><h1>Custom</h1>").unwrap();
+    fs::write(
+        env.theme_dir.join("index.html"),
+        "<!doctype html><h1>Custom</h1>",
+    )
+    .unwrap();
     fs::write(env.theme_dir.join("healthz"), "shadowed-file").unwrap();
 
     let resp = env
