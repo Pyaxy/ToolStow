@@ -264,7 +264,7 @@ pub fn install_single_html_checked(
         input.html
     };
 
-    let theme_aware = input.inject_sdk || final_html.contains("/ui/v1/theme.js");
+    let theme_aware = scan_html(&final_html).has_theme_js;
 
     let staging_root = tools_dir.join(STAGING_DIR_NAME);
     fs::create_dir_all(&staging_root).map_err(|err| {
@@ -333,28 +333,42 @@ pub fn install_single_html_checked(
     Ok(InstallOutcome::Installed(InstallResult { entry, updated }))
 }
 
+const TOOLSTOW_CSS_PATH: &str = "/ui/v1/toolstow.css";
+const TOOLSTOW_THEME_JS_PATH: &str = "/ui/v1/theme.js";
+
+/// Result of a single-pass, byte-offset-preserving HTML structural scan.
+#[derive(Debug, Default)]
+struct HtmlScanResult {
+    /// True iff a real `<link>` tag loads `/ui/v1/toolstow.css` with `rel` containing `stylesheet`.
+    has_toolstow_css: bool,
+    /// True iff a real `<script>` tag loads `/ui/v1/theme.js` via `src`.
+    has_theme_js: bool,
+    /// Start byte offset of the first real `</head>` closing tag.
+    head_close_start: Option<usize>,
+    /// Exclusive end byte offset of the first real `<head ...>` opening tag.
+    head_open_end: Option<usize>,
+    /// Start byte offset of the first real `<body ...>` opening tag.
+    body_open_start: Option<usize>,
+    /// Exclusive end byte offset of a leading `<!doctype ...>` declaration.
+    leading_doctype_end: Option<usize>,
+}
+
 /// Safely injects missing ToolStow UI stylesheet and theme bridge tags into an HTML document.
 fn inject_toolstow_sdk(html: &str) -> String {
-    const CSS_URL: &str = "/ui/v1/toolstow.css";
-    const THEME_JS_URL: &str = "/ui/v1/theme.js";
     const CSS_TAG: &str = r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#;
     const THEME_JS_TAG: &str = r#"<script src="/ui/v1/theme.js"></script>"#;
 
-    let has_css = html.contains(CSS_URL);
-    let has_theme_js = html.contains(THEME_JS_URL);
+    let scan = scan_html(html);
 
-    let snippet = match (has_css, has_theme_js) {
+    let snippet = match (scan.has_toolstow_css, scan.has_theme_js) {
         (true, true) => return html.to_string(),
         (false, false) => format!("{CSS_TAG}\n{THEME_JS_TAG}"),
         (false, true) => CSS_TAG.to_string(),
         (true, false) => THEME_JS_TAG.to_string(),
     };
 
-    // ASCII lowercasing strictly preserves byte lengths and indices in UTF-8 strings.
-    let lower = html.to_ascii_lowercase();
-
-    // 1. Insert right before `</head>` if present.
-    if let Some(pos) = find_closing_tag(&lower, "head") {
+    // 1. Insert right before the first real `</head>` if present.
+    if let Some(pos) = scan.head_close_start {
         let mut out = String::with_capacity(html.len() + snippet.len() + 2);
         out.push_str(&html[..pos]);
         if !out.is_empty() && !out.ends_with('\n') {
@@ -366,8 +380,8 @@ fn inject_toolstow_sdk(html: &str) -> String {
         return out;
     }
 
-    // 2. Otherwise insert right after `<head...>` if present.
-    if let Some((_, end)) = find_opening_tag(&lower, "head") {
+    // 2. Otherwise insert right after the first real `<head...>` if present.
+    if let Some(end) = scan.head_open_end {
         let mut out = String::with_capacity(html.len() + snippet.len() + 2);
         out.push_str(&html[..end]);
         out.push('\n');
@@ -379,8 +393,8 @@ fn inject_toolstow_sdk(html: &str) -> String {
         return out;
     }
 
-    // 3. Otherwise insert right before `<body...>` if present.
-    if let Some((start, _)) = find_opening_tag(&lower, "body") {
+    // 3. Otherwise insert right before the first real `<body...>` if present.
+    if let Some(start) = scan.body_open_start {
         let mut out = String::with_capacity(html.len() + snippet.len() + 2);
         out.push_str(&html[..start]);
         if !out.is_empty() && !out.ends_with('\n') {
@@ -393,8 +407,8 @@ fn inject_toolstow_sdk(html: &str) -> String {
     }
 
     // 4. Otherwise insert right after a leading `<!doctype ...>` (preserving standards mode),
-    //    or prepend directly to the HTML fragment.
-    if let Some(doctype_end) = find_leading_doctype_end(&lower) {
+    //    or prepend directly to the HTML fragment at byte 0.
+    if let Some(doctype_end) = scan.leading_doctype_end {
         let mut out = String::with_capacity(html.len() + snippet.len() + 2);
         out.push_str(&html[..doctype_end]);
         out.push('\n');
@@ -409,58 +423,363 @@ fn inject_toolstow_sdk(html: &str) -> String {
     format!("{snippet}\n{html}")
 }
 
-/// Finds the start byte offset of a closing tag like `</head>` in an ASCII-lowercased HTML string.
-fn find_closing_tag(lower: &str, tag: &str) -> Option<usize> {
-    let needle = format!("</{tag}");
-    let bytes = lower.as_bytes();
-    let mut offset = 0;
+/// Performs a single-pass, comment-, raw-text/RCDATA-, and quoted-attribute-aware HTML scan,
+/// returning exact UTF-8 byte offsets and real SDK tag detection.
+fn scan_html(html: &str) -> HtmlScanResult {
+    let bytes = html.as_bytes();
+    let mut result = HtmlScanResult::default();
+    let mut i = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        3
+    } else {
+        0
+    };
+    let mut seen_element_or_text = false;
 
-    while let Some(rel) = lower[offset..].find(&needle) {
-        let start = offset + rel;
-        let mut idx = start + needle.len();
-        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
-            idx += 1;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            if !bytes[i].is_ascii_whitespace() {
+                seen_element_or_text = true;
+            }
+            i += 1;
+            continue;
         }
-        if idx < bytes.len() && bytes[idx] == b'>' {
-            return Some(start);
+
+        // 1. HTML comments: `<!-- ... -->`, including `<!---->`, `<!-->`, `<!--->`, and unclosed to EOF.
+        if bytes[i..].starts_with(b"<!--") {
+            i = skip_html_comment(bytes, i);
+            continue;
         }
-        offset = start + needle.len();
-    }
 
-    None
-}
-
-/// Finds `(start, end_exclusive)` byte offsets of an opening tag like `<head ...>` or `<body>`
-/// in an ASCII-lowercased HTML string, avoiding prefix false positives such as `<header>`.
-fn find_opening_tag(lower: &str, tag: &str) -> Option<(usize, usize)> {
-    let needle = format!("<{tag}");
-    let bytes = lower.as_bytes();
-    let mut offset = 0;
-
-    while let Some(rel) = lower[offset..].find(&needle) {
-        let start = offset + rel;
-        let after = start + needle.len();
-        if let Some(&next) = bytes.get(after)
-            && (next == b'>' || next == b'/' || next.is_ascii_whitespace())
-            && let Some(gt_rel) = lower[after..].find('>')
+        // 2. Leading or inline `<!doctype ...>` declaration.
+        if bytes.len().saturating_sub(i) >= 9
+            && bytes[i..i + 9].eq_ignore_ascii_case(b"<!doctype")
+            && (i + 9 == bytes.len()
+                || bytes[i + 9].is_ascii_whitespace()
+                || bytes[i + 9] == b'>')
         {
-            return Some((start, after + gt_rel + 1));
+            if let Some(end) = scan_doctype_end(bytes, i + 9) {
+                if !seen_element_or_text && result.leading_doctype_end.is_none() {
+                    result.leading_doctype_end = Some(end);
+                }
+                i = end;
+            } else {
+                i = bytes.len();
+            }
+            continue;
         }
-        offset = after;
+
+        // 3. CDATA section `<![CDATA[ ... ]]>`.
+        if bytes[i..].starts_with(b"<![CDATA[") {
+            seen_element_or_text = true;
+            i = skip_cdata(bytes, i);
+            continue;
+        }
+
+        // 4. Other markup declarations or processing instructions (`<!...>`, `<?...>`).
+        if i + 1 < bytes.len() && (bytes[i + 1] == b'!' || bytes[i + 1] == b'?') {
+            i = skip_to_gt(bytes, i + 2);
+            continue;
+        }
+
+        // 5. Closing tags `</name ...>`.
+        if i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            if i + 2 < bytes.len() && bytes[i + 2].is_ascii_alphabetic() {
+                let name_start = i + 2;
+                let mut name_end = name_start;
+                while name_end < bytes.len()
+                    && !bytes[name_end].is_ascii_whitespace()
+                    && bytes[name_end] != b'>'
+                    && bytes[name_end] != b'/'
+                {
+                    name_end += 1;
+                }
+                let tag_name = &html[name_start..name_end];
+                if let Some(tag_end) = scan_tag_rest(html, name_end, |_, _| {}) {
+                    seen_element_or_text = true;
+                    if tag_name.eq_ignore_ascii_case("head") && result.head_close_start.is_none() {
+                        result.head_close_start = Some(i);
+                    }
+                    i = tag_end;
+                } else {
+                    i = bytes.len();
+                }
+                continue;
+            }
+            seen_element_or_text = true;
+            i += 1;
+            continue;
+        }
+
+        // 6. Opening tags `<name ...>`.
+        if i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphabetic() {
+            let tag_start = i;
+            let name_start = i + 1;
+            let mut name_end = name_start;
+            while name_end < bytes.len()
+                && !bytes[name_end].is_ascii_whitespace()
+                && bytes[name_end] != b'>'
+                && bytes[name_end] != b'/'
+            {
+                name_end += 1;
+            }
+            let tag_name = &html[name_start..name_end];
+
+            let is_link = tag_name.eq_ignore_ascii_case("link");
+            let is_script = tag_name.eq_ignore_ascii_case("script");
+            let mut link_rel: Option<&str> = None;
+            let mut link_href: Option<&str> = None;
+            let mut script_src: Option<&str> = None;
+
+            let Some(tag_end) = scan_tag_rest(html, name_end, |attr_name, attr_val| {
+                if is_link {
+                    if link_rel.is_none() && attr_name.eq_ignore_ascii_case("rel") {
+                        link_rel = attr_val;
+                    } else if link_href.is_none() && attr_name.eq_ignore_ascii_case("href") {
+                        link_href = attr_val;
+                    }
+                } else if is_script
+                    && script_src.is_none()
+                    && attr_name.eq_ignore_ascii_case("src")
+                {
+                    script_src = attr_val;
+                }
+            }) else {
+                break;
+            };
+
+            seen_element_or_text = true;
+
+            if tag_name.eq_ignore_ascii_case("head") && result.head_open_end.is_none() {
+                result.head_open_end = Some(tag_end);
+            } else if tag_name.eq_ignore_ascii_case("body") && result.body_open_start.is_none() {
+                result.body_open_start = Some(tag_start);
+            } else if is_link
+                && let (Some(rel), Some(href)) = (link_rel, link_href)
+                && rel_has_stylesheet(rel)
+                && url_path_equals(href, TOOLSTOW_CSS_PATH)
+            {
+                result.has_toolstow_css = true;
+            } else if is_script
+                && let Some(src) = script_src
+                && url_path_equals(src, TOOLSTOW_THEME_JS_PATH)
+            {
+                result.has_theme_js = true;
+            }
+
+            if is_raw_text_or_rcdata_tag(tag_name) {
+                i = find_raw_text_end(bytes, tag_end, tag_name);
+            } else {
+                i = tag_end;
+            }
+            continue;
+        }
+
+        // Literal `<` in text content.
+        seen_element_or_text = true;
+        i += 1;
     }
 
+    result
+}
+
+/// Skips an HTML comment starting at `start` (`<!--`), handling `<!---->`, `<!-->`, `<!--->`,
+/// and unclosed comments to EOF.
+fn skip_html_comment(bytes: &[u8], start: usize) -> usize {
+    let mut pos = start + 4;
+    if pos >= bytes.len() {
+        return bytes.len();
+    }
+    if bytes[pos] == b'>' {
+        return pos + 1;
+    }
+    if bytes[pos..].starts_with(b"->") {
+        return pos + 2;
+    }
+    while pos < bytes.len() {
+        if bytes[pos..].starts_with(b"-->") {
+            return pos + 3;
+        }
+        if bytes[pos..].starts_with(b"--!>") {
+            return pos + 4;
+        }
+        pos += 1;
+    }
+    bytes.len()
+}
+
+/// Scans past a `<!doctype ...>` declaration respecting quoted strings, returning the byte
+/// offset immediately after `>`, or `None` if unclosed.
+fn scan_doctype_end(bytes: &[u8], mut pos: usize) -> Option<usize> {
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'>' => return Some(pos + 1),
+            b'"' | b'\'' => {
+                let quote = bytes[pos];
+                pos += 1;
+                while pos < bytes.len() && bytes[pos] != quote {
+                    pos += 1;
+                }
+                if pos < bytes.len() {
+                    pos += 1;
+                }
+            }
+            _ => pos += 1,
+        }
+    }
     None
 }
 
-/// Returns the byte offset immediately after a leading `<!doctype ...>` declaration, if present.
-fn find_leading_doctype_end(lower: &str) -> Option<usize> {
-    let trimmed_start = lower.len() - lower.trim_start().len();
-    if lower[trimmed_start..].starts_with("<!doctype")
-        && let Some(gt_rel) = lower[trimmed_start..].find('>')
-    {
-        return Some(trimmed_start + gt_rel + 1);
+/// Skips a `<![CDATA[ ... ]]>` section to EOF if unclosed.
+fn skip_cdata(bytes: &[u8], start: usize) -> usize {
+    let mut pos = start + 9;
+    while pos < bytes.len() {
+        if bytes[pos..].starts_with(b"]]>") {
+            return pos + 3;
+        }
+        pos += 1;
+    }
+    bytes.len()
+}
+
+/// Skips forward until immediately after the next `>`, or EOF.
+fn skip_to_gt(bytes: &[u8], mut pos: usize) -> usize {
+    while pos < bytes.len() {
+        if bytes[pos] == b'>' {
+            return pos + 1;
+        }
+        pos += 1;
+    }
+    bytes.len()
+}
+
+/// Scans attributes and finds the closing `>` of a tag starting after its tag name, respecting
+/// single- and double-quoted attribute values.
+fn scan_tag_rest<'a>(
+    html: &'a str,
+    mut pos: usize,
+    mut on_attr: impl FnMut(&'a str, Option<&'a str>),
+) -> Option<usize> {
+    let bytes = html.as_bytes();
+    while pos < bytes.len() {
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            return None;
+        }
+        match bytes[pos] {
+            b'>' => return Some(pos + 1),
+            b'/' => {
+                pos += 1;
+            }
+            _ => {
+                let name_start = pos;
+                while pos < bytes.len()
+                    && !bytes[pos].is_ascii_whitespace()
+                    && bytes[pos] != b'='
+                    && bytes[pos] != b'>'
+                    && bytes[pos] != b'/'
+                {
+                    pos += 1;
+                }
+                let attr_name = &html[name_start..pos];
+
+                while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                    pos += 1;
+                }
+
+                let attr_value = if pos < bytes.len() && bytes[pos] == b'=' {
+                    pos += 1;
+                    while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                        pos += 1;
+                    }
+                    if pos < bytes.len() && (bytes[pos] == b'"' || bytes[pos] == b'\'') {
+                        let quote = bytes[pos];
+                        pos += 1;
+                        let val_start = pos;
+                        while pos < bytes.len() && bytes[pos] != quote {
+                            pos += 1;
+                        }
+                        let val = &html[val_start..pos];
+                        if pos < bytes.len() {
+                            pos += 1;
+                        }
+                        Some(val)
+                    } else {
+                        let val_start = pos;
+                        while pos < bytes.len()
+                            && !bytes[pos].is_ascii_whitespace()
+                            && bytes[pos] != b'>'
+                        {
+                            pos += 1;
+                        }
+                        Some(&html[val_start..pos])
+                    }
+                } else {
+                    None
+                };
+
+                if !attr_name.is_empty() {
+                    on_attr(attr_name, attr_value);
+                }
+            }
+        }
     }
     None
+}
+
+/// Returns `true` for HTML raw-text / RCDATA elements whose bodies must not be parsed as markup.
+fn is_raw_text_or_rcdata_tag(tag: &str) -> bool {
+    tag.eq_ignore_ascii_case("script")
+        || tag.eq_ignore_ascii_case("style")
+        || tag.eq_ignore_ascii_case("textarea")
+        || tag.eq_ignore_ascii_case("title")
+        || tag.eq_ignore_ascii_case("xmp")
+}
+
+/// Skips the body of a raw-text / RCDATA element until immediately after its matching `</tag>`
+/// closing tag (or EOF if unclosed).
+fn find_raw_text_end(bytes: &[u8], mut pos: usize, tag_name: &str) -> usize {
+    let tag_bytes = tag_name.as_bytes();
+    while pos < bytes.len() {
+        if bytes[pos] == b'<'
+            && pos + 2 + tag_bytes.len() <= bytes.len()
+            && bytes[pos + 1] == b'/'
+            && bytes[pos + 2..pos + 2 + tag_bytes.len()].eq_ignore_ascii_case(tag_bytes)
+        {
+            let after = pos + 2 + tag_bytes.len();
+            if after < bytes.len()
+                && (bytes[after] == b'>'
+                    || bytes[after] == b'/'
+                    || bytes[after].is_ascii_whitespace())
+            {
+                let mut gt = after;
+                while gt < bytes.len() && bytes[gt] != b'>' {
+                    gt += 1;
+                }
+                return if gt < bytes.len() {
+                    gt + 1
+                } else {
+                    bytes.len()
+                };
+            }
+        }
+        pos += 1;
+    }
+    bytes.len()
+}
+
+/// Returns `true` when an HTML `rel` attribute contains the whitespace-separated token `stylesheet`.
+fn rel_has_stylesheet(rel: &str) -> bool {
+    rel.split_ascii_whitespace()
+        .any(|token| token.eq_ignore_ascii_case("stylesheet"))
+}
+
+/// Returns `true` when a URL attribute's trimmed path before `?` or `#` equals `expected`.
+fn url_path_equals(raw: &str, expected: &str) -> bool {
+    raw.split(['?', '#'])
+        .next()
+        .is_some_and(|path| path.trim() == expected)
 }
 
 /// Deletes `tools_dir/{id}` after validating `id`, returning `Ok(true)` if removed or `Ok(false)` if absent.
@@ -1764,5 +2083,141 @@ mod tests {
             InstallOutcome::Installed(res) => assert!(res.entry.theme_aware),
             InstallOutcome::AlreadyExists { .. } => panic!("expected install"),
         }
+    }
+
+    #[test]
+    fn html_scanner_skips_comments_raw_text_quoted_attrs_and_checks_real_sdk_tags() {
+        // 1. Comment containing `</head>` inside `<head>` -> injected before the REAL `</head>`, outside comment
+        let commented_head =
+            "<!doctype html><html><head><!----><!-- </head> --><title>Test</title></head><body>Hi</body></html>";
+        let injected = inject_toolstow_sdk(commented_head);
+        let comment_end = injected.find("<!-- </head> -->").unwrap() + "<!-- </head> -->".len();
+        let css_pos = injected
+            .find(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#)
+            .unwrap();
+        let js_pos = injected
+            .find(r#"<script src="/ui/v1/theme.js"></script>"#)
+            .unwrap();
+        let real_head_close = injected.rfind("</head>").unwrap();
+        assert!(css_pos > comment_end && css_pos < js_pos && js_pos < real_head_close);
+
+        // 2. Unclosed comment to EOF does not fool tag detection; fragment prepends cleanly
+        let unclosed_comment = "<!-- </head> <script src=\"/ui/v1/theme.js\"></script>";
+        let scan_unclosed = scan_html(unclosed_comment);
+        assert!(!scan_unclosed.has_theme_js);
+        assert!(scan_unclosed.head_close_start.is_none());
+        let injected_unclosed = inject_toolstow_sdk(unclosed_comment);
+        assert!(injected_unclosed.starts_with(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#));
+        assert!(scan_html(&injected_unclosed).has_theme_js);
+
+        // 3. `<pre>/ui/v1/theme.js /ui/v1/toolstow.css</pre>` and `<!-- /ui/v1/theme.js -->`:
+        //    NOT detected as loaded; theme_aware=false when inject_sdk=false, injected when inject_sdk=true
+        let doc_text_and_comment = "<!doctype html><html><head><!-- /ui/v1/theme.js --><title>Docs</title></head><body><pre>/ui/v1/theme.js /ui/v1/toolstow.css</pre></body></html>";
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let no_inject = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "docs-no-inject".to_string(),
+                name: "Docs No Inject".to_string(),
+                html: doc_text_and_comment.to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                draft: false,
+                inject_sdk: false,
+            },
+            ArchiveLimits::default(),
+            false,
+        )
+        .unwrap();
+        match no_inject {
+            InstallOutcome::Installed(res) => assert!(!res.entry.theme_aware),
+            InstallOutcome::AlreadyExists { .. } => panic!("expected install"),
+        }
+
+        let with_inject = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "docs-with-inject".to_string(),
+                name: "Docs With Inject".to_string(),
+                html: doc_text_and_comment.to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                draft: false,
+                inject_sdk: true,
+            },
+            ArchiveLimits::default(),
+            false,
+        )
+        .unwrap();
+        match with_inject {
+            InstallOutcome::Installed(res) => assert!(res.entry.theme_aware),
+            InstallOutcome::AlreadyExists { .. } => panic!("expected install"),
+        }
+        let disk_html =
+            fs::read_to_string(tools_dir.join("docs-with-inject/index.html")).unwrap();
+        assert!(disk_html.contains(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#));
+        assert!(disk_html.contains(r#"<script src="/ui/v1/theme.js"></script>"#));
+        assert!(
+            disk_html
+                .find(r#"<script src="/ui/v1/theme.js"></script>"#)
+                .unwrap()
+                < disk_html.find("</head>").unwrap()
+        );
+
+        // 4. `<script>const x = "</head>";</script>` inside `<head>` -> injected before REAL `</head>`
+        let script_with_head_close =
+            r#"<!doctype html><html><head><script>const x = "</head>";</script></head><body>Hi</body></html>"#;
+        let injected_script = inject_toolstow_sdk(script_with_head_close);
+        let script_end = injected_script.find("</script>").unwrap() + "</script>".len();
+        let injected_css = injected_script
+            .find(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#)
+            .unwrap();
+        let real_close = injected_script.rfind("</head>").unwrap();
+        assert!(injected_css >= script_end && injected_css < real_close);
+
+        // 5. Quoted attributes and raw-text/RCDATA bodies (`style`, `textarea`, `title`, `xmp`)
+        let tricky = concat!(
+            r#"<html data-a="</head>" data-b='<body>'>"#,
+            r#"<head data-x="</head>">"#,
+            r#"<title></head></title>"#,
+            r#"<style>/* </head> */ body::after { content: "</head>"; }</style>"#,
+            r#"</head>"#,
+            r#"<body>"#,
+            r#"<textarea><script src="/ui/v1/theme.js"></script></textarea>"#,
+            r#"<xmp><link rel="stylesheet" href="/ui/v1/toolstow.css"></xmp>"#,
+            r#"</body></html>"#
+        );
+        let scan_tricky = scan_html(tricky);
+        assert!(!scan_tricky.has_toolstow_css);
+        assert!(!scan_tricky.has_theme_js);
+        assert_eq!(scan_tricky.head_close_start, tricky.rfind("</head>"));
+        assert_eq!(scan_tricky.body_open_start, tricky.rfind("<body>"));
+
+        // 6. `<link rel="preload" href="/ui/v1/toolstow.css">` does NOT count as CSS loaded;
+        //    `<link rel="stylesheet" href="/ui/v1/toolstow.css?v=1">` DOES count.
+        let preload_only =
+            r#"<head><link rel="preload" as="style" href="/ui/v1/toolstow.css"></head>"#;
+        let scan_preload = scan_html(preload_only);
+        assert!(!scan_preload.has_toolstow_css);
+        let injected_preload = inject_toolstow_sdk(preload_only);
+        assert!(injected_preload.contains(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#));
+        assert!(injected_preload.contains(r#"<script src="/ui/v1/theme.js"></script>"#));
+
+        let stylesheet_with_query = concat!(
+            r#"<head>"#,
+            r#"<link rel="alternate StyleSheet" href=" /ui/v1/toolstow.css?v=1 ">"#,
+            r#"<script src='/ui/v1/theme.js?v=2#init'></script>"#,
+            r#"</head>"#
+        );
+        let scan_loaded = scan_html(stylesheet_with_query);
+        assert!(scan_loaded.has_toolstow_css);
+        assert!(scan_loaded.has_theme_js);
+        assert_eq!(inject_toolstow_sdk(stylesheet_with_query), stylesheet_with_query);
     }
 }
