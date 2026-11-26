@@ -25,7 +25,7 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
 
-use crate::archive::{self, ArchiveLimits};
+use crate::archive::{self, ArchiveLimits, SingleHtmlToolInput};
 use crate::auth::AuthManager;
 use crate::config::Config;
 use crate::error::AppError;
@@ -137,6 +137,27 @@ struct LoginResponse {
 #[derive(Debug, Deserialize)]
 struct PatchToolRequest {
     draft: bool,
+}
+
+/// JSON request payload for `POST /api/admin/tools/html`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadSingleHtmlToolRequest {
+    id: String,
+    name: String,
+    html: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    inject_sdk: bool,
 }
 
 /// Optional query parameters accepted by `POST /api/admin/tools/upload` and
@@ -474,6 +495,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let upload_routes = Router::new()
         .route("/api/admin/tools/upload", post(upload_tool))
+        .route("/api/admin/tools/html", post(upload_single_html_tool))
         .route("/api/admin/themes/upload", post(upload_theme))
         .layer(DefaultBodyLimit::max(upload_body_limit));
 
@@ -496,6 +518,7 @@ pub fn build_router(state: AppState) -> Router {
         // Locked shared UI design system & theme bridge (never shadowable by data/theme/ or data/themes/)
         .route("/ui/v1/toolstow.css", get(serve_ui_css))
         .route("/ui/v1/theme.js", get(serve_ui_theme_js))
+        .route("/ui/v1/host.js", get(serve_ui_host_js))
         .route("/ui/v1/theme-assets/{*path}", get(serve_active_theme_asset))
         .route("/ui/{*path}", get(serve_ui_not_found))
         // Admin session, settings & theme management endpoints (Admin Session Cookie ONLY)
@@ -809,8 +832,18 @@ async fn serve_ui_css(State(state): State<AppState>) -> Result<Response, AppErro
 
 /// `GET` / `HEAD /ui/v1/theme.js`: serves embedded `ui/v1/theme.js`.
 async fn serve_ui_theme_js() -> Result<Response, AppError> {
-    let asset = UiAssets::get("v1/theme.js")
-        .ok_or_else(|| AppError::not_found("UI asset not found: /ui/v1/theme.js"))?;
+    serve_embedded_ui_js("v1/theme.js", "/ui/v1/theme.js")
+}
+
+/// `GET` / `HEAD /ui/v1/host.js`: serves embedded `ui/v1/host.js`.
+async fn serve_ui_host_js() -> Result<Response, AppError> {
+    serve_embedded_ui_js("v1/host.js", "/ui/v1/host.js")
+}
+
+/// Serves a locked embedded JavaScript asset from [`UiAssets`].
+fn serve_embedded_ui_js(asset_path: &str, public_path: &str) -> Result<Response, AppError> {
+    let asset = UiAssets::get(asset_path)
+        .ok_or_else(|| AppError::not_found(format!("UI asset not found: {public_path}")))?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -1426,6 +1459,83 @@ async fn upload_tool(
     })
     .await
     .map_err(|err| AppError::internal(format!("archive install task failed: {err}")))??;
+
+    match outcome {
+        archive::InstallOutcome::Installed(result) => {
+            state.registry.upsert(result.entry.clone());
+
+            let status = if result.updated {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            };
+
+            Ok((status, Json(result.entry)).into_response())
+        }
+        archive::InstallOutcome::AlreadyExists { existing, incoming } => {
+            let body = ToolExistsConflictResponse {
+                code: "TOOL_EXISTS",
+                error: format!(
+                    "tool '{}' already exists; confirm overwrite to replace it",
+                    incoming.id
+                ),
+                existing: existing.map(|e| *e),
+                incoming,
+            };
+            Ok((StatusCode::CONFLICT, Json(body)).into_response())
+        }
+    }
+}
+
+/// `POST /api/admin/tools/html`: validates and atomically installs or updates a standalone
+/// single-file HTML tool (Admin Session OR AI Bearer API key).
+///
+/// Supports optional `?overwrite=false` to reject existing tool IDs with `409 Conflict`
+/// (`TOOL_EXISTS`) and both `existing` / `incoming` metadata for confirmation dialogs.
+async fn upload_single_html_tool(
+    _auth: AdminToolsAuth,
+    State(state): State<AppState>,
+    Query(query): Query<UploadOverwriteQuery>,
+    payload: Result<Json<UploadSingleHtmlToolRequest>, JsonRejection>,
+) -> Result<Response, AppError> {
+    let allow_overwrite = query.overwrite.unwrap_or(true);
+    let max_upload_bytes = state.config.max_upload_bytes();
+    let max_upload_mb = state.config.max_upload_mb;
+
+    let Json(body) = payload.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AppError::payload_too_large(format!(
+                "upload exceeds maximum allowed size of {max_upload_mb} MiB"
+            ))
+        } else {
+            AppError::bad_request(format!("invalid JSON HTML tool payload: {rejection}"))
+        }
+    })?;
+
+    let input = SingleHtmlToolInput {
+        id: body.id,
+        name: body.name,
+        html: body.html,
+        description: body.description,
+        category: body.category,
+        tags: body.tags,
+        icon: body.icon,
+        draft: body.draft,
+        inject_sdk: body.inject_sdk,
+    };
+
+    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let tools_dir = state.registry.tools_dir().to_path_buf();
+    let limits = ArchiveLimits {
+        max_zip_bytes: max_upload_bytes,
+        ..ArchiveLimits::default()
+    };
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        archive::install_single_html_checked(&tools_dir, input, limits, allow_overwrite)
+    })
+    .await
+    .map_err(|err| AppError::internal(format!("single-HTML install task failed: {err}")))??;
 
     match outcome {
         archive::InstallOutcome::Installed(result) => {
