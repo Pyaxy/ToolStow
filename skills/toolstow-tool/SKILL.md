@@ -75,6 +75,8 @@ ToolStow accepts:
 2. **Single-root-folder ZIP** (`my-tool/manifest.json`, with `__MACOSX/` and `.DS_Store` automatically ignored).
 3. **Single-file `.html` / `.htm` drag-and-drop or Paste HTML in `/admin`** (and `POST /api/admin/tools/import/html`, defaulting to `overwrite=false` / `409 TOOL_EXISTS` unless `?overwrite=true` is passed): Drop any standalone `.html` file directly into `/admin` -> **工具管理 -> 收录工具** (or click **粘贴 HTML**). ToolStow automatically extracts `<title>` and `<meta name="description">`, generates a valid `id` slug and `manifest.json`, previews the tool in a live sandboxed iframe, and optionally injects `<link rel="stylesheet" href="/ui/v1/toolstow.css">` + `<script src="/ui/v1/theme.js"></script>` before saving.
 
+> **External JS tip (multi-file tools)**: For packaged directory tools with substantial script logic, large datasets, or embedded HTML/`<script>` text snippets, prefer keeping JavaScript in `assets/<name>.js` (e.g. `assets/app.js`) loaded via `<script src="assets/app.js"></script>` rather than a huge inline `<script>` block — `validate.py` checks all `.js`/`.mjs` files automatically and external files avoid inline `</script>` parser edge cases. *(If the user explicitly asks for a single-file `.html` tool, ignore this recommendation and keep everything inline in a single `.html` file.)*
+
 ### Packaging Limits & Security Rules
 
 - **Max upload size**: 50 MB default (configurable on host via `--max-upload-mb` / `TOOLSTOW_MAX_UPLOAD_MB`).
@@ -157,9 +159,12 @@ Because tools run in an opaque origin (`Origin: null`):
    - `navigator.clipboard.writeText()` may reject inside a sandboxed iframe or non-HTTPS origin. Use `await window.ToolStow.copy(text, fallbackEl)` from `/ui/v1/theme.js`, which handles the 3-tier sandbox-safe fallback (`navigator.clipboard` -> temporary `<textarea>` + `execCommand("copy")` -> optional DOM Range selection) automatically.
 3. **File downloads**
    - Include `"allow-downloads"` in `manifest.json`'s `sandbox` array, and export files via `Blob` + `URL.createObjectURL()` + `<a download="filename">`.
-4. **No calls to ToolStow host admin APIs**
+4. **External links (`<a target="_blank" rel="noopener noreferrer">`)**
+   - Include `"allow-popups"` in `manifest.json`'s `sandbox` array so external links can open in a new tab (without it, browser popup/tab opening is silently blocked).
+   - Add `"allow-popups-to-escape-sandbox"` **only** if the destination site genuinely needs to run without inherited sandbox restrictions (for example, external web apps or interactive pages that break inside an opaque sandbox). Leave it off for ordinary read-only external links.
+5. **No calls to ToolStow host admin APIs**
    - All management endpoints under `/api/admin/*` require authentication and reject `Origin: null` and cross-site requests. Tools must not attempt to mutate host state or embed secrets.
-5. **Safe DOM rendering**
+6. **Safe DOM rendering**
    - Prefer `textContent` and DOM element builders over `innerHTML` to avoid XSS when rendering user input.
 
 ---
@@ -195,7 +200,7 @@ Follow ToolStow's 4-layer separation so plugins feel native to every theme and a
      - `<aside class="ts-wb-aside">` — optional configuration/inspector sidebar panel.
      - `<main class="ts-wb-main">` — primary workspace output, cards, or preview stage.
    - Inside `.ts-wb-main`, wrap grouped card sections in `.ts-collection-group` and multi-card grids in `.ts-collection` (setting a preferred minimum card width via `--ts-collection-min: 380px` on a custom class rather than hardcoding `grid-template-columns`).
-   - **Why semantic slots matter**: Tools declare *what* each slot is and its default preference (`data-aside="left|right"`, `--ts-collection-min`), while active themes can rearrange those slots via `ui.css` (for example, `ascii-probe` moves `.ts-wb-nav` to a left vertical directory rail, `.ts-wb-toolbar` to a bottom `grep>` command bar, and switches `.ts-collection` into a 1-column terminal stream; `rakugaki` turns `.ts-wb-nav` into right-edge vertical notebook index tabs). Do **NOT** hardcode `grid-template-areas` or `position: fixed` on `.ts-wb-*` in your tool's `<style>`.
+   - **Why semantic slots matter**: Tools declare *what* each slot is and its default preference (`data-aside="left|right"`, `--ts-collection-min`), while active themes can rearrange those slots via `ui.css` (for example, `ascii-probe` moves `.ts-wb-nav` to a left vertical directory rail, `.ts-wb-toolbar` to a bottom `grep>` command bar, and switches `.ts-collection` into a 1-column terminal stream; `rakugaki` turns `.ts-wb-nav` into right-edge vertical notebook index tabs). Do **NOT** hardcode `grid-template-areas`, `grid-template-columns`, `grid-template-rows`, `grid-area` / `grid-column` / `grid-row`, `order`, or `position: fixed|absolute` on `.ts-workbench` or `.ts-wb-*` in your tool's CSS.
 3. **Layer 3 — Scoped functional component styles (minimal `<style>`)**:
    - Plugins MAY add a small `<style>` block for tool-specific inner component layout (e.g. `.io-area`, `.preview-stage`, `.color-picker`) using `var(--ts-space-*)` and `var(--ts-*)` tokens.
 4. **Layer 4 — Domain content visuals (FREE domain colors)**:
@@ -311,20 +316,20 @@ Follow ToolStow's 4-layer separation so plugins feel native to every theme and a
 | `.ts-wb-nav` | Direct child slot of `.ts-workbench` (`grid-column: 1 / -1`, wrapping flex row) for `.ts-tabs` or category/view switchers. Themes can dock `.ts-wb-nav` to the left, right, or top via `ui.css`. |
 | `.ts-wb-aside` | Direct child slot of `.ts-workbench` (`minmax(280px, 350px)` sidebar column on `>= 761px`, flex column `gap: 12px`) for form parameters or secondary controls. |
 | `.ts-wb-main` | Direct child slot of `.ts-workbench` (primary content column, flex column `gap: 16px`). |
-| `.ts-collection-group` / `.ts-collection` | Inside `.ts-wb-main`: `.ts-collection-group` stacks a section heading + collection (`gap: 8px`); `.ts-collection` renders a responsive card grid (`repeat(auto-fill, minmax(min(100%, var(--ts-collection-min, 340px)), 1fr))`) or 1-column list when `data-density="list"` or overridden by a terminal theme's `ui.css`. |
+| `.ts-collection-group` / `.ts-collection` | Inside `.ts-wb-main`: `.ts-collection-group` stacks a section heading + collection (`gap: 8px`); `.ts-collection` renders a responsive card grid (`repeat(auto-fill, minmax(min(100%, var(--ts-collection-min, 340px)), 1fr))`), or a 1-column list when `data-density="list"` is set directly on `.ts-collection` (`<div class="ts-collection" data-density="list">`) or overridden by a theme's `ui.css`. |
 | `.ts-page` / `.ts-page-narrow` | Legacy centered flex column (`max-width: 1080px` / `760px`, `padding: 20px`, `gap: 16px`; prefer `.ts-workbench` for new tools). |
 | `.ts-toolbar` | Flex row (`justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px`). |
 | `.ts-row` / `.ts-stack` | `.ts-row`: wrapping horizontal flex (`gap: 8px`); `.ts-stack`: vertical flex (`gap: 12px`). |
 | `.ts-split` | Responsive 2-column grid (`repeat(2, minmax(0, 1fr))`, `gap: 16px`, `align-items: start`); collapses to 1 column at `<= 720px`. |
 | `.ts-grid` | Auto-fill card grid (`repeat(auto-fill, minmax(240px, 1fr))`, `gap: 12px`). |
-| `.ts-card` / `.ts-card-header` | `.ts-card`: surface container (`padding: 16px`, `1px` border, `8px` radius, already flex column `gap: 12px`). `.ts-card-header`: space-between flex row inside a card. |
+| `.ts-card` / `.ts-card-header` | `.ts-card`: surface container (`min-width: 0`, `padding: 16px`, `1px` border, `8px` radius, flex column `gap: 12px`, safe inside CSS Grid columns with long code blocks). `.ts-card-header`: space-between wrapping flex row inside a card. |
 | `.ts-section-title`, `.ts-label`, `.ts-help`, `.ts-muted`, `.ts-empty` | Typography & dashed empty-state box (`13px`/`12px` sizes, muted text colors). |
 | `.ts-standalone-only` / `.ts-standalone-header` | Hidden automatically when embedded (`:root[data-embed="true"]`); renders a bordered `18px` header when opened standalone. |
 | `.ts-btn` (+ variants) | `34px` height button (`28px` with `.ts-btn-sm`). Variants: `.ts-btn-primary` (inverted), `.ts-btn-accent`, `.ts-btn-ghost`, `.ts-btn-danger`. |
 | `.ts-input`, `.ts-textarea`, `.ts-select` | Full-width (`width: 100%`), `34px` height (`textarea` `min-height: 96px`), inherits `color-scheme` for `<input type="date">` and `<select>`. When placing an input beside buttons inside `.ts-row`, override with `width: auto; flex: 1; min-width: 0` or use CSS Grid so it does not wrap buttons to a new line. |
-| `.ts-tabs` / `.ts-tab` | Shrink-to-fit `inline-flex` segmented bar (`34px` total height, matching `.ts-btn`/`.ts-input`): `<div class="ts-tabs"><button class="ts-tab active" type="button">A</button><button class="ts-tab" type="button">B</button></div>`. |
+| `.ts-tabs` / `.ts-tab` | Wrapping segmented bar (`display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 2px`): single row matches `.ts-btn` (`34px`) height and wraps automatically when many category tabs are present. Avoid overriding `display`/`flex-direction` on `.ts-tabs` inside `.ts-wb-nav` so themes can restyle `.ts-wb-nav` into vertical rails cleanly. Example: `<div class="ts-tabs"><button class="ts-tab active" type="button">A</button><button class="ts-tab" type="button">B</button></div>`. |
 | `.ts-badge`, `.ts-badge-mono`, `.ts-kbd` | Compact inline pills (`11px`) and keyboard hint badges. |
-| `.ts-code-row` / `.ts-code` | `.ts-code`: dark code block (`<pre class="ts-code">`). `.ts-code-row`: inline command strip `<div class="ts-code-row"><code>...</code><button class="ts-btn ts-btn-sm">复制</button></div>`. |
+| `.ts-code-row` / `.ts-code` | `.ts-code`: dark code block (`<pre class="ts-code">`, built-in `overflow-x: auto; white-space: pre-wrap; word-break: break-word`). `.ts-code-row`: inline command strip `<div class="ts-code-row"><code>...</code><button class="ts-btn ts-btn-sm">复制</button></div>`. |
 | `.ts-toast` | Managed automatically by `window.ToolStow.toast()` (fixed bottom-right, full-width on mobile). |
 
 > There is no built-in `.ts-alert` or colored badge variant; build inline error/status banners using `var(--ts-danger)`, `var(--ts-danger-bg)`, `var(--ts-danger-border)`, or `var(--ts-success)` in Layer 2 CSS.
