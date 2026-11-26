@@ -2,6 +2,17 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.3.5] - 2026-11-27
+
+### Changed
+- **Tool skill guidance & validator (`skills/toolstow-tool/`).** Documented external `assets/*.js` scripts (with single-HTML exception), `.ts-collection` list density, `.ts-tabs` / `.ts-code` wrapping, and conditional `allow-popups-to-escape-sandbox` usage; extended `validate.py` to scan standalone `.css` files while scoping forbidden `.ts-workbench`/`.ts-wb-*` override checks to subject selectors only.
+- **Deployment & theme docs.** Updated `docs/deployment.md`, `docs/requirements.md`, and `skills/toolstow-theme/SKILL.md` for `Cache-Control: no-store` and Cloudflare Browser Cache TTL configuration.
+- Bumped crate version to `0.3.5` (`toolstow --version`).
+
+### Fixed
+- **Theme-switch asset caching (`src/routes.rs`).** Emit `Cache-Control: no-store` on all theme-dependent public routes (`/`, fallback static files, `/ui/v1/toolstow.css`, `/ui/v1/theme-assets/*`) across `GET`, `HEAD`, and `404` responses, and preserve `Content-Length` on `HEAD` error responses, preventing stale cached scripts/styles after switching themes.
+- **Card grid overflow (`ui/v1/toolstow.css`).** Added `min-width: 0` to `.ts-card` so code blocks and long content shrink properly inside grid tracks.
+
 ## [0.3.4] - 2026-11-26
 
 ### Added
