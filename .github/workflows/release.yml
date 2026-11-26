@@ -164,9 +164,12 @@ jobs:
           health_json="$(curl -fsS http://127.0.0.1:18080/healthz)"
           grep -q '"status":"ok"' <<<"$health_json"
           grep -q "\"version\":\"${expected_ver}\"" <<<"$health_json"
-          curl -fsS http://127.0.0.1:18080/ | grep -qi "<html"
-          curl -fsS http://127.0.0.1:18080/ui/v1/theme.js | grep -q "ToolStow"
-          curl -fsS http://127.0.0.1:18080/ui/v1/host.js | grep -q "ToolStowHost"
+          root_html="$(curl -fsS http://127.0.0.1:18080/)"
+          grep -qi "<html" <<<"$root_html"
+          theme_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/theme.js)"
+          grep -q "ToolStow" <<<"$theme_js"
+          host_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/host.js)"
+          grep -q "ToolStowHost" <<<"$host_js"
           echo "Smoke test passed for $ARCHIVE"
 
       # Windows 打包成 .zip（二进制叫 toolstow.exe）
@@ -357,9 +360,12 @@ jobs:
           uid="$(docker exec toolstow-smoke id -u)"
           test "$uid" = "1000"
 
-          curl -fsS http://127.0.0.1:18080/ | grep -qi "<html"
-          curl -fsS http://127.0.0.1:18080/ui/v1/theme.js | grep -q "ToolStow"
-          curl -fsS http://127.0.0.1:18080/ui/v1/host.js | grep -q "ToolStowHost"
+          root_html="$(curl -fsS http://127.0.0.1:18080/)"
+          grep -qi "<html" <<<"$root_html"
+          theme_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/theme.js)"
+          grep -q "ToolStow" <<<"$theme_js"
+          host_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/host.js)"
+          grep -q "ToolStowHost" <<<"$host_js"
           echo "Docker image smoke test passed."
 
       - name: Log in to GitHub Container Registry

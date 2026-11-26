@@ -50,7 +50,9 @@ jobs:
       - name: Check built-in JS and Python scripts
         run: |
           node --version
-          node --check frontend/app.js admin/admin.js ui/v1/theme.js ui/v1/host.js
+          for f in frontend/app.js admin/admin.js ui/v1/theme.js ui/v1/host.js; do
+            node --check "$f"
+          done
           python3 -m py_compile skills/toolstow-tool/scripts/*.py skills/toolstow-theme/scripts/*.py scripts/bundle_examples.py
 
       # 步骤 7：与 Release 共用同一打包入口，自动发现并校验/打包全部示例主题与工具合集
