@@ -2,6 +2,20 @@
 
 All notable changes to **ToolStow** are documented in this file.
 
+## [0.3.2] - 2026-11-26
+
+### Added
+- **Docker & Docker Compose support (`Dockerfile`, `.dockerignore`, `compose.yml`)**:
+  - Added a non-root (`UID/GID 1000`) `alpine:3.24`-based runtime image with `TOOLSTOW_HOST=0.0.0.0`, `/data` persistence volume (`toolstow_data`), built-in `HEALTHCHECK`, fast CI `prebuilt` multi-arch stage, and local source `builder` stage, plus Compose validation in CI (`.github/workflows/ci.yml`).
+- **Multi-arch GHCR release pipeline (`.github/workflows/release.yml`)**:
+  - Automatically smoke-tests and publishes `linux/amd64` and `linux/arm64` images to `ghcr.io/pyaxy/toolstow` on every `v*` tag (preserving `v`-prefixed tags on prereleases without updating `latest`, and scoping GitHub Release artifact downloads to `release-*`).
+- **Locked health check endpoint (`GET /healthz`)**:
+  - Added non-shadowable `GET /healthz` returning `200 OK`, `Cache-Control: no-store`, and `{"status":"ok","version":"..."}` with integration test coverage.
+
+### Changed
+- Updated `README.md` and `docs/deployment.md` with Docker / Docker Compose installation, volume permissions, and container port configuration guides.
+- Bumped crate version to `0.3.2` (`toolstow --version`).
+
 ## [0.3.1] - 2026-11-26
 
 ### Added
