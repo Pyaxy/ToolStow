@@ -431,4 +431,11 @@ jobs:
             - Docker 镜像（支持 `linux/amd64` / `linux/arm64`）：`docker pull ghcr.io/pyaxy/toolstow:${{ github.ref_name }}`
             - 可选使用 `SHA256SUMS.txt` 校验文件完整性。
             - `toolstow-plugins.zip` 与 `toolstow-themes.zip` 为内置示例合集包，解压后把里面的单个 `.zip` 拖进 `/admin` 上传即可使用。
+
+            ### 如何更新
+            ToolStow 为无数据库单二进制服务，全部持久化数据位于 `data/` 目录（Docker 容器内为 `/data` 卷）与 `.env`，升级不会影响已有工具、主题与配置：
+            - **Docker Compose**：在 `compose.yml` 目录执行 `docker compose pull && docker compose up -d`（如锁定了具体镜像标签，先改为 `${{ github.ref_name }}` 再拉取重建）。
+            - **Docker（`docker run`）**：先 `docker pull ghcr.io/pyaxy/toolstow:${{ github.ref_name }}`，再停止并删除旧容器，使用原有的 `-v`、`-p` 与 `--env-file` 参数重新启动。
+            - **单二进制 / `systemd`**：停止当前服务（如 `sudo systemctl stop toolstow`），解压新版压缩包并直接覆盖旧的 `toolstow`（或 `toolstow.exe`）可执行文件（保留原有 `data/` 与 `.env`），再重新启动即可。
+            - **可选更新内置主题**：若当前启用了仓库示例主题，可解压新版 `toolstow-themes.zip` 后在 `/admin` →「主题管理」覆盖上传。
           files: artifacts/*
