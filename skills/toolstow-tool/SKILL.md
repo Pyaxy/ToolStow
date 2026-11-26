@@ -166,7 +166,7 @@ Because tools run in an opaque origin (`Origin: null`):
 
 ## 6. Shared UI SDK (`/ui/v1/toolstow.css` + `/ui/v1/theme.js`)
 
-ToolStow serves a locked shared UI SDK at `/ui/v1/toolstow.css` and `/ui/v1/theme.js` (also shared by the host shell and `/admin`). When the active theme provides `ui.css`, ToolStow automatically appends it to `/ui/v1/toolstow.css`, reskinning the host and every plugin in unison.
+ToolStow serves a locked shared UI SDK at `/ui/v1/toolstow.css` and `/ui/v1/theme.js`. When the active theme provides `ui.css`, ToolStow automatically appends it to `/ui/v1/toolstow.css`, reskinning the public shell and every plugin that loads it.
 
 ### Mandatory `<head>` Includes
 

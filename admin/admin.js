@@ -1,5 +1,12 @@
 const CLIENT_HEADERS = { "X-ToolStow-Client": "1" };
 const STORAGE_KEY_MODE = "toolstow:mode";
+const STORAGE_KEY_AUTO_UPDATE_CHECK = "toolstow:auto-update-check";
+const STORAGE_KEY_UPDATE_RESULT = "toolstow:update-result";
+const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000;
+const RELEASES_URL = "https://github.com/Pyaxy/ToolStow/releases/tag/";
+const LATEST_RELEASE_API = "https://api.github.com/repos/Pyaxy/ToolStow/releases/latest";
+const STABLE_RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const RUNNING_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 const state = {
   authenticated: false,
@@ -15,6 +22,7 @@ const state = {
   themeDragDepth: 0,
   activeTab: "tools",
   html: null, // active single-HTML ingestion session (see openHtmlDialog)
+  updateCheck: null,
 };
 
 const TAB_NAMES = ["tools", "themes", "settings"];
@@ -23,8 +31,15 @@ const MAX_HTML_BYTES = 8 * 1024 * 1024;
 const SDK_CSS_PATH = "/ui/v1/toolstow.css";
 const DEFAULT_TOOL_ICON = "🛠️";
 const STANDARD_CATEGORIES = ["效率", "开发", "文本", "设计", "数据", "实用工具", "学习", "娱乐"];
+const ADMIN_COLOR_TOKENS = [
+  "--ts-canvas", "--ts-surface", "--ts-surface-hover", "--ts-border", "--ts-border-strong",
+  "--ts-ink", "--ts-ink-secondary", "--ts-ink-muted", "--ts-inverted-bg", "--ts-inverted-bg-hover",
+  "--ts-inverted-ink", "--ts-accent", "--ts-danger", "--ts-danger-bg", "--ts-danger-border",
+  "--ts-success", "--ts-code-bg", "--ts-code-ink",
+];
 
 const els = {
+  themePalette: document.getElementById("theme-palette"),
   bootView: document.getElementById("boot-view"),
   loginView: document.getElementById("login-view"),
   dashboardView: document.getElementById("dashboard-view"),
@@ -106,6 +121,12 @@ const els = {
   settingSiteDesc: document.getElementById("setting-site-desc"),
   saveSettingsBtn: document.getElementById("save-settings-btn"),
   settingsFeedback: document.getElementById("settings-feedback"),
+  currentVersion: document.getElementById("current-version"),
+  checkUpdatesBtn: document.getElementById("check-updates-btn"),
+  autoCheckUpdates: document.getElementById("auto-check-updates"),
+  updateStatus: document.getElementById("update-status"),
+  updateReleaseLink: document.getElementById("update-release-link"),
+  updateAvailableBadge: document.getElementById("update-available-badge"),
 
   // API Reference
   copyCurlBtn: document.getElementById("copy-curl-btn"),
@@ -170,6 +191,7 @@ function isSafeExternalUrl(url) {
 }
 
 function initTheme() {
+  els.themePalette.addEventListener("load", applyPalette);
   const saved = readStorage(STORAGE_KEY_MODE);
   if (saved === "dark" || saved === "light") {
     state.themeMode = saved;
@@ -181,9 +203,31 @@ function initTheme() {
 
 function applyTheme() {
   document.documentElement.dataset.theme = state.themeMode;
+  applyPalette();
   const label = state.themeMode === "dark" ? "亮色" : "暗色";
   els.loginThemeToggle.textContent = label;
   els.dashThemeToggle.textContent = label;
+}
+
+function applyPalette() {
+  const sample = els.themePalette.contentDocument;
+  if (!sample?.styleSheets.length) return;
+
+  // Resolve colors in the script-free sample without applying theme selectors to admin controls.
+  sample.documentElement.dataset.theme = state.themeMode;
+  const computed = els.themePalette.contentWindow.getComputedStyle(sample.documentElement);
+  const style = document.documentElement.style;
+  for (const token of ADMIN_COLOR_TOKENS) {
+    const value = computed.getPropertyValue(token).trim();
+    if (CSS.supports("color", value)) style.setProperty(token, value);
+    else style.removeProperty(token);
+  }
+  style.colorScheme = ["light", "dark"].includes(computed.colorScheme) ? computed.colorScheme : "";
+}
+
+function reloadThemePalette() {
+  if (!els.themePalette) return;
+  els.themePalette.srcdoc = `<!doctype html><link rel="stylesheet" href="/ui/v1/toolstow.css?_ts=${Date.now()}">`;
 }
 
 function toggleTheme() {
@@ -272,8 +316,117 @@ async function apiRequest(url, options = {}) {
   });
 }
 
+function readRecentUpdateResult(now) {
+  try {
+    const result = JSON.parse(readStorage(STORAGE_KEY_UPDATE_RESULT));
+    if (result && Number.isFinite(result.at) && result.at <= now && now - result.at < UPDATE_CHECK_INTERVAL) {
+      if (result.tag === null || (typeof result.tag === "string" && STABLE_RELEASE_TAG.test(result.tag))) {
+        return result;
+      }
+    }
+  } catch {
+    // Ignore malformed cache entries.
+  }
+  return null;
+}
+
+function isNewerRelease(latest, running) {
+  for (let i = 1; i <= 3; i += 1) {
+    const releasePart = BigInt(latest[i]);
+    const runningPart = BigInt(running[i]);
+    if (releasePart !== runningPart) return releasePart > runningPart;
+  }
+  return Boolean(running[4]);
+}
+
+function renderUpdateStatus(message, { kind = "info", tag = null } = {}) {
+  els.updateStatus.textContent = message;
+  els.updateStatus.dataset.kind = kind;
+  els.updateAvailableBadge.hidden = !tag;
+  els.updateReleaseLink.hidden = !tag;
+  if (tag) {
+    els.updateReleaseLink.href = RELEASES_URL + tag;
+  } else {
+    els.updateReleaseLink.removeAttribute("href");
+  }
+}
+
+function renderUpdateResult(tag, running) {
+  if (!tag) {
+    renderUpdateStatus("上次检查更新未成功，请手动重试。", { kind: "error" });
+  } else if (isNewerRelease(tag.match(STABLE_RELEASE_TAG), running)) {
+    renderUpdateStatus(`发现新版本 ${tag}。`, { tag });
+  } else {
+    renderUpdateStatus("未发现更高的正式版本。", { kind: "success" });
+  }
+}
+
+async function checkForUpdates({ manual = false } = {}) {
+  if (!state.authenticated || state.updateCheck) return;
+
+  const controller = new AbortController();
+  const { signal } = controller;
+  state.updateCheck = controller;
+  els.checkUpdatesBtn.disabled = true;
+  renderUpdateStatus("正在读取当前版本…");
+  const timer = window.setTimeout(() => controller.abort(), 8000);
+  let running = null;
+  let fetchStarted = false;
+  let checkAt = 0;
+
+  try {
+    const health = await apiRequest("/healthz", { signal });
+    const version = health.ok ? (await readJsonSafe(health))?.version : null;
+    running = typeof version === "string" ? version.match(RUNNING_VERSION) : null;
+    if (state.updateCheck !== controller) return;
+    if (!running) throw new Error("Invalid running version");
+    els.currentVersion.textContent = `v${version}`;
+
+    const now = Date.now();
+    const cached = manual ? null : readRecentUpdateResult(now);
+    if (cached) {
+      renderUpdateResult(cached.tag, running);
+      return;
+    }
+    if (!manual && !els.autoCheckUpdates.checked) {
+      renderUpdateStatus("尚未检查更新。");
+      return;
+    }
+
+    renderUpdateStatus("正在检查更新…");
+    checkAt = now;
+    fetchStarted = true;
+    const release = await fetch(LATEST_RELEASE_API, { credentials: "omit", cache: "no-store", signal });
+    const tag = release.ok ? (await readJsonSafe(release))?.tag_name : null;
+    if (state.updateCheck !== controller) return;
+    if (typeof tag !== "string" || !STABLE_RELEASE_TAG.test(tag)) throw new Error("Invalid release tag");
+    writeStorage(STORAGE_KEY_UPDATE_RESULT, JSON.stringify({ at: now, tag }));
+    renderUpdateResult(tag, running);
+  } catch {
+    if (state.updateCheck !== controller) return;
+    if (fetchStarted) {
+      writeStorage(STORAGE_KEY_UPDATE_RESULT, JSON.stringify({ at: checkAt || Date.now(), tag: null }));
+    }
+    if (!running) els.currentVersion.textContent = "不可用";
+    const message = running ? "无法检查更新，请稍后重试。" : "无法读取当前版本，请稍后重试。";
+    renderUpdateStatus(message, { kind: "error" });
+  } finally {
+    window.clearTimeout(timer);
+    if (state.updateCheck === controller) {
+      state.updateCheck = null;
+      els.checkUpdatesBtn.disabled = false;
+    }
+  }
+}
+
 function showLoginView(reasonMessage = "") {
   state.authenticated = false;
+  state.updateCheck?.abort();
+  state.updateCheck = null;
+  els.checkUpdatesBtn.disabled = false;
+  els.updateAvailableBadge.hidden = true;
+  els.updateReleaseLink.hidden = true;
+  els.updateReleaseLink.removeAttribute("href");
   els.bootView.hidden = true;
   els.dashboardView.hidden = true;
   els.loginView.hidden = false;
@@ -296,6 +449,8 @@ function showDashboardView() {
   els.loginView.hidden = true;
   els.dashboardView.hidden = false;
   setLoginError("");
+  els.autoCheckUpdates.checked = readStorage(STORAGE_KEY_AUTO_UPDATE_CHECK) === "true";
+  void checkForUpdates();
 }
 
 function handleUnauthorized() {
@@ -1105,6 +1260,9 @@ async function uploadThemeZipFile(file, overwrite = false) {
     setThemeUploadStatus(msg, "success");
     showToast(msg, "info");
     await fetchAdminThemes();
+    if (res.status === 200 && theme && state.themes.some((t) => t.short === theme.short && t.active)) {
+      reloadThemePalette();
+    }
   } catch (err) {
     setThemeUploadStatus(err.message || "主题上传失败", "error");
   } finally {
@@ -1137,6 +1295,7 @@ async function activateTheme(theme, buttonEl) {
 
     showToast(`已切换主题：${theme.name || theme.short}`, "info");
     await fetchAdminThemes();
+    reloadThemePalette();
   } catch (err) {
     showToast(err.message || "切换主题失败", "error", 5000);
     buttonEl.disabled = false;
@@ -1183,6 +1342,9 @@ async function executeDeleteTheme(theme) {
       : `已删除主题：${displayName} (${theme.short})`;
     showToast(msg, "info");
     await fetchAdminThemes();
+    if (theme.active) {
+      reloadThemePalette();
+    }
   } catch (err) {
     showToast(err.message || "删除主题失败", "error", 5000);
   }
@@ -1721,6 +1883,11 @@ function bindEvents() {
 
   els.loginForm.addEventListener("submit", handleLoginSubmit);
   els.logoutBtn.addEventListener("click", handleLogout);
+  els.checkUpdatesBtn.addEventListener("click", () => checkForUpdates({ manual: true }));
+  els.autoCheckUpdates.addEventListener("change", () => {
+    writeStorage(STORAGE_KEY_AUTO_UPDATE_CHECK, String(els.autoCheckUpdates.checked));
+    if (els.autoCheckUpdates.checked) void checkForUpdates();
+  });
 
   // Top-level tabs
   for (const tab of els.mainTabs) {

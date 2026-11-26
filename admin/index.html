@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ToolStow Admin</title>
-  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <link rel="stylesheet" href="/admin/ui.css">
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
 <body>
@@ -95,7 +95,7 @@
       <nav class="main-tabs" role="tablist" aria-label="管理分区">
         <button id="main-tab-tools" class="main-tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-tools" data-tab="tools">工具管理</button>
         <button id="main-tab-themes" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-themes" data-tab="themes" tabindex="-1">主题管理</button>
-        <button id="main-tab-settings" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-settings" data-tab="settings" tabindex="-1">站点设置与 API</button>
+        <button id="main-tab-settings" class="main-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-settings" data-tab="settings" tabindex="-1">站点设置与 API <span id="update-available-badge" class="mono-badge" hidden>有更新</span></button>
       </nav>
 
       <!-- ═══ Tab 1: 工具管理 ═══ -->
@@ -302,6 +302,24 @@
                 <span id="settings-feedback" class="inline-status" role="status" aria-live="polite"></span>
               </div>
             </form>
+
+            <section class="update-settings" aria-labelledby="update-settings-title">
+              <div class="card-header card-header-wrap">
+                <div>
+                  <h3 id="update-settings-title" class="card-title">版本与更新</h3>
+                  <p class="card-desc">当前版本 <code id="current-version">—</code></p>
+                </div>
+                <button id="check-updates-btn" class="btn btn-sm" type="button">检查更新</button>
+              </div>
+              <label class="update-check-option">
+                <input id="auto-check-updates" type="checkbox">
+                打开后台时自动检查（此浏览器每天最多一次）
+              </label>
+              <div class="update-status-row">
+                <span id="update-status" class="inline-status" role="status">尚未检查更新。</span>
+                <a id="update-release-link" class="btn btn-sm" target="_blank" rel="noopener noreferrer" hidden>查看发布说明 ↗</a>
+              </div>
+            </section>
           </section>
 
           <!-- AI API Reference Card -->
@@ -462,6 +480,8 @@
     </div>
   </dialog>
 
+  <iframe id="theme-palette" aria-hidden="true" tabindex="-1" sandbox="allow-same-origin"
+    srcdoc='<!doctype html><link rel="stylesheet" href="/ui/v1/toolstow.css">'></iframe>
   <script type="module" src="/admin/admin.js"></script>
 </body>
 </html>
