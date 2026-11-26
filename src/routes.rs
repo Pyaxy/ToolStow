@@ -139,7 +139,7 @@ struct PatchToolRequest {
     draft: bool,
 }
 
-/// JSON request payload for `POST /api/admin/tools/html`.
+/// JSON request payload for `POST /api/admin/tools/import/html`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadSingleHtmlToolRequest {
@@ -160,12 +160,13 @@ struct UploadSingleHtmlToolRequest {
     inject_sdk: bool,
 }
 
-/// Optional query parameters accepted by `POST /api/admin/tools/upload` and
-/// `POST /api/admin/themes/upload`.
+/// Optional query parameters accepted by `POST /api/admin/tools/upload`,
+/// `POST /api/admin/tools/import/html`, and `POST /api/admin/themes/upload`.
 #[derive(Debug, Default, Deserialize)]
 struct UploadOverwriteQuery {
     /// When `false`, existing tools/themes with the same identifier return `409 Conflict`
-    /// instead of overwriting. Defaults to `true` when omitted.
+    /// instead of overwriting. Defaults to `true` for `.zip` uploads and `false` for
+    /// single-HTML imports when omitted.
     overwrite: Option<bool>,
 }
 
@@ -495,7 +496,10 @@ pub fn build_router(state: AppState) -> Router {
 
     let upload_routes = Router::new()
         .route("/api/admin/tools/upload", post(upload_tool))
-        .route("/api/admin/tools/html", post(upload_single_html_tool))
+        .route(
+            "/api/admin/tools/import/html",
+            post(upload_single_html_tool),
+        )
         .route("/api/admin/themes/upload", post(upload_theme))
         .layer(DefaultBodyLimit::max(upload_body_limit));
 
@@ -1487,18 +1491,19 @@ async fn upload_tool(
     }
 }
 
-/// `POST /api/admin/tools/html`: validates and atomically installs or updates a standalone
+/// `POST /api/admin/tools/import/html`: validates and atomically installs or updates a standalone
 /// single-file HTML tool (Admin Session OR AI Bearer API key).
 ///
-/// Supports optional `?overwrite=false` to reject existing tool IDs with `409 Conflict`
-/// (`TOOL_EXISTS`) and both `existing` / `incoming` metadata for confirmation dialogs.
+/// Defaults to safe create (`overwrite = false`), rejecting existing tool IDs with `409 Conflict`
+/// (`TOOL_EXISTS`) and both `existing` / `incoming` metadata without modifying existing files on
+/// disk. Pass `?overwrite=true` to explicitly replace an existing tool.
 async fn upload_single_html_tool(
     _auth: AdminToolsAuth,
     State(state): State<AppState>,
     Query(query): Query<UploadOverwriteQuery>,
     payload: Result<Json<UploadSingleHtmlToolRequest>, JsonRejection>,
 ) -> Result<Response, AppError> {
-    let allow_overwrite = query.overwrite.unwrap_or(true);
+    let allow_overwrite = query.overwrite.unwrap_or(false);
     let max_upload_bytes = state.config.max_upload_bytes();
     let max_upload_mb = state.config.max_upload_mb;
 
