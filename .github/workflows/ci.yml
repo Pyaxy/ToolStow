@@ -94,4 +94,6 @@ jobs:
           fi
 
       - name: Verify mobile & landscape theme layouts
-        run: NODE_PATH=/tmp/pw/node_modules node scripts/verify_theme_mobile.cjs --binary target/debug/toolstow
+        run: |
+          NODE_PATH=/tmp/pw/node_modules node scripts/verify_theme_mobile.cjs --self-test
+          NODE_PATH=/tmp/pw/node_modules node scripts/verify_theme_mobile.cjs --binary target/debug/toolstow

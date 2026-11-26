@@ -788,8 +788,14 @@ a {
   flex-shrink: 0;
 }
 
-.rk-details-toggle {
+.rk-details-toggle,
+.rk-mobile-search-toggle {
   display: none;
+}
+
+.rk-mobile-search-toggle[aria-expanded="true"] {
+  background: var(--rk-highlight);
+  color: #1f1c18;
 }
 
 .rk-details-panel {
@@ -1150,7 +1156,22 @@ a {
 }
 
 @media (max-width: 760px) {
-  .rk-shell[data-view="tool"] .rk-search-wrap {
+  .rk-shell[data-view="tool"]:not([data-search-open="true"]) .rk-search-wrap {
+    display: none;
+  }
+
+  .rk-shell[data-view="tool"][data-search-open="true"] .rk-topbar {
+    flex-wrap: wrap;
+    padding-bottom: 8px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-mobile-search-toggle {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 420px) {
+  .rk-shell[data-view="tool"] .rk-tool-icon-lg {
     display: none;
   }
 }

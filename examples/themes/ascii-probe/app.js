@@ -9,6 +9,7 @@ const els = {
   sidebar: document.getElementById("sidebar"),
   sidebarBackdrop: document.getElementById("sidebar-backdrop"),
   searchInput: document.getElementById("search-input"),
+  mobileSearchToggle: document.getElementById("mobile-search-toggle"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
   statusBanner: document.getElementById("status-banner"),
@@ -79,8 +80,31 @@ function clearErrorBanner() {
   }
 }
 
+function setMobileSearchOpen(open, { focus = false, restoreFocus = false } = {}) {
+  if (!els.shell) return;
+  const isOpen = Boolean(open);
+  if (isOpen) {
+    setDetailsOpen(false);
+    els.shell.dataset.searchOpen = "true";
+  } else {
+    delete els.shell.dataset.searchOpen;
+  }
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.setAttribute("aria-expanded", String(isOpen));
+  }
+  if (isOpen && focus) {
+    els.searchInput.focus();
+    els.searchInput.select();
+  } else if (!isOpen && restoreFocus && els.mobileSearchToggle && els.mobileSearchToggle.offsetParent !== null) {
+    els.mobileSearchToggle.focus();
+  }
+}
+
 function setDetailsOpen(open, { restoreFocus = false } = {}) {
   const isOpen = Boolean(open);
+  if (isOpen) {
+    setMobileSearchOpen(false);
+  }
   els.tuiDetailsPanel.hidden = !isOpen;
   els.toolDetailsToggle.setAttribute("aria-expanded", String(isOpen));
   if (!isOpen && restoreFocus && !els.toolDetailsToggle.hidden) {
@@ -468,6 +492,7 @@ function renderState(state) {
   if (showingTool) {
     if (lastSelectedToolId !== state.selectedTool.id) {
       setDetailsOpen(false);
+      setMobileSearchOpen(false);
     }
     lastSelectedToolId = state.selectedTool.id;
     els.emptyState.hidden = true;
@@ -476,6 +501,7 @@ function renderState(state) {
   } else {
     lastSelectedToolId = null;
     setDetailsOpen(false);
+    setMobileSearchOpen(false);
     els.toolView.hidden = true;
     els.emptyState.hidden = false;
     updateEmptyState(state);
@@ -486,6 +512,7 @@ function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
     setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
     closeMobileSidebar();
   });
@@ -505,14 +532,23 @@ function bindEvents() {
 
   els.mobileBackBtn.addEventListener("click", () => {
     setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
     closeMobileSidebar();
   });
 
   els.closeToolBtn.addEventListener("click", () => {
     setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
+
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.addEventListener("click", () => {
+      const next = els.shell?.dataset.searchOpen !== "true";
+      setMobileSearchOpen(next, { focus: next });
+    });
+  }
 
   els.toolDetailsToggle.addEventListener("click", () => {
     if (els.sidebar.classList.contains("open")) {
@@ -567,6 +603,9 @@ function bindEvents() {
       if (els.searchInput.value) {
         els.searchInput.value = "";
         host.setFilters({ q: "" });
+      } else if (els.shell?.dataset.view === "tool" && els.shell?.dataset.searchOpen === "true") {
+        e.preventDefault();
+        setMobileSearchOpen(false, { restoreFocus: true });
       } else {
         els.searchInput.blur();
       }
@@ -588,8 +627,15 @@ function bindEvents() {
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      els.searchInput.focus();
-      els.searchInput.select();
+      const searchHidden =
+        els.shell?.dataset.view === "tool" &&
+        (els.searchInput.offsetParent === null || els.searchInput.getBoundingClientRect().width === 0);
+      if (searchHidden) {
+        setMobileSearchOpen(true, { focus: true });
+      } else {
+        els.searchInput.focus();
+        els.searchInput.select();
+      }
     }
   });
 

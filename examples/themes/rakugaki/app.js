@@ -5,6 +5,7 @@ const els = {
   brandLink: document.getElementById("brand-link"),
   brandTitle: document.getElementById("brand-title"),
   searchInput: document.getElementById("search-input"),
+  mobileSearchToggle: document.getElementById("mobile-search-toggle"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
   statusBanner: document.getElementById("status-banner"),
@@ -70,8 +71,31 @@ function clearErrorBanner() {
   }
 }
 
+function setMobileSearchOpen(open, { focus = false, restoreFocus = false } = {}) {
+  if (!els.shell) return;
+  const isOpen = Boolean(open);
+  if (isOpen) {
+    setDetailsOpen(false);
+    els.shell.dataset.searchOpen = "true";
+  } else {
+    delete els.shell.dataset.searchOpen;
+  }
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.setAttribute("aria-expanded", String(isOpen));
+  }
+  if (isOpen && focus) {
+    els.searchInput.focus();
+    els.searchInput.select();
+  } else if (!isOpen && restoreFocus && els.mobileSearchToggle && els.mobileSearchToggle.offsetParent !== null) {
+    els.mobileSearchToggle.focus();
+  }
+}
+
 function setDetailsOpen(open, { restoreFocus = false } = {}) {
   const isOpen = Boolean(open);
+  if (isOpen) {
+    setMobileSearchOpen(false);
+  }
   els.toolDetailsPanel.hidden = !isOpen;
   els.toolDetailsToggle.setAttribute("aria-expanded", String(isOpen));
   if (!isOpen && restoreFocus && !els.toolDetailsToggle.hidden) {
@@ -342,6 +366,7 @@ function renderActiveToolHeader(tool, state) {
 
 function openTool(id) {
   setDetailsOpen(false);
+  setMobileSearchOpen(false);
   searchToolId = null;
   host.selectTool(id);
 }
@@ -380,6 +405,7 @@ function renderState(state) {
   if (showingTool) {
     if (lastSelectedToolId !== state.selectedTool.id) {
       setDetailsOpen(false);
+      setMobileSearchOpen(false);
     }
     lastSelectedToolId = state.selectedTool.id;
     renderActiveToolHeader(state.selectedTool, state);
@@ -393,11 +419,13 @@ function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
     setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
 
   els.backToNotebookBtn.addEventListener("click", () => {
     setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
 
@@ -411,6 +439,13 @@ function bindEvents() {
   };
   els.quickSwitcher.addEventListener("change", handleSwitcherChange);
   els.detailsQuickSwitcher.addEventListener("change", handleSwitcherChange);
+
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.addEventListener("click", () => {
+      const next = els.shell?.dataset.searchOpen !== "true";
+      setMobileSearchOpen(next, { focus: next });
+    });
+  }
 
   els.toolDetailsToggle.addEventListener("click", () => {
     setDetailsOpen(els.toolDetailsPanel.hidden);
@@ -446,6 +481,9 @@ function bindEvents() {
         searchToolId = null;
         els.searchInput.value = "";
         host.setFilters({ q: "" });
+      } else if (els.shell?.dataset.view === "tool" && els.shell?.dataset.searchOpen === "true") {
+        e.preventDefault();
+        setMobileSearchOpen(false, { restoreFocus: true });
       } else {
         els.searchInput.blur();
       }
@@ -460,8 +498,15 @@ function bindEvents() {
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      els.searchInput.focus();
-      els.searchInput.select();
+      const searchHidden =
+        els.shell?.dataset.view === "tool" &&
+        (els.searchInput.offsetParent === null || els.searchInput.getBoundingClientRect().width === 0);
+      if (searchHidden) {
+        setMobileSearchOpen(true, { focus: true });
+      } else {
+        els.searchInput.focus();
+        els.searchInput.select();
+      }
     }
   });
 
@@ -471,6 +516,7 @@ function bindEvents() {
 
   els.clearFiltersBtn.addEventListener("click", () => {
     els.searchInput.value = "";
+    setMobileSearchOpen(false);
     if (searchToolId) {
       searchToolId = null;
       host.setFilters({ q: "" });

@@ -744,8 +744,15 @@ button.tui-tag-chip:hover {
   flex-shrink: 0;
 }
 
-.tui-details-toggle {
+.tui-details-toggle,
+.tui-mobile-search-toggle {
   display: none;
+}
+
+.tui-mobile-search-toggle[aria-expanded="true"] {
+  background: var(--ts-accent);
+  border-color: var(--ts-accent);
+  color: var(--ts-inverted-ink);
 }
 
 .tui-details-panel {
@@ -1107,8 +1114,29 @@ button.tui-tag-chip:hover {
 }
 
 @media (max-width: 780px) {
-  .tui-shell[data-view="tool"] .tui-search-wrap {
+  .tui-shell[data-view="tool"]:not([data-search-open="true"]) .tui-search-wrap {
     display: none;
+  }
+
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+  }
+
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-search-wrap {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-sidebar,
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-backdrop {
+    top: 80px;
+  }
+
+  .tui-shell[data-view="tool"] .tui-mobile-search-toggle {
+    display: inline-flex;
   }
 }
 

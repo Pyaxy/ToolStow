@@ -65,6 +65,7 @@ function printUsage() {
       "  --themes <csv>            Comma-separated theme shorts (default: default + examples/themes/*)",
       "  --screenshots-dir <dir>   Optional directory to save per-theme/viewport screenshots",
       "  --chrome <path>           Optional Chrome/Chromium executable path override",
+      "  --self-test               Run built-in negative assertions (no toolstow server needed)",
       "  -h, --help                Show this help message",
     ].join("\n")
   );
@@ -76,6 +77,7 @@ function parseArgs(argv) {
     themes: null,
     screenshotsDir: null,
     chrome: null,
+    selfTest: false,
     help: false,
   };
 
@@ -83,6 +85,8 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "-h" || arg === "--help") {
       opts.help = true;
+    } else if (arg === "--self-test") {
+      opts.selfTest = true;
     } else if (arg === "--binary") {
       opts.binary = path.resolve(requireArgValue(argv, ++i, "--binary"));
     } else if (arg.startsWith("--binary=")) {
@@ -536,6 +540,66 @@ async function clickStressToolInCatalog(page) {
   throw new Error(`Could not find clickable catalog entry for '${STRESS_TOOL_ID}'`);
 }
 
+function measureIframeHostMetrics() {
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const docEl = document.documentElement;
+  const scrollWidth = Math.max(docEl.scrollWidth, document.body ? document.body.scrollWidth : 0);
+  const iframe = document.querySelector("#iframe-host iframe") || document.querySelector("iframe");
+  if (!iframe) {
+    return { found: false, vw, vh, scrollWidth };
+  }
+
+  const rect = iframe.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let right = Math.min(vw, rect.right);
+  let top = Math.max(0, rect.top);
+  let bottom = Math.min(vh, rect.bottom);
+
+  const clipModes = new Set(["hidden", "clip", "scroll", "auto"]);
+  let cur = iframe.parentElement;
+  while (cur && cur !== document.documentElement) {
+    const cs = getComputedStyle(cur);
+    const parentRect = cur.getBoundingClientRect();
+    if (clipModes.has(cs.overflowX)) {
+      const clipLeft = parentRect.left + cur.clientLeft;
+      const clipRight = clipLeft + cur.clientWidth;
+      left = Math.max(left, clipLeft);
+      right = Math.min(right, clipRight);
+    }
+    if (clipModes.has(cs.overflowY)) {
+      const clipTop = parentRect.top + cur.clientTop;
+      const clipBottom = clipTop + cur.clientHeight;
+      top = Math.max(top, clipTop);
+      bottom = Math.min(bottom, clipBottom);
+    }
+    if (cs.position === "fixed") {
+      break;
+    }
+    cur = cur.parentElement;
+  }
+
+  const visibleWidth = Math.max(0, right - left);
+  const visibleHeight = Math.max(0, bottom - top);
+
+  return {
+    found: true,
+    vw,
+    vh,
+    scrollWidth,
+    rect: {
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.right,
+      width: rect.width,
+      height: rect.height,
+    },
+    visibleHeight,
+    visibleWidth,
+  };
+}
+
 async function waitForAndCheckIframe(page, viewport) {
   const iframeLoc = page.locator("#iframe-host iframe, iframe").first();
   await iframeLoc.waitFor({ state: "visible", timeout: 10000 });
@@ -561,35 +625,7 @@ async function waitForAndCheckIframe(page, viewport) {
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   );
 
-  const hostMetrics = await page.evaluate(() => {
-    const vh = window.innerHeight;
-    const vw = window.innerWidth;
-    const docEl = document.documentElement;
-    const scrollWidth = Math.max(docEl.scrollWidth, document.body ? document.body.scrollWidth : 0);
-    const iframe = document.querySelector("#iframe-host iframe") || document.querySelector("iframe");
-    if (!iframe) {
-      return { found: false, vw, vh, scrollWidth };
-    }
-    const rect = iframe.getBoundingClientRect();
-    const visibleHeight = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
-    const visibleWidth = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
-    return {
-      found: true,
-      vw,
-      vh,
-      scrollWidth,
-      rect: {
-        top: rect.top,
-        bottom: rect.bottom,
-        left: rect.left,
-        right: rect.right,
-        width: rect.width,
-        height: rect.height,
-      },
-      visibleHeight,
-      visibleWidth,
-    };
-  });
+  const hostMetrics = await page.evaluate(measureIframeHostMetrics);
 
   if (!hostMetrics.found) {
     throw new Error("Iframe disappeared before geometry check");
@@ -692,6 +728,11 @@ async function verifyDetailsPopoverIfPresent(page, viewport) {
   await toggle.click();
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
+  const ariaExpandedOpen = await toggle.getAttribute("aria-expanded");
+  if (ariaExpandedOpen !== "true") {
+    failures.push(`details toggle aria-expanded expected 'true' after open, got '${ariaExpandedOpen}'`);
+  }
+
   const afterOpen = await page.evaluate((controlsId) => {
     const vw = window.innerWidth;
     const scrollWidth = Math.max(
@@ -722,7 +763,9 @@ async function verifyDetailsPopoverIfPresent(page, viewport) {
       `details popover caused horizontal overflow (${afterOpen.scrollWidth}px > ${afterOpen.vw}px + 1)`
     );
   }
-  if (afterOpen.popRect && (afterOpen.popRect.left < -1 || afterOpen.popRect.right > viewport.width + 1)) {
+  if (!afterOpen.popRect || afterOpen.popRect.width <= 0 || afterOpen.popRect.height <= 0) {
+    failures.push("details popover did not become visible after clicking toggle");
+  } else if (afterOpen.popRect.left < -1 || afterOpen.popRect.right > viewport.width + 1) {
     failures.push(
       `details popover clipped outside viewport (${JSON.stringify(afterOpen.popRect)})`
     );
@@ -730,6 +773,11 @@ async function verifyDetailsPopoverIfPresent(page, viewport) {
 
   await page.keyboard.press("Escape");
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+  const ariaExpandedClosed = await toggle.getAttribute("aria-expanded");
+  if (ariaExpandedClosed !== "false") {
+    failures.push(`details toggle aria-expanded expected 'false' after Escape, got '${ariaExpandedClosed}'`);
+  }
 
   const stillOpen = await page.evaluate((controlsId) => {
     const popSelectors = [
@@ -751,6 +799,74 @@ async function verifyDetailsPopoverIfPresent(page, viewport) {
 
   if (stillOpen) {
     failures.push("details popover did not close on Escape");
+  }
+
+  return failures;
+}
+
+async function verifyMobileSearchIfPresent(page, viewport) {
+  const searchToggle = await findVisibleLocator(page, ['[data-role="tool-search-toggle"]']);
+  if (!searchToggle) {
+    return [];
+  }
+
+  const failures = [];
+  await page.keyboard.press("Control+k");
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+  const openState = await page.evaluate(() => {
+    const input = document.getElementById("search-input");
+    const vw = window.innerWidth;
+    const scrollWidth = Math.max(
+      document.documentElement.scrollWidth,
+      document.body ? document.body.scrollWidth : 0
+    );
+    const toggle = document.querySelector('[data-role="tool-search-toggle"]');
+    const rect = input ? input.getBoundingClientRect() : null;
+    const iframe = document.querySelector("#iframe-host iframe") || document.querySelector("iframe");
+    return {
+      vw,
+      scrollWidth,
+      expanded: toggle ? toggle.getAttribute("aria-expanded") : null,
+      visible: Boolean(input && input.offsetParent !== null && rect && rect.width > 0 && rect.height > 0),
+      focused: Boolean(document.activeElement && document.activeElement.id === "search-input"),
+      hasIframe: Boolean(iframe),
+    };
+  });
+
+  if (openState.expanded !== "true") {
+    failures.push(`mobile search toggle aria-expanded expected 'true' after Ctrl+K, got '${openState.expanded}'`);
+  }
+  if (!openState.visible || !openState.focused) {
+    failures.push(`Ctrl+K in mobile workspace did not focus #search-input (state=${JSON.stringify(openState)})`);
+  }
+  if (openState.scrollWidth > openState.vw + 1) {
+    failures.push(`open mobile search bar caused horizontal overflow (${openState.scrollWidth}px > ${openState.vw}px + 1)`);
+  }
+  if (!openState.hasIframe) {
+    failures.push("opening mobile search unmounted the tool iframe");
+  }
+
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+  const closedState = await page.evaluate(() => {
+    const input = document.getElementById("search-input");
+    const toggle = document.querySelector('[data-role="tool-search-toggle"]');
+    const rect = input ? input.getBoundingClientRect() : null;
+    const iframe = document.querySelector("#iframe-host iframe") || document.querySelector("iframe");
+    return {
+      expanded: toggle ? toggle.getAttribute("aria-expanded") : null,
+      visible: Boolean(input && input.offsetParent !== null && rect && rect.width > 0 && rect.height > 0),
+      hasIframe: Boolean(iframe),
+    };
+  });
+
+  if (closedState.expanded !== "false" || closedState.visible) {
+    failures.push(`Escape did not collapse mobile search bar (state=${JSON.stringify(closedState)})`);
+  }
+  if (!closedState.hasIframe) {
+    failures.push("closing mobile search unmounted the tool iframe");
   }
 
   return failures;
@@ -801,6 +917,9 @@ async function runThemeViewportCheck(page, baseUrl, theme, viewport, screenshots
     const wsCheck = await waitForAndCheckIframe(page, viewport);
     workspaceMetrics = wsCheck.hostMetrics;
     failures.push(...wsCheck.failures.map((f) => `[workspace] ${f}`));
+
+    const searchFailures = await verifyMobileSearchIfPresent(page, viewport);
+    failures.push(...searchFailures.map((f) => `[workspace] ${f}`));
 
     const popoverFailures = await verifyDetailsPopoverIfPresent(page, viewport);
     failures.push(...popoverFailures.map((f) => `[workspace] ${f}`));
@@ -890,6 +1009,48 @@ function formatTable(results) {
   return [pad(headers), sep, ...rows.map(pad)].join("\n");
 }
 
+async function runSelfTests(playwright, chromePath) {
+  let browser = null;
+  try {
+    browser = await playwright.chromium.launch({
+      headless: true,
+      executablePath: chromePath,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    const context = await browser.newContext({ viewport: { width: 393, height: 641 } });
+    const page = await context.newPage();
+
+    // Self-test 1: parent overflow:hidden container clipping a tall 450px iframe to 80px.
+    await page.setContent(`<!DOCTYPE html><html><body style="margin:0">
+      <div id="iframe-host" style="height:80px;overflow:hidden;border:2px solid #000;box-sizing:border-box;">
+        <iframe style="width:100%;height:450px;border:0;display:block"></iframe>
+      </div></body></html>`);
+    const clipped = await page.evaluate(measureIframeHostMetrics);
+    if (!clipped.found || clipped.visibleHeight > 80 || clipped.rect.height < 400) {
+      throw new Error(
+        `Self-test 1 failed: expected clipped visibleHeight <= 80 for 450px iframe, got ${JSON.stringify(clipped)}`
+      );
+    }
+    console.log(`[self-test] PASS clipped iframe detected: rect=${clipped.rect.height}px -> visible=${clipped.visibleHeight}px`);
+
+    // Self-test 2: permanently hidden details panel fails verifyDetailsPopoverIfPresent.
+    await page.setContent(`<!DOCTYPE html><html><body style="margin:0">
+      <button id="tool-details-toggle" data-role="tool-details-toggle" aria-expanded="false" aria-controls="broken-pop">详情</button>
+      <div id="broken-pop" style="display:none">Hidden</div>
+    </body></html>`);
+    const popFailures = await verifyDetailsPopoverIfPresent(page, { width: 393, height: 641 });
+    if (popFailures.length === 0) {
+      throw new Error("Self-test 2 failed: permanently hidden details panel was not caught");
+    }
+    console.log(`[self-test] PASS broken details panel caught (${popFailures.join("; ")})`);
+    return 0;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+  }
+}
+
 async function main() {
   let opts;
   try {
@@ -920,6 +1081,11 @@ async function main() {
     return 2;
   }
 
+  const chromePath = detectChromeExecutable(opts.chrome);
+  if (opts.selfTest) {
+    return runSelfTests(playwright, chromePath);
+  }
+
   if (!fs.existsSync(opts.binary)) {
     console.error(`ERROR: toolstow binary not found at: ${opts.binary}`);
     return 2;
@@ -934,7 +1100,6 @@ async function main() {
     return 2;
   }
 
-  const chromePath = detectChromeExecutable(opts.chrome);
   const tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "toolstow-mobile-verify-"));
   let serverProc = null;
   let browser = null;
@@ -945,11 +1110,21 @@ async function main() {
     const port = await getFreePort();
     const baseUrl = `http://127.0.0.1:${port}`;
 
+    // Strip any inherited TOOLSTOW_* env vars and run in tempDataDir so a local `.env` cannot shadow test paths.
+    const childEnv = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (!/^TOOLSTOW_/i.test(k)) {
+        childEnv[k] = v;
+      }
+    }
+    childEnv.TOOLSTOW_ADMIN_KEY = ADMIN_KEY;
+
     serverProc = spawn(
       opts.binary,
       ["--host", "127.0.0.1", "--port", String(port), "--data-dir", tempDataDir],
       {
-        env: { ...process.env, TOOLSTOW_ADMIN_KEY: ADMIN_KEY },
+        cwd: tempDataDir,
+        env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
       }
     );

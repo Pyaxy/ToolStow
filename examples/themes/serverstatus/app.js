@@ -6,6 +6,7 @@ const els = {
   brandTitle: document.getElementById("brand-title"),
   siteDescPill: document.getElementById("site-desc-pill"),
   searchInput: document.getElementById("search-input"),
+  mobileSearchToggle: document.getElementById("mobile-search-toggle"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
   statusBanner: document.getElementById("status-banner"),
@@ -53,9 +54,36 @@ function isToolDetailsOpen() {
   return Boolean(els.toolDetailsPanel && !els.toolDetailsPanel.hidden);
 }
 
+function isMobileSearchOpen() {
+  return els.shell?.dataset.searchOpen === "true";
+}
+
+function setMobileSearchOpen(open, { focus = false, restoreFocus = false } = {}) {
+  if (!els.shell) return;
+  const next = Boolean(open);
+  if (next) {
+    closeToolDetails();
+    els.shell.dataset.searchOpen = "true";
+  } else {
+    delete els.shell.dataset.searchOpen;
+  }
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.setAttribute("aria-expanded", next ? "true" : "false");
+  }
+  if (next && focus) {
+    els.searchInput.focus();
+    els.searchInput.select();
+  } else if (!next && restoreFocus && els.mobileSearchToggle && els.mobileSearchToggle.offsetParent !== null) {
+    els.mobileSearchToggle.focus();
+  }
+}
+
 function setToolDetailsOpen(open, { returnFocus = false } = {}) {
   if (!els.toolDetailsPanel || !els.toolDetailsToggle) return;
   const next = Boolean(open);
+  if (next) {
+    setMobileSearchOpen(false);
+  }
   els.toolDetailsPanel.hidden = !next;
   if (els.toolDetailsBackdrop) {
     els.toolDetailsBackdrop.hidden = !next;
@@ -430,6 +458,7 @@ function renderActiveToolHeader(tool, state) {
 
 function openTool(id) {
   closeToolDetails();
+  setMobileSearchOpen(false);
   searchToolId = null;
   host.selectTool(id);
 }
@@ -458,6 +487,9 @@ function renderState(state) {
   if (!showingTool || state.selectedId !== lastActiveToolId) {
     closeToolDetails();
   }
+  if (showingTool && state.selectedId !== lastActiveToolId) {
+    setMobileSearchOpen(false);
+  }
   lastActiveToolId = showingTool ? state.selectedId : null;
 
   els.directoryView.hidden = showingTool;
@@ -470,11 +502,13 @@ function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
     closeToolDetails();
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
 
   els.backToListBtn.addEventListener("click", () => {
     closeToolDetails();
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
 
@@ -488,6 +522,13 @@ function bindEvents() {
   els.quickSwitcher.addEventListener("change", handleQuickSwitch);
   if (els.detailsQuickSwitcher) {
     els.detailsQuickSwitcher.addEventListener("change", handleQuickSwitch);
+  }
+
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.addEventListener("click", () => {
+      const next = !isMobileSearchOpen();
+      setMobileSearchOpen(next, { focus: next });
+    });
   }
 
   if (els.toolDetailsToggle) {
@@ -548,6 +589,9 @@ function bindEvents() {
         searchToolId = null;
         els.searchInput.value = "";
         host.setFilters({ q: "" });
+      } else if (els.shell?.dataset.view === "tool" && isMobileSearchOpen()) {
+        e.preventDefault();
+        setMobileSearchOpen(false, { restoreFocus: true });
       } else {
         els.searchInput.blur();
       }
@@ -557,8 +601,15 @@ function bindEvents() {
   window.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      els.searchInput.focus();
-      els.searchInput.select();
+      const searchHidden =
+        els.shell?.dataset.view === "tool" &&
+        (els.searchInput.offsetParent === null || els.searchInput.getBoundingClientRect().width === 0);
+      if (searchHidden) {
+        setMobileSearchOpen(true, { focus: true });
+      } else {
+        els.searchInput.focus();
+        els.searchInput.select();
+      }
     }
   });
 
@@ -568,6 +619,7 @@ function bindEvents() {
 
   els.clearFiltersBtn.addEventListener("click", () => {
     els.searchInput.value = "";
+    setMobileSearchOpen(false);
     if (searchToolId) {
       searchToolId = null;
       host.setFilters({ q: "" });
