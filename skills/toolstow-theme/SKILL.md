@@ -181,6 +181,8 @@ ToolStow serves its shared design stylesheet at **`GET /ui/v1/toolstow.css`** (`
 
 Because both your shell and every ToolStow plugin load `/ui/v1/toolstow.css`, defining your design tokens and `.ts-*` overrides in `ui.css` reskins **every installed plugin automatically** with zero plugin modifications.
 
+The admin console uses its built-in layout and controls. It reads the active theme's shared color tokens and color scheme in isolation, so shell and tool selectors stay out of `/admin`.
+
 ### 5.1 Complete `--ts-*` Design Token Catalog
 
 Define `:root` (Light mode, `color-scheme: light`) and `:root[data-theme="dark"]` (Dark mode, `color-scheme: dark`). For **dark-only themes** (such as CRT/terminal themes like `phosphor`), set `color-scheme: dark` and your dark palette on **both** `:root` and `:root[data-theme="dark"]` in `ui.css` so standalone plugins opened at `/t/{id}/` also resolve dark mode and your theme's computed `--ts-accent` automatically:

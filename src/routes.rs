@@ -767,10 +767,13 @@ async fn serve_admin_asset(
     serve_embedded_admin_asset(rel_path)
 }
 
-/// Serves a single file from embedded [`AdminAssets`].
+/// Serves built-in admin assets, including the shared UI defaults without theme overrides.
 fn serve_embedded_admin_asset(path: &str) -> Result<Response, AppError> {
-    let asset = AdminAssets::get(path)
-        .ok_or_else(|| AppError::not_found(format!("admin asset not found: /admin/{path}")))?;
+    let asset = match path {
+        "ui.css" => UiAssets::get("v1/toolstow.css"),
+        _ => AdminAssets::get(path),
+    }
+    .ok_or_else(|| AppError::not_found(format!("admin asset not found: /admin/{path}")))?;
 
     let content_type = content_type_for_path(Path::new(path));
     let cache_control = if path == "index.html" {

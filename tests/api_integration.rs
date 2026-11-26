@@ -340,7 +340,13 @@ async fn read_only_fail_closed_mode_and_draft_visibility() {
     assert_eq!(session["adminEnabled"], false);
 
     // /admin and /admin/* -> 404 when admin disabled
-    for uri in ["/admin", "/admin/", "/admin/admin.js", "/admin/admin.css"] {
+    for uri in [
+        "/admin",
+        "/admin/",
+        "/admin/admin.js",
+        "/admin/admin.css",
+        "/admin/ui.css",
+    ] {
         let resp = env
             .app
             .clone()
@@ -1544,7 +1550,7 @@ async fn loads_and_serves_real_bundled_example_tools() {
 
 #[tokio::test]
 async fn locked_ui_v1_assets_and_theme_ui_css_cascade_override() {
-    let env = build_test_env(None, None, 50, false, false);
+    let env = build_test_env(Some(ADMIN_KEY), None, 50, false, false);
 
     // 1. GET & HEAD /ui/v1/toolstow.css
     let resp = env
@@ -1749,6 +1755,22 @@ async fn locked_ui_v1_assets_and_theme_ui_css_cascade_override() {
     assert!(combined_css.contains("/* --- ToolStow Custom Theme Override (data/theme/ui.css) --- */"));
     assert!(combined_css.contains("--ts-accent: #7c3aed;"));
     assert!(combined_css.ends_with(override_css));
+
+    // Admin uses the embedded defaults with the same active theme installed.
+    let admin_css = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/ui.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_css.status(), StatusCode::OK);
+    assert_eq!(admin_css.headers()[CONTENT_TYPE], "text/css; charset=utf-8");
+    assert_eq!(read_body_bytes(admin_css).await, base_css.as_bytes());
 
     fs::remove_file(env.theme_dir.join("ui.css")).unwrap();
 
