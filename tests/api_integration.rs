@@ -1438,8 +1438,8 @@ async fn security_matrix_zip_slip_oversized_csrf_and_sandbox_csp() {
 #[tokio::test]
 async fn loads_and_serves_real_bundled_example_tools() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let docker_src = manifest_dir.join("examples/docker-cheatsheet");
-    let favicon_src = manifest_dir.join("examples/dynamic-favicon");
+    let docker_src = manifest_dir.join("examples/tools/docker-cheatsheet");
+    let favicon_src = manifest_dir.join("examples/tools/dynamic-favicon");
 
     // Part A: Disk scan via ToolRegistry::scan_all
     let disk_env = build_test_env(None, None, 50, false, false);

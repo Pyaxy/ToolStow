@@ -1,6 +1,7 @@
 /target
 /tools
 /data
+/dist
 /dist-docker
 .env
 .DS_Store

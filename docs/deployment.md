@@ -218,19 +218,20 @@ ToolStow 支持借鉴 [monitor-probe/themes](https://github.com/monitor-probe/th
   - `PUT /api/admin/themes/active`：JSON `{ "short": "<short>" }` 切换当前启用主题并持久化 `settings.json`。
   - `DELETE /api/admin/themes/{short}`：删除已安装主题（拒绝删除 `"default"` 返回 `400`）。
 
-### 6.4 快速体验仓库内置 4 套示例主题
+### 6.4 快速体验仓库内置 5 套示例主题
 
-仓库 `examples/themes/` 随附 4 套开箱即用的主题包：
-- `examples/themes/ascii-probe/`：复古终端 TUI 完整主题 + `ui.css`（等宽排版、2px 框线、荧光绿强调色）。
+仓库 `examples/themes/` 随附 5 套开箱即用的主题包：
+- `examples/themes/ascii-probe/`：复古终端 TUI 完整主题 + `ui.css`（等宽排版、2px 框线、荧光绿强调色，含工具插槽重排）。
 - `examples/themes/serverstatus/`：高密度运维表格控制台完整主题 + `ui.css`（紧凑筛选条、表格视图、岩板蓝配色）。
 - `examples/themes/rakugaki/`：手绘涂鸦笔记本完整主题 + `ui.css` + `assets/paper-grid-*.svg`（通过 `/ui/v1/theme-assets/` 让主站与所有插件共享网格纸/黑板底纹、不规则手绘墨线框与硬投影）。
+- `examples/themes/phosphor/`：纯暗黑 CRT 荧光终端完整主题 + `ui.css`（支持 P1/P3/P4 荧光粉配色切换）。
 - `examples/themes/paper-warm/`：温润羊皮纸社论风格纯皮肤包（仅 `theme.json` + `ui.css` + `preview.svg`，无 `index.html`）。
 
 可直接拷贝至服务器 `data/themes/` 或打包 `.zip` 在 `/admin` 上传：
 
 ```bash
 # 方式 A：直接拷贝目录到 data/themes/，刷新 /admin 即可切换
-cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/rakugaki examples/themes/paper-warm /opt/toolstow/data/themes/
+cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/rakugaki examples/themes/phosphor examples/themes/paper-warm /opt/toolstow/data/themes/
 
 # 方式 B：打包为 .zip 后在 /admin「主题管理」拖拽上传
 (cd examples/themes/rakugaki && zip -r /tmp/rakugaki.zip .)
@@ -238,7 +239,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/r
 
 ### 6.5 路由安全锁定、`/ui/v1/theme-assets/` 与旧版 `data/theme/` 向后兼容
 
-- `/admin*`、`/api/*`、`/t/*` 与 `/ui/*`（`/ui/v1/toolstow.css`、`/ui/v1/theme.js`、`/ui/v1/theme-assets/{*path}`，其余未知 `/ui/*` 路径一律返回 `404`）始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱边界。
+- `/admin*`、`/api/*`、`/t/*` 与 `/ui/*`（`/ui/v1/toolstow.css`、`/ui/v1/theme.js`、`/ui/v1/host.js`、`/ui/v1/theme-assets/{*path}`，其余未知 `/ui/*` 路径一律返回 `404`）始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱边界。
 - **跨沙箱主题静态资源（`GET /ui/v1/theme-assets/{*path}`）**：无论当前启用的是**纯皮肤主题**还是**完整自定义前台**（或 `default` 下的旧版 `data/theme/`），主题内自带的 `.woff2` 字体、背景图与 SVG 纹理均可通过 `/ui/v1/theme-assets/<rel-path>` 加载；后端固定返回 `Access-Control-Allow-Origin: *`、`Cache-Control: no-cache`、`X-Content-Type-Options: nosniff`（对 `.svg`/`.html` 额外附带 `Content-Security-Policy: sandbox;`），并拒绝点开头路径、越界路径、`theme.json` 与符号链接逃逸（`403 Forbidden`），确保字体与纹理在公开首页 `/` 与 `Origin: null` 沙箱插件 iframe 内一致生效。
 - 后端对主题静态文件与 `ui.css` 均执行规范路径 Containment 校验，禁止通过符号链接逃逸出主题目录（越界返回 `403 Forbidden`）。
 - **向后兼容**：当 `activeTheme` 为 `"default"` 时，仍保留旧版单目录 `/opt/toolstow/data/theme/`（`index.html` / `ui.css`）的自动覆盖逻辑；切换至任意已安装命名主题后，不再混入旧版 `data/theme/ui.css`。

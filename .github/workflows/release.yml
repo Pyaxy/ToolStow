@@ -161,8 +161,15 @@ jobs:
             exit 1
           fi
 
-          curl -fsS http://127.0.0.1:18080/ | grep -qi "<html"
-          curl -fsS http://127.0.0.1:18080/ui/v1/theme.js | grep -q "ToolStow"
+          health_json="$(curl -fsS http://127.0.0.1:18080/healthz)"
+          grep -q '"status":"ok"' <<<"$health_json"
+          grep -q "\"version\":\"${expected_ver}\"" <<<"$health_json"
+          root_html="$(curl -fsS http://127.0.0.1:18080/)"
+          grep -qi "<html" <<<"$root_html"
+          theme_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/theme.js)"
+          grep -q "ToolStow" <<<"$theme_js"
+          host_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/host.js)"
+          grep -q "ToolStowHost" <<<"$host_js"
           echo "Smoke test passed for $ARCHIVE"
 
       # Windows 打包成 .zip（二进制叫 toolstow.exe）
@@ -219,6 +226,11 @@ jobs:
               throw "toolstow.exe did not become ready on http://127.0.0.1:18080/"
             }
 
+            $healthResp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/healthz" -TimeoutSec 5
+            if ($healthResp.StatusCode -ne 200 -or $healthResp.Content -notmatch '"status":"ok"' -or $healthResp.Content -notmatch [regex]::Escape('"version":"' + $expectedVer + '"')) {
+              throw "Unexpected /healthz response from toolstow.exe"
+            }
+
             $rootResp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/" -TimeoutSec 5
             if ($rootResp.StatusCode -ne 200 -or $rootResp.Content -notmatch "(?i)<html") {
               throw "Unexpected root response from toolstow.exe"
@@ -227,6 +239,11 @@ jobs:
             $themeJsResp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/ui/v1/theme.js" -TimeoutSec 5
             if ($themeJsResp.StatusCode -ne 200 -or $themeJsResp.Content -notmatch "ToolStow") {
               throw "Unexpected /ui/v1/theme.js response from toolstow.exe"
+            }
+
+            $hostJsResp = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:18080/ui/v1/host.js" -TimeoutSec 5
+            if ($hostJsResp.StatusCode -ne 200 -or $hostJsResp.Content -notmatch "ToolStowHost") {
+              throw "Unexpected /ui/v1/host.js response from toolstow.exe"
             }
 
             Write-Host "Smoke test passed for $env:ARCHIVE"
@@ -343,8 +360,12 @@ jobs:
           uid="$(docker exec toolstow-smoke id -u)"
           test "$uid" = "1000"
 
-          curl -fsS http://127.0.0.1:18080/ | grep -qi "<html"
-          curl -fsS http://127.0.0.1:18080/ui/v1/theme.js | grep -q "ToolStow"
+          root_html="$(curl -fsS http://127.0.0.1:18080/)"
+          grep -qi "<html" <<<"$root_html"
+          theme_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/theme.js)"
+          grep -q "ToolStow" <<<"$theme_js"
+          host_js="$(curl -fsS http://127.0.0.1:18080/ui/v1/host.js)"
+          grep -q "ToolStowHost" <<<"$host_js"
           echo "Docker image smoke test passed."
 
       - name: Log in to GitHub Container Registry

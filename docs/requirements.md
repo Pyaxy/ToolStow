@@ -178,7 +178,7 @@ data/
    - 主题包至少须包含 `index.html`（优先探测 `dist/index.html`，其次根目录 `index.html`）或 `ui.css` 之一（否则 `422`）：
      - **完整主题**：含 `index.html`（及可选 `ui.css`），激活后覆盖 `/` 公开前台；若有 `ui.css` 则同步追加至 `/ui/v1/toolstow.css`。
      - **纯皮肤主题**：仅含 `ui.css`（无 `index.html`），激活后保留内嵌默认公开前台壳，仅将 `ui.css` 追加至 `/ui/v1/toolstow.css` 统一换肤主站与插件。
-   - 仓库 `examples/themes/` 内置 3 套参考主题：`ascii-probe`（终端 TUI 完整主题）、`serverstatus`（高密度表格完整主题）、`paper-warm`（羊皮纸纯皮肤主题）。
+   - 仓库 `examples/themes/` 内置 5 套参考主题：`ascii-probe`（终端 TUI 完整主题）、`serverstatus`（高密度表格完整主题）、`rakugaki`（手绘涂鸦笔记本完整主题）、`phosphor`（纯暗黑 CRT 荧光终端完整主题）、`paper-warm`（羊皮纸纯皮肤主题）。
 2. **共享样式表（`GET /ui/v1/toolstow.css`）与主题 `ui.css` 级联覆盖**：
    - 始终先输出内嵌的极简黑白基础设计令牌（`--ts-*`）与基础组件原语（`.ts-*`）。
    - 解析当前激活主题（`settings.activeTheme`）：若为已安装命名主题且含合法 `ui.css`，执行规范路径 Containment 校验后自动追加拼接输出（符号链接逃逸返回 `403 Forbidden`）；若该命名主题无 `ui.css`，仅返回基础样式（不混入旧版 `data/theme/ui.css`）；当 `activeTheme` 为 `"default"` 时，保持向后兼容检查 `<data-dir>/theme/ui.css`。
@@ -314,15 +314,23 @@ toolstow/
 ├── README.md                 # 项目总览与快速开始
 ├── CHANGELOG.md              # 版本变更记录
 ├── .env.example              # 环境变量与双密钥生成示例模板
-├── .gitignore                # 忽略 /target, /tools, /data, .env 等运行产物
+├── .gitignore                # 忽略 /target, /tools, /data, /dist, /dist-docker, .env 等产物
 ├── docs/
 │   ├── requirements.md       # 完整项目需求与技术规格书
+│   ├── architecture.md       # 架构设计、UI SDK、沙箱安全与开发校验指南
 │   ├── deployment.md         # VPS 部署、反代 HTTPS 与自定义主题指南
-│   └── ai-tool-skill.md      # 供 AI / Agent 读取的工具开发、草稿与 API 发布规范
+│   ├── ai-tool-skill.md      # 已迁移至 skills/toolstow-tool/ 的历史跳转说明
+│   └── ai-theme-skill.md     # 已迁移至 skills/toolstow-theme/ 的历史跳转说明
+├── skills/                   # 自包含 Agent Skills（规范文档 + 零依赖校验/打包/发布脚本）
+│   ├── toolstow-tool/
+│   └── toolstow-theme/
+├── scripts/
+│   └── bundle_examples.py    # CI / Release 共用示例主题与工具校验打包入口
 ├── ui/                       # 共享 UI SDK（内嵌进二进制，/ui/v1/* 始终后端锁定）
 │   └── v1/
 │       ├── toolstow.css      # 统一极简黑白设计令牌（--ts-*）与基础组件原语（.ts-*）
-│       └── theme.js          # 防 FOUC 主题同步、嵌入态检测与 ToolStow 辅助 API
+│       ├── theme.js          # 防 FOUC 主题同步、嵌入态检测与 ToolStow 辅助 API
+│       └── host.js           # 无头宿主 SDK（window.ToolStowHost）
 ├── frontend/                 # 极简黑白只读公共前端（内嵌进二进制，可被 data/theme/ 覆盖）
 │   ├── index.html
 │   ├── app.js
@@ -332,15 +340,18 @@ toolstow/
 │   ├── admin.js
 │   └── admin.css
 ├── examples/                 # 开箱验证示例工具与内置主题包
-│   ├── docker-cheatsheet/
-│   │   ├── manifest.json
-│   │   └── index.html
-│   ├── dynamic-favicon/
-│   │   ├── manifest.json
-│   │   └── index.html
+│   ├── tools/
+│   │   ├── docker-cheatsheet/
+│   │   │   ├── manifest.json
+│   │   │   └── index.html
+│   │   └── dynamic-favicon/
+│   │       ├── manifest.json
+│   │       └── index.html
 │   └── themes/
 │       ├── ascii-probe/      # 复古终端 TUI 完整主题 + ui.css
 │       ├── serverstatus/     # 高密度运维表格完整主题 + ui.css
+│       ├── rakugaki/         # 手绘涂鸦笔记本完整主题 + ui.css + assets/
+│       ├── phosphor/         # 纯暗黑 CRT 荧光终端完整主题 + ui.css
 │       └── paper-warm/       # 温润羊皮纸纯皮肤主题（仅 ui.css）
 └── src/
     ├── main.rs               # CLI/.env 加载、日志初始化、组装 AppState、启动 Axum 与目录 Watcher
