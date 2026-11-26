@@ -50,7 +50,7 @@ jobs:
       - name: Check built-in JS and Python scripts
         run: |
           node --version
-          for f in frontend/app.js admin/admin.js ui/v1/theme.js ui/v1/host.js; do
+          for f in frontend/app.js admin/admin.js ui/v1/theme.js ui/v1/host.js scripts/verify_theme_mobile.cjs; do
             node --check "$f"
           done
           python3 -m py_compile skills/toolstow-tool/scripts/*.py skills/toolstow-theme/scripts/*.py scripts/bundle_examples.py
@@ -62,3 +62,36 @@ jobs:
       # 步骤 8：校验 Docker Compose 配置语法
       - name: Validate Docker Compose config
         run: docker compose -f compose.yml config --quiet
+
+  browser-themes:
+    name: Mobile Theme Browser Regression
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build debug binary
+        run: cargo build --locked
+
+      - name: Install Playwright Core
+        run: |
+          mkdir -p /tmp/pw
+          npm --prefix /tmp/pw install --no-save playwright-core
+
+      - name: Ensure Chromium/Chrome browser
+        run: |
+          if command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
+            echo "Using preinstalled Google Chrome"
+          else
+            /tmp/pw/node_modules/.bin/playwright-core install chromium
+          fi
+
+      - name: Verify mobile & landscape theme layouts
+        run: NODE_PATH=/tmp/pw/node_modules node scripts/verify_theme_mobile.cjs --binary target/debug/toolstow
