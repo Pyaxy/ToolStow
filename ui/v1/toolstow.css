@@ -580,7 +580,7 @@ pre {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.ts-tab:hover:not(:disabled) {
+.ts-tab:hover:not(:disabled):not(.active) {
   color: var(--ts-ink);
 }
 

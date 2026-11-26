@@ -26,6 +26,14 @@
     return null;
   }
 
+  function applySkin(value) {
+    if (typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) {
+      ROOT.dataset.tsSkin = value;
+    } else {
+      delete ROOT.dataset.tsSkin;
+    }
+  }
+
   function normalizeHexColor(value) {
     if (typeof value !== "string") return null;
     var trimmed = value.trim();
@@ -147,6 +155,7 @@
 
   // Apply initial theme synchronously to prevent dark-mode first-frame FOUC.
   ROOT.dataset.theme = state.mode;
+  if (params && params.has("ts-skin")) applySkin(params.get("ts-skin"));
   if (state.explicitAccent) {
     ROOT.style.setProperty("--ts-accent", state.explicitAccent);
   }
@@ -214,6 +223,8 @@
       state.explicitMode = true;
       ROOT.dataset.theme = nextMode;
     }
+
+    if (Object.prototype.hasOwnProperty.call(payload, "skin")) applySkin(payload.skin);
 
     // Apply optional validated --ts-* token overrides.
     if (payload.tokens && typeof payload.tokens === "object") {

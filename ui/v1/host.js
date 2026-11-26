@@ -491,6 +491,11 @@
       tokens = collectThemeTokens();
     }
 
+    function readThemeSkin() {
+      var skin = ROOT.dataset.tsSkin || "";
+      return /^[a-z0-9][a-z0-9-]{0,63}$/.test(skin) ? skin : null;
+    }
+
     function applyModeToDocument() {
       if (lockMode) state.theme.mode = lockMode;
       ROOT.dataset.theme = state.theme.mode;
@@ -511,6 +516,7 @@
             payload: {
               mode: state.theme.mode,
               accent: state.theme.accent,
+              skin: readThemeSkin(),
               tokens: Object.assign({}, tokens),
             },
           },
@@ -625,6 +631,8 @@
       if (url.origin !== global.location.origin || !isSafeToolUrl(url.pathname)) return null;
       url.searchParams.set("theme", state.theme.mode);
       url.searchParams.set("accent", state.theme.accent);
+      var skin = readThemeSkin();
+      if (skin) url.searchParams.set("ts-skin", skin);
       if (cacheBust) {
         url.searchParams.set("_ts", String(Date.now()));
       }

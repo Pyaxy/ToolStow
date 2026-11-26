@@ -368,6 +368,11 @@ a {
   cursor: pointer;
 }
 
+.tui-nav-btn > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .tui-nav-btn:hover,
 .tui-tool-btn:hover {
   background: var(--ts-surface-hover);
@@ -464,6 +469,9 @@ a {
 }
 
 .tui-tag-chip {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 2px 6px;
   border: 1px solid var(--ts-border);
   border-radius: 2px;
@@ -471,10 +479,13 @@ a {
   color: var(--ts-ink-secondary);
   font-family: var(--ts-font-mono);
   font-size: 11px;
+}
+
+button.tui-tag-chip {
   cursor: pointer;
 }
 
-.tui-tag-chip:hover {
+button.tui-tag-chip:hover {
   border-color: var(--ts-accent);
   color: var(--ts-accent);
 }
@@ -623,9 +634,15 @@ a {
   color: var(--ts-ink-muted);
 }
 
+.tui-card-foot > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .tui-card-run {
   color: var(--ts-accent);
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .tui-card-empty {
@@ -792,12 +809,14 @@ a {
     bottom: var(--tui-statusbar-h);
     left: 0;
     z-index: 40;
+    visibility: hidden;
     transform: translateX(-100%);
     transition: transform 0.16s ease;
     max-width: 86vw;
   }
 
   .tui-sidebar.open {
+    visibility: visible;
     transform: translateX(0);
   }
 

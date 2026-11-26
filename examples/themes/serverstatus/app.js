@@ -126,6 +126,7 @@ function renderTags(state) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "ops-tag-pill" + (state.filters.tag === tag ? " active" : "");
+      btn.setAttribute("aria-pressed", String(state.filters.tag === tag));
       btn.textContent = `#${tag}`;
       btn.addEventListener("click", () => {
         host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
@@ -209,14 +210,9 @@ function renderTable(state) {
       tagsWrap.className = "ops-row-tags";
       if (Array.isArray(tool.tags) && tool.tags.length > 0) {
         for (const tag of tool.tags.slice(0, 4)) {
-          const pill = document.createElement("button");
-          pill.type = "button";
-          pill.className = "ops-tag-pill" + (state.filters.tag === tag ? " active" : "");
+          const pill = document.createElement("span");
+          pill.className = "ops-tag-pill";
           pill.textContent = `#${tag}`;
-          pill.addEventListener("click", (e) => {
-            e.stopPropagation();
-            host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
-          });
           tagsWrap.appendChild(pill);
         }
       } else {
@@ -267,7 +263,8 @@ function renderTable(state) {
         extLink.href = standaloneUrl;
         extLink.target = "_blank";
         extLink.rel = "noopener noreferrer";
-        extLink.title = "独立打开";
+        extLink.title = "在新标签页打开";
+        extLink.setAttribute("aria-label", `在新标签页打开 ${tool.name}`);
         extLink.textContent = "↗";
         extLink.addEventListener("click", (e) => e.stopPropagation());
         actionsWrap.appendChild(extLink);
@@ -327,16 +324,20 @@ function renderActiveToolHeader(tool, state) {
   }
 
   const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags)) {
+  if (Array.isArray(tool.tags) && tool.tags.length > 0) {
+    const label = document.createElement("span");
+    label.className = "ops-tag-bar-label";
+    label.textContent = "按标签返回目录";
+    tagFrag.appendChild(label);
     for (const tag of tool.tags) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "ops-tag-pill" + (state.filters.tag === tag ? " active" : "");
+      btn.className = "ops-tag-pill";
       btn.textContent = `#${tag}`;
+      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
       btn.addEventListener("click", () => {
-        const nextTag = state.filters.tag === tag ? "" : tag;
+        host.setFilters({ q: "", category: "", tag });
         host.clearSelection();
-        host.setFilters({ tag: nextTag });
       });
       tagFrag.appendChild(btn);
     }

@@ -138,6 +138,7 @@ function renderTags(state) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "rk-tag-pill" + (state.filters.tag === tag ? " active" : "");
+      btn.setAttribute("aria-pressed", String(state.filters.tag === tag));
       btn.textContent = `#${tag}`;
       btn.addEventListener("click", () => {
         host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
@@ -272,16 +273,20 @@ function renderActiveToolHeader(tool, state) {
   }
 
   const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags)) {
+  if (Array.isArray(tool.tags) && tool.tags.length > 0) {
+    const label = document.createElement("span");
+    label.className = "rk-tags-label";
+    label.textContent = "按标签返回目录";
+    tagFrag.appendChild(label);
     for (const tag of tool.tags) {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "rk-tag-pill" + (state.filters.tag === tag ? " active" : "");
+      btn.className = "rk-tag-pill";
       btn.textContent = `#${tag}`;
+      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
       btn.addEventListener("click", () => {
-        const nextTag = state.filters.tag === tag ? "" : tag;
+        host.setFilters({ q: "", category: "", tag });
         host.clearSelection();
-        host.setFilters({ tag: nextTag });
       });
       tagFrag.appendChild(btn);
     }

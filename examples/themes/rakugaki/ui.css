@@ -20,7 +20,7 @@
   --ts-inverted-bg: #1f1c18;
   --ts-inverted-bg-hover: #342f29;
   --ts-inverted-ink: #fcf9f2;
-  --ts-accent: #d9381e;
+  --ts-accent: #c9341d;
   --ts-danger: #b91c1c;
   --ts-danger-bg: #fee2e2;
   --ts-danger-border: #dc2626;
@@ -190,7 +190,6 @@ body {
   background: var(--ts-accent);
   border-color: var(--ts-ink);
   color: var(--rk-accent-ink);
-  opacity: 0.94;
 }
 
 .ts-btn-ghost {

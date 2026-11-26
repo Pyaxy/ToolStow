@@ -72,6 +72,9 @@ function openMobileSidebar() {
 }
 
 function closeMobileSidebar() {
+  if (els.sidebar.classList.contains("open") && els.sidebar.contains(document.activeElement)) {
+    els.sidebarToggle.focus();
+  }
   els.sidebar.classList.remove("open");
   els.sidebarBackdrop.hidden = true;
   els.sidebarToggle.setAttribute("aria-expanded", "false");
@@ -144,6 +147,7 @@ function renderTags(state) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "tui-tag-chip" + (state.filters.tag === tag ? " active" : "");
+      btn.setAttribute("aria-pressed", String(state.filters.tag === tag));
       btn.textContent = `#${tag}`;
       btn.addEventListener("click", () => {
         host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
@@ -347,14 +351,10 @@ function renderActiveToolHeader(tool, state) {
   const tagFrag = document.createDocumentFragment();
   if (Array.isArray(tool.tags)) {
     for (const tag of tool.tags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tui-tag-chip" + (state.filters.tag === tag ? " active" : "");
-      btn.textContent = `#${tag}`;
-      btn.addEventListener("click", () => {
-        host.setFilters({ tag: state.filters.tag === tag ? "" : tag });
-      });
-      tagFrag.appendChild(btn);
+      const label = document.createElement("span");
+      label.className = "tui-tag-chip";
+      label.textContent = `#${tag}`;
+      tagFrag.appendChild(label);
     }
   }
   els.activeToolTags.replaceChildren(tagFrag);

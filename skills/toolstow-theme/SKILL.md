@@ -215,7 +215,7 @@ Define `:root` (Light mode, `color-scheme: light`) and `:root[data-theme="dark"]
 > - `ui/v1/toolstow.css` also defines one-way legacy aliases (`--canvas: var(--ts-canvas)`, `--accent: var(--ts-accent)`, etc.), so overriding `--ts-*` automatically updates legacy aliases too.
 > - Keep `--ts-accent` a valid **6-digit (or 3-digit) `#rrggbb` hex color** in both light and dark modes, because `/ui/v1/theme.js` validates `accent` as hex when reading `?accent=` and `toolstow:theme`.
 > - **NEVER** call `document.documentElement.style.setProperty("--ts-accent", ...)` in shell JS! An inline style on `:root` overrides `:root[data-theme="dark"]` and breaks light/dark accent switching. Let `ui.css` own `--ts-accent`, and read the computed value via `getComputedStyle`.
-> - **Multi-skin themes (`data-skin`)**: Custom attributes like `data-skin="..."` set on the host `<html>` do **not** exist inside embedded plugin iframes or standalone `/t/{id}/` tabs. Always define cohesive base `:root` / `:root[data-theme="dark"]` defaults in `ui.css` for standalone plugins, and layer skin-specific `--ts-*` overrides under `:root[data-skin="..."]` (and `:root[data-theme="dark"][data-skin="..."]`) so `getComputedStyle(document.documentElement)` pushes the active skin's resolved tokens live to embedded iframes via `toolstow:theme`.
+> - **Multiple palettes**. Define a default palette in `ui.css` and put named variants under `:root[data-ts-skin="..."]`. Set `document.documentElement.dataset.tsSkin` to a lowercase ID of up to 64 letters, digits, or hyphens, starting with a letter or digit. Call `host.syncTheme()` after switching. The SDK carries the ID in `?ts-skin=` for iframe and standalone URLs and in `toolstow:theme` for live switches. Test the full palette in both views, including surfaces and text colors.
 
 ### 5.2 Starter `ui.css` Template
 
@@ -280,7 +280,7 @@ ToolStow appends the active theme's `ui.css` to `/ui/v1/toolstow.css`, so tools 
 | Category | Classes | Safe Override Tips |
 | :--- | :--- | :--- |
 | **Containers** | `.ts-card`, `.ts-empty`, `.ts-standalone-header`, `.ts-section-title` | Customize border width/style, `border-radius`, `box-shadow`, subtle header accents. Avoid adding huge margins or fixed widths/heights. |
-| **Buttons** | `.ts-btn`, `.ts-btn-primary`, `.ts-btn-accent`, `.ts-btn-ghost`, `.ts-btn-danger`, `.ts-btn-sm` | Style borders, shadows, hover/active transforms, focus-visible ring. Always maintain `>= 4.5:1` text contrast in both light & dark modes. |
+| **Buttons** | `.ts-btn`, `.ts-btn-primary`, `.ts-btn-accent`, `.ts-btn-ghost`, `.ts-btn-danger`, `.ts-btn-sm` | Pair foreground and background tokens. Check at least `4.5:1` text contrast for enabled buttons and selected tabs across supported palettes, including hover. Measure the rendered colors when opacity or overlays affect them. |
 | **Form Controls** | `.ts-input`, `.ts-textarea`, `.ts-select` | Customize border, radius, shadow, and `:focus` accent border/ring. Keep padding & full readability intact. |
 | **Tabs & Chips** | `.ts-tabs`, `.ts-tab`, `.ts-tab.active`, `.ts-badge`, `.ts-badge-mono`, `.ts-kbd` | Great places to inject signature theme identity (pills, stamps, sharp terminal boxes, wobbly ink outlines). |
 | **Code & Feedback** | `.ts-code`, `.ts-code-row`, `.ts-toast` | Keep `.ts-code` monospace and readable; remember `.ts-code-row > code` sits on `--ts-canvas` (not `--ts-code-bg`). |
@@ -467,7 +467,7 @@ await host.bootstrap();
 
 Key `ToolStowHost` static helpers & instance methods:
 - **Static helpers**: `ToolStowHost.renderIcon(containerEl, tool, fallbackGlyph)`, `ToolStowHost.resolveIconUrl(tool)`, `ToolStowHost.isSafeToolUrl(url)`, `ToolStowHost.sanitizeSandboxTokens(tokens)`, `ToolStowHost.normalizeHexColor(val)`, `ToolStowHost.readStorage(key)` / `writeStorage(key, val)`.
-- **Instance methods**: `host.bootstrap()`, `host.getState()`, `host.refresh()`, `host.setFilters({ q, category, tag })`, `host.clearFilters()`, `host.hasActiveFilters()`, `host.selectTool(id)`, `host.clearSelection()`, `host.mountTool(containerEl, toolOrId, { cacheBust })`, `host.reloadTool()`, `host.getStandaloneUrl(tool)`, `host.setThemeMode(mode)`, `host.toggleThemeMode()`, `host.syncTheme()` (call after switching custom sub-skins like `data-skin` or `data-phosphor` to push all 27 computed `--ts-*` tokens to the active plugin iframe), `host.subscribe(fn)`.
+- **Instance methods**: `host.bootstrap()`, `host.getState()`, `host.refresh()`, `host.setFilters({ q, category, tag })`, `host.clearFilters()`, `host.hasActiveFilters()`, `host.selectTool(id)`, `host.clearSelection()`, `host.mountTool(containerEl, toolOrId, { cacheBust })`, `host.reloadTool()`, `host.getStandaloneUrl(tool)`, `host.setThemeMode(mode)`, `host.toggleThemeMode()`, `host.syncTheme()` (sync the current `data-ts-skin` and computed tokens to the active iframe), `host.subscribe(fn)`.
 
 ---
 
@@ -486,7 +486,7 @@ Always load `/ui/v1/toolstow.css` **FIRST** in `<head>` before your shell styles
 </head>
 ```
 
-> **Anti-FOUC host bootstrap**: To apply saved `localStorage["toolstow:mode"]` (and optional `data-skin`) to `document.documentElement.dataset.theme` before first paint, **both** an inline `<script>` in `<head>` and an external blocking `<script src="./boot.js">` are allowed on `/` (ToolStow serves host `/` with no script-blocking CSP, and `validate.py` checks both inline and external scripts with `node --check` + DOM hygiene rules).
+> **Anti-FOUC host bootstrap**. To apply the saved mode to `data-theme` and any selected palette to `data-ts-skin` before first paint, use an inline script in `<head>` or a blocking `boot.js` on `/`. `validate.py` checks both kinds of script.
 
 ### 7.2 Strict URL Validation & Sandbox Allowlist
 
@@ -524,12 +524,14 @@ function buildToolUrl(entryUrl, mode, accent, cacheBust = false) {
   const url = new URL(entryUrl, window.location.origin);
   url.searchParams.set("theme", mode);
   url.searchParams.set("accent", accent);
+  const skin = document.documentElement.dataset.tsSkin;
+  if (skin) url.searchParams.set("ts-skin", skin);
   if (cacheBust) url.searchParams.set("_ts", String(Date.now()));
   return `${url.pathname}${url.search}${url.hash}`;
 }
 ```
 
-> **Optional standalone link**. It opens a fresh tool instance in a new tab. Use `host.getStandaloneUrl(tool)` with the SDK, or validate `tool.entryUrl` and use `buildToolUrl(tool.entryUrl, mode, accent, false)` in a custom implementation. Update the link when mode or accent changes. A sandboxed `/t/{id}/*` tab uses these query parameters because it cannot read the host's `localStorage["toolstow:mode"]`.
+> **Optional standalone link**. It opens a fresh tool instance in a new tab. Use `host.getStandaloneUrl(tool)` with the SDK, or validate `tool.entryUrl` and use `buildToolUrl(tool.entryUrl, mode, accent, false)` in a custom implementation. Update the link when mode, accent, or skin changes. A sandboxed `/t/{id}/*` tab uses these query parameters because it cannot read the host's `localStorage["toolstow:mode"]`.
 
 ### 7.4 Live `postMessage` Handshake (`toolstow:ready` & `toolstow:theme`)
 
@@ -575,7 +577,7 @@ function syncThemeToIframe(iframe, mode) {
   }
   const accent = readComputedAccent(mode);
   iframe.contentWindow.postMessage(
-    { type: "toolstow:theme", payload: { mode, accent, tokens } },
+    { type: "toolstow:theme", payload: { mode, accent, skin: document.documentElement.dataset.tsSkin ?? null, tokens } },
     "*"
   );
 }
@@ -599,14 +601,16 @@ window.addEventListener("message", (event) => {
 - **Deep-linking & navigation**. Support `#tool=<encodedId>` on page load and when the hash changes. Keep a clear way to return to the theme's tool navigation, such as a directory or town map. If the catalog request fails, retain the hash and resolve it after a successful retry.
 - **Optional workspace actions**. Themes choose whether and where to expose reload and standalone opening. A theme with a full-page tool view can put the standalone link in a menu or omit it. If provided, use a label that promises a new tab, such as `在新标签页打开`, with `target="_blank" rel="noopener noreferrer"`.
 - **Keyboard & accessibility**: Every navigation or control surface the theme provides (search, map pins, modal triggers, quick switcher, etc.) must be keyboard-operable with visible `:focus-visible` outlines, alongside a responsive mobile layout and `@media (prefers-reduced-motion: reduce)` for animations/marquees. Map-, town-, or shortcut-driven themes with no persistent search bar are explicitly allowed. *(Optional for search-bar themes: e.g., `Cmd/Ctrl+K` to focus search or open a quick-switcher palette without discarding an active tool iframe, and `Escape` to close overlays or clear/blur search.)*
+- **Collapsed navigation**. Keep closed drawers out of the tab order and accessibility tree with `visibility: hidden`, `hidden`, or `inert` as appropriate. Return focus to the trigger when closing a drawer that contains focus.
 - **Recommended UX Principles (Soft Guidelines — Not Enforced by `validate.py`)**:
   - **Home & discovery freedom**: Full custom shells own the entire `/` layout (minimalist list, ops table, ad wall, or interactive town map), while skin-only themes inherit the built-in shell layout; simply avoid rendering the exact same tool list twice side-by-side on one screen.
+  - **Catalog filters**. Prefer one visible control group per filter on a screen. Tool cards, table rows, and workspace headers can show the same labels as metadata. Use `aria-pressed` for tag filter buttons. If a tag action closes the tool and applies a filter in the directory, label that navigation explicitly.
   - **Active workspace**. Themes choose the size of the tool view and which navigation, metadata, or actions surround it. A focused workspace can use a compact toolbar and put secondary actions in a details popover.
   - **New-tool discoverability**: Spatial or curated themes (e.g., mapping known tools to specific town buildings) should provide a fallback discovery surface (such as a notice board or catalog drawer) so newly uploaded tools from `/api/tools` are immediately reachable without editing the theme.
 - **Responsive & overflow guardrails (test at `320px`, `390px`, `844×390`, and `1280×600`)**:
   - **No clipped full-page backgrounds**: Put repeating wall/paper textures on `html, body` (or ensure `body { min-height: 100dvh; }`) so sparse pages (1–3 tools) fill the entire viewport without exposing a solid bottom band.
   - **No obstructive `position: fixed` stickers/badges**: Decorative floating widgets must never cover tool cards or buttons on short desktop (`1280×600`) or landscape mobile (`844×390`) viewports — keep them in normal document flow, or hide them with `@media (max-width: 1180px), (max-height: 780px)` and add bottom padding to the main container.
-  - **Long unbroken categories & tags**: Backend allows arbitrary category/tag strings. Constrain chips/pills with `max-width: 100%; min-width: 0; overflow-wrap: anywhere;` so long unbroken strings never trigger horizontal overflow on `320px`/`390px` screens.
+  - **Long unbroken categories & tags**. Constrain chips with `max-width: 100%; min-width: 0; overflow-wrap: anywhere` and allow wrapped category controls to grow vertically. Test a long label in catalog filters, row metadata, and the active tool header on `320px` and `390px` screens.
   - **Narrow topbar & workspace header**: On `<= 640px`, let search inputs wrap onto a full-width row when admin links/controls are visible, and allow the active tool workspace title to wrap cleanly (up to 2 lines) rather than crushing to a few characters.
 
 ---
@@ -666,3 +670,4 @@ Inspect the bundled examples in `examples/themes/` as working references:
 - [ ] Full custom shell loads `/ui/v1/toolstow.css` **first**, opens `#tool=<id>` deep links cleanly, provides a clear way to return to the theme's tool navigation entry (directory/list, map/town, etc.), keeps every provided navigation/control surface (search, map pins, modal triggers, quick switcher, etc.) keyboard-operable with visible `:focus-visible` outlines, shows `/admin` strictly when `me.isAdmin === true`, and renders zero upload/delete controls.
 - [ ] Full custom shell validates `entryUrl`/`iconUrl` (`startsWith("/t/") && !startsWith("//")`), filters `sandbox` through the 6-token allowlist while preserving `[]`, sends `?theme=&accent=` + `toolstow:theme` on `load`/`toolstow:ready`/toggle, and contains zero `innerHTML`, zero `allow-same-origin`, zero `allow-top-navigation*`, and zero inline `setProperty("--ts-accent", ...)`.
 - [ ] Packaged cleanly with `scripts/pack.py` (no `node_modules/`), uploaded via `/admin` -> **主题管理**, and verified on `/` in both Light and Dark modes alongside a plugin across desktop (`1280×600`), narrow mobile (`320px`/`390px`, including logged-in admin link), and landscape mobile (`844×390`) viewports (full-height background, zero horizontal overflow, zero overlapping floating elements).
+- [ ] Browser checks cover tag behavior, keyboard focus with drawers open and closed, and contrast inside a tool iframe. If the theme provides named palettes and a new-tab link, open a tool both ways and compare its colors after a palette switch.
