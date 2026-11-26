@@ -1128,7 +1128,7 @@ async fn decoupled_custom_theme_hot_override_route_locking_and_symlink_protectio
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
     assert_eq!(
         resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
         "nosniff"
@@ -1569,7 +1569,7 @@ async fn locked_ui_v1_assets_and_theme_ui_css_cascade_override() {
         resp.headers()[CONTENT_TYPE].to_str().unwrap(),
         "text/css; charset=utf-8"
     );
-    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
     assert_eq!(
         resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
         "nosniff"
@@ -1597,7 +1597,7 @@ async fn locked_ui_v1_assets_and_theme_ui_css_cascade_override() {
     );
     assert_eq!(
         head_css.headers()[CACHE_CONTROL].to_str().unwrap(),
-        "no-cache"
+        "no-store"
     );
     assert_eq!(
         head_css.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
@@ -2807,7 +2807,7 @@ async fn theme_assets_endpoint_and_custom_theme_cors_and_security() {
         resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
         "nosniff"
     );
-    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
     assert_eq!(
         resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap(),
         "sandbox;"
@@ -2869,7 +2869,7 @@ async fn theme_assets_endpoint_and_custom_theme_cors_and_security() {
         resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
         "nosniff"
     );
-    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
     assert!(resp.headers().get(CONTENT_SECURITY_POLICY).is_none());
     assert_eq!(read_body_bytes(resp).await, fake_woff2);
 
@@ -3123,7 +3123,7 @@ async fn theme_assets_endpoint_and_custom_theme_cors_and_security() {
         resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
         "nosniff"
     );
-    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
     assert_eq!(read_body_bytes(resp).await, shell_css);
 }
 
@@ -3954,4 +3954,203 @@ async fn single_html_import_tool_id_html_has_no_route_collision() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn theme_dependent_routes_emit_no_store_across_theme_switches_and_404s() {
+    let env = build_test_env(Some(ADMIN_KEY), None, 50, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    let default_app_js = include_bytes!("../frontend/app.js");
+    let custom_index = b"<!doctype html><html><body><h1>Custom Shell</h1><script src=\"./app.js\"></script></body></html>";
+    let custom_app_js = b"console.log('custom-theme-app-js');";
+    let custom_only_js = b"console.log('only-in-custom');";
+    let custom_ui_css = b":root { --ts-accent: #d97706; }\n";
+    let custom_svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#d97706"/></svg>"##;
+
+    let custom_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"cache-test-shell","name":"Cache Test Shell","version":"1.0.0"}"#,
+        ),
+        ("index.html", custom_index),
+        ("app.js", custom_app_js),
+        ("only-in-custom.js", custom_only_js),
+        ("ui.css", custom_ui_css),
+        ("assets/only-in-custom.svg", custom_svg),
+    ]);
+
+    let upload_resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload?overwrite=false",
+            &custom_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(upload_resp.status(), StatusCode::CREATED);
+
+    // 1. Default theme: GET/HEAD on 200 and 404 theme-dependent routes all emit `no-store`.
+    for (method, uri, expected_status) in [
+        (Method::GET, "/", StatusCode::OK),
+        (Method::HEAD, "/", StatusCode::OK),
+        (Method::GET, "/app.js", StatusCode::OK),
+        (Method::HEAD, "/app.js", StatusCode::OK),
+        (Method::GET, "/ui/v1/toolstow.css", StatusCode::OK),
+        (Method::HEAD, "/ui/v1/toolstow.css", StatusCode::OK),
+        (Method::GET, "/only-in-custom.js", StatusCode::NOT_FOUND),
+        (Method::HEAD, "/only-in-custom.js", StatusCode::NOT_FOUND),
+        (
+            Method::GET,
+            "/ui/v1/theme-assets/assets/only-in-custom.svg",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            Method::HEAD,
+            "/ui/v1/theme-assets/assets/only-in-custom.svg",
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let is_head = method == Method::HEAD;
+        let resp = env
+            .app
+            .clone()
+            .oneshot(Request::builder().method(method).uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected_status, "{uri} status mismatch");
+        assert_eq!(
+            resp.headers()[CACHE_CONTROL].to_str().unwrap(),
+            "no-store",
+            "{uri} must emit Cache-Control: no-store"
+        );
+        let body = read_body_bytes(resp).await;
+        if is_head {
+            assert!(body.is_empty(), "HEAD {uri} must have empty body");
+        } else if uri == "/app.js" {
+            assert_eq!(body, default_app_js);
+        }
+    }
+
+    // 2. Activate custom shell: same URLs now serve custom assets with `no-store`.
+    let switch_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(CONTENT_TYPE, "application/json")
+                .header(COOKIE, &cookie)
+                .body(Body::from(json!({ "short": "cache-test-shell" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(switch_resp.status(), StatusCode::OK);
+
+    let app_js_resp = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/app.js").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(app_js_resp.status(), StatusCode::OK);
+    assert_eq!(app_js_resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    assert_eq!(read_body_bytes(app_js_resp).await, custom_app_js);
+
+    let only_js_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/only-in-custom.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(only_js_resp.status(), StatusCode::OK);
+    assert_eq!(only_js_resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    assert_eq!(read_body_bytes(only_js_resp).await, custom_only_js);
+
+    let ui_css_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/toolstow.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ui_css_resp.status(), StatusCode::OK);
+    assert_eq!(ui_css_resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    let ui_css_text = String::from_utf8(read_body_bytes(ui_css_resp).await).unwrap();
+    assert!(ui_css_text.contains("--ts-accent: #d97706;"));
+
+    let svg_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/theme-assets/assets/only-in-custom.svg")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(svg_resp.status(), StatusCode::OK);
+    assert_eq!(svg_resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    assert_eq!(read_body_bytes(svg_resp).await, custom_svg);
+
+    // 3. Switch back to default: /app.js reverts cleanly and custom-only asset is 404 with `no-store`.
+    let revert_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(CONTENT_TYPE, "application/json")
+                .header(COOKIE, &cookie)
+                .body(Body::from(json!({ "short": "default" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revert_resp.status(), StatusCode::OK);
+
+    let reverted_app_js = env
+        .app
+        .clone()
+        .oneshot(Request::builder().uri("/app.js").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(reverted_app_js.status(), StatusCode::OK);
+    assert_eq!(reverted_app_js.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
+    assert_eq!(read_body_bytes(reverted_app_js).await, default_app_js);
+
+    let gone_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/only-in-custom.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(gone_resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(gone_resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-store");
 }

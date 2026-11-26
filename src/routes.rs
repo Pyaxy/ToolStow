@@ -570,8 +570,11 @@ async fn resolve_active_theme_async(state: &AppState, active_short: String) -> O
 
 /// `GET /`: serves `index.html` from the active public theme (`data/themes/<short>/`,
 /// legacy `data/theme/`, or embedded `FrontendAssets`).
-async fn serve_index(State(state): State<AppState>) -> Result<Response, AppError> {
-    serve_active_public_asset(&state, "index.html", false).await
+async fn serve_index(State(state): State<AppState>) -> Response {
+    into_no_store_response(
+        serve_active_public_asset(&state, "index.html", false).await,
+        false,
+    )
 }
 
 /// Fallback handler serving active custom theme or embedded frontend assets without ever shadowing
@@ -580,10 +583,11 @@ async fn serve_frontend_fallback(
     State(state): State<AppState>,
     method: Method,
     uri: Uri,
-) -> Result<Response, AppError> {
+) -> Response {
+    let head_only = method == Method::HEAD;
     let raw_path = uri.path();
 
-    if raw_path == "/api"
+    let result = if raw_path == "/api"
         || raw_path.starts_with("/api/")
         || raw_path == "/t"
         || raw_path.starts_with("/t/")
@@ -591,22 +595,21 @@ async fn serve_frontend_fallback(
         || raw_path.starts_with("/admin/")
         || raw_path == "/ui"
         || raw_path.starts_with("/ui/")
+        || (method != Method::GET && method != Method::HEAD)
     {
-        return Err(AppError::not_found(format!("route not found: {raw_path}")));
-    }
-
-    if method != Method::GET && method != Method::HEAD {
-        return Err(AppError::not_found(format!("route not found: {raw_path}")));
-    }
-
-    let rel_path = raw_path.strip_prefix('/').unwrap_or(raw_path);
-    let rel_path = if rel_path.is_empty() {
-        "index.html"
+        Err(AppError::not_found(format!("route not found: {raw_path}")))
     } else {
-        rel_path
+        let rel_path = raw_path.strip_prefix('/').unwrap_or(raw_path);
+        let rel_path = if rel_path.is_empty() {
+            "index.html"
+        } else {
+            rel_path
+        };
+
+        serve_active_public_asset(&state, rel_path, head_only).await
     };
 
-    serve_active_public_asset(&state, rel_path, method == Method::HEAD).await
+    into_no_store_response(result, head_only)
 }
 
 /// Serves a public frontend asset according to active theme resolution:
@@ -712,7 +715,7 @@ async fn serve_custom_theme_asset(
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
-        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"))
         .body(body)
         .map_err(|err| AppError::internal(format!("failed to build theme asset response: {err}")))
@@ -734,7 +737,7 @@ fn serve_embedded_frontend_asset(path: &str, head_only: bool) -> Result<Response
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
-        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .body(body)
         .map_err(|err| AppError::internal(format!("failed to build frontend response: {err}")))
 }
@@ -794,14 +797,18 @@ fn serve_embedded_admin_asset(path: &str) -> Result<Response, AppError> {
 /// `GET` / `HEAD /ui/v1/toolstow.css`: serves embedded `ui/v1/toolstow.css` with optional
 /// active theme (`data/themes/<short>/ui.css`) or legacy `data/theme/ui.css` cascade override
 /// appended safely.
-async fn serve_ui_css(State(state): State<AppState>) -> Result<Response, AppError> {
+async fn serve_ui_css(State(state): State<AppState>) -> Response {
+    into_no_store_response(serve_ui_css_inner(&state).await, false)
+}
+
+async fn serve_ui_css_inner(state: &AppState) -> Result<Response, AppError> {
     let base = UiAssets::get("v1/toolstow.css")
         .ok_or_else(|| AppError::not_found("UI asset not found: /ui/v1/toolstow.css"))?;
 
     let mut body = base.data.into_owned();
     let active_short = state.settings.get().active_theme;
 
-    match resolve_active_theme_async(&state, active_short).await {
+    match resolve_active_theme_async(state, active_short).await {
         Some(resolved) => {
             if resolved.ui_css_path.is_some()
                 && let Some(override_bytes) =
@@ -832,7 +839,7 @@ async fn serve_ui_css(State(state): State<AppState>) -> Result<Response, AppErro
             HeaderValue::from_static("text/css; charset=utf-8"),
         )
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
-        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .body(Body::from(body))
         .map_err(|err| AppError::internal(format!("failed to build UI CSS response: {err}")))
 }
@@ -872,8 +879,20 @@ async fn serve_active_theme_asset(
     State(state): State<AppState>,
     method: Method,
     AxumPath(path): AxumPath<String>,
+) -> Response {
+    let head_only = method == Method::HEAD;
+    into_no_store_response(
+        serve_active_theme_asset_inner(&state, head_only, &path).await,
+        head_only,
+    )
+}
+
+async fn serve_active_theme_asset_inner(
+    state: &AppState,
+    head_only: bool,
+    path: &str,
 ) -> Result<Response, AppError> {
-    let rel_path = manifest::validate_safe_rel_path(&path)
+    let rel_path = manifest::validate_safe_rel_path(path)
         .map_err(|err| AppError::bad_request(err.to_string()))?;
 
     for component in rel_path.components() {
@@ -900,7 +919,7 @@ async fn serve_active_theme_asset(
     }
 
     let active = state.settings.get().active_theme;
-    let base_dir = if let Some(resolved) = resolve_active_theme_async(&state, active.clone()).await
+    let base_dir = if let Some(resolved) = resolve_active_theme_async(state, active.clone()).await
     {
         resolved.root_dir
     } else if active == BUILTIN_DEFAULT_THEME
@@ -982,7 +1001,7 @@ async fn serve_active_theme_asset(
         })
         .unwrap_or(false);
 
-    let body = if method == Method::HEAD {
+    let body = if head_only {
         Body::empty()
     } else {
         let bytes = tokio::fs::read(&canonical_target).await.map_err(|err| {
@@ -1000,7 +1019,7 @@ async fn serve_active_theme_asset(
     let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
-        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
         .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
 
@@ -1794,6 +1813,22 @@ async fn serve_tool_asset(
         .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
         .body(Body::from(bytes))
         .map_err(|err| AppError::internal(format!("failed to build tool asset response: {err}")))
+}
+
+/// Converts a theme-dependent handler result into a response guaranteed to carry
+/// `Cache-Control: no-store` (including `404` and other error responses), clearing the body
+/// when `head_only` is true.
+fn into_no_store_response(result: Result<Response, AppError>, head_only: bool) -> Response {
+    let mut resp = match result {
+        Ok(resp) => resp,
+        Err(err) => err.into_response(),
+    };
+    resp.headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if head_only {
+        *resp.body_mut() = Body::empty();
+    }
+    resp
 }
 
 /// Builds a JSON response with `Cache-Control: no-store`.
