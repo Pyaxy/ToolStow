@@ -927,7 +927,7 @@ button.tui-tag-chip:hover {
 }
 
 /* Responsive */
-@media (max-width: 780px) {
+@media (max-width: 780px), (max-height: 500px) {
   .tui-mobile-only {
     display: inline-flex;
   }
@@ -1093,12 +1093,9 @@ button.tui-tag-chip:hover {
   .tui-shell[data-view="tool"] .tui-details-toggle {
     display: inline-flex;
   }
-}
 
-@media (max-width: 780px) {
   .tui-shell[data-view="tool"] #sidebar-toggle,
-  .tui-shell[data-view="tool"] #close-tool-btn,
-  .tui-shell[data-view="tool"] .tui-search-wrap {
+  .tui-shell[data-view="tool"] #close-tool-btn {
     display: none;
   }
 
@@ -1106,6 +1103,12 @@ button.tui-tag-chip:hover {
   .tui-shell[data-view="tool"] .tui-backdrop {
     top: 42px;
     bottom: 0;
+  }
+}
+
+@media (max-width: 780px) {
+  .tui-shell[data-view="tool"] .tui-search-wrap {
+    display: none;
   }
 }
 

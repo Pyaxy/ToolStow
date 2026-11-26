@@ -549,7 +549,11 @@ function bindEvents() {
 
   els.searchInput.addEventListener("input", (e) => {
     const query = e.target.value;
-    if (window.innerWidth <= 780 && host.getState().selectedId && !els.sidebar.classList.contains("open")) {
+    if (
+      (window.innerWidth <= 780 || window.innerHeight <= 500) &&
+      host.getState().selectedId &&
+      !els.sidebar.classList.contains("open")
+    ) {
       openMobileSidebar(els.toolSidebarBtn);
     }
     if (searchTimer) window.clearTimeout(searchTimer);
