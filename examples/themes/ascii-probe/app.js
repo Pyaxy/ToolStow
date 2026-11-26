@@ -14,6 +14,7 @@ const els = {
   clearFiltersBtn: document.getElementById("clear-filters-btn"),
   categoryList: document.getElementById("category-list"),
   tagList: document.getElementById("tag-list"),
+  toolsBox: document.getElementById("tools-box"),
   toolList: document.getElementById("tool-list"),
   toolsCount: document.getElementById("tools-count"),
   emptyState: document.getElementById("empty-state"),
@@ -224,10 +225,27 @@ function renderEmptyGrid(state) {
   if (list.length === 0) {
     const box = document.createElement("div");
     box.className = "tui-card-empty";
-    box.textContent =
-      state.allTools.length === 0
-        ? "[EMPTY] 暂无已发布工具，请管理员在后台上传发布。"
-        : "[NO MATCH] 当前过滤条件下没有匹配的工具。";
+    const msg = document.createElement("span");
+    if (state.loading) {
+      msg.textContent = "[SYNC] 正在加载工具列表...";
+      box.appendChild(msg);
+    } else if (state.error && state.allTools.length === 0) {
+      msg.textContent = "[ERROR] 加载工具列表失败，请检查服务后重试。";
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "tui-btn";
+      retryBtn.textContent = "[RETRY]";
+      retryBtn.addEventListener("click", () => {
+        host.refresh({ keepSelection: false });
+      });
+      box.append(msg, retryBtn);
+    } else {
+      msg.textContent =
+        state.allTools.length === 0
+          ? "[EMPTY] 暂无已发布工具，请管理员在后台上传发布。"
+          : "[NO MATCH] 当前过滤条件下没有匹配的工具。";
+      box.appendChild(msg);
+    }
     fragment.appendChild(box);
   } else {
     for (const tool of list) {
@@ -353,7 +371,10 @@ function renderState(state) {
 
   renderCategories(state);
   renderTags(state);
-  renderToolList(state);
+  els.toolsBox.hidden = !state.selectedTool;
+  if (state.selectedTool) {
+    renderToolList(state);
+  }
 
   els.footerToolsStat.textContent = `TOOLS:${state.filteredTools.length}/${state.allTools.length}`;
   els.footerStatus.textContent = state.selectedTool ? `PROC:${state.selectedTool.id}` : "SYS:READY";

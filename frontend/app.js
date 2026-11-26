@@ -13,6 +13,7 @@ const els = {
   searchInput: document.getElementById("search-input"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
+  activeFilterBar: document.getElementById("active-filter-bar"),
   emptyGrid: document.getElementById("empty-grid"),
   toolView: document.getElementById("tool-view"),
   backBtn: document.getElementById("back-btn"),
@@ -101,6 +102,37 @@ function openTool(id) {
   host.selectTool(id, { updateHash: true, forceReload: false });
 }
 
+function renderActiveFilterBar(s) {
+  const tag = typeof s.filters.tag === "string" ? s.filters.tag.trim() : "";
+  if (!tag) {
+    els.activeFilterBar.hidden = true;
+    els.activeFilterBar.replaceChildren();
+    return;
+  }
+
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "active-filter-chip";
+  chip.setAttribute("aria-label", `清除标签筛选 #${tag}`);
+
+  const label = document.createElement("span");
+  label.className = "active-filter-chip-label";
+  label.textContent = `#${tag}`;
+
+  const close = document.createElement("span");
+  close.className = "active-filter-chip-close";
+  close.setAttribute("aria-hidden", "true");
+  close.textContent = "×";
+
+  chip.append(label, close);
+  chip.addEventListener("click", () => {
+    host.setFilters({ tag: "" });
+  });
+
+  els.activeFilterBar.hidden = false;
+  els.activeFilterBar.replaceChildren(chip);
+}
+
 function renderDirectoryList(s) {
   const fragment = document.createDocumentFragment();
   const list = s.filteredTools;
@@ -112,6 +144,8 @@ function renderDirectoryList(s) {
     const msg = document.createElement("span");
     if (s.loading) {
       msg.textContent = "正在加载工具列表...";
+    } else if (s.error && s.allTools.length === 0) {
+      msg.textContent = "加载工具列表失败，请检查服务后重试。";
     } else if (s.allTools.length === 0) {
       msg.textContent = "暂无已发布的工具。管理员可在后台收录工具包或单文件 HTML。";
     } else {
@@ -119,9 +153,15 @@ function renderDirectoryList(s) {
     }
     emptyItem.appendChild(msg);
 
-    if (!s.loading && s.allTools.length > 0 && host.hasActiveFilters()) {
+    if (!s.loading && s.error && s.allTools.length === 0) {
       emptyItem.appendChild(
-        makeButton("btn btn-sm", "清空搜索", () => {
+        makeButton("btn btn-sm", "重试", () => {
+          host.refresh({ keepSelection: false });
+        })
+      );
+    } else if (!s.loading && s.allTools.length > 0 && host.hasActiveFilters()) {
+      emptyItem.appendChild(
+        makeButton("btn btn-sm", s.filters.tag ? "清除筛选" : "清空搜索", () => {
           els.searchInput.value = "";
           host.clearFilters();
           focusSearch();
@@ -165,6 +205,7 @@ function renderDirectoryList(s) {
         const catEl = document.createElement("span");
         catEl.className = "tool-row-cat";
         catEl.textContent = category;
+        catEl.title = category;
         row.appendChild(catEl);
       }
 
@@ -178,6 +219,7 @@ function renderDirectoryList(s) {
 }
 
 function renderDirectory(s) {
+  renderActiveFilterBar(s);
   renderDirectoryList(s);
 
   if (document.activeElement !== els.searchInput && els.searchInput.value !== s.filters.q) {
@@ -220,17 +262,17 @@ function renderInfoPopover(tool, s) {
 
   els.activeToolDesc.textContent = tool.description || "";
 
-  const activeQuery = normalizeKey(s.filters.q);
+  const activeTag = normalizeKey(s.filters.tag);
   const fragment = document.createDocumentFragment();
   if (Array.isArray(tool.tags)) {
     for (const tag of tool.tags) {
       if (!tag) continue;
       fragment.appendChild(
-        makeButton("tag-chip" + (normalizeKey(tag) === activeQuery ? " active" : ""), `#${tag}`, () => {
-          // Jump back to the directory filtered by this tag in the search bar.
+        makeButton("tag-chip" + (normalizeKey(tag) === activeTag ? " active" : ""), `#${tag}`, () => {
+          // Jump back to the directory filtered strictly by this tag.
           setInfoOpen(false);
-          els.searchInput.value = tag;
-          host.setFilters({ q: tag, category: "", tag: "" });
+          els.searchInput.value = "";
+          host.setFilters({ q: "", category: "", tag });
           host.clearSelection({ updateHash: true });
         })
       );
