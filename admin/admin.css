@@ -1281,3 +1281,274 @@ a {
     flex-wrap: wrap;
   }
 }
+
+/* ───────────── Tabs, compact stats, single-HTML ingestion (v2) ───────────── */
+[hidden] {
+  display: none !important;
+}
+
+.main-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.main-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.main-tab:hover {
+  color: var(--ink);
+}
+
+.main-tab.active {
+  background: var(--inverted-bg);
+  color: var(--inverted-ink);
+}
+
+.main-tab:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stats-grid {
+  gap: 8px;
+}
+
+.stat-card {
+  padding: 8px 14px;
+}
+
+.stat-value {
+  font-size: 18px;
+}
+
+.dropzone code,
+.card-desc code {
+  font-family: var(--font-mono);
+}
+
+/* Single-HTML ingestion dialog */
+.html-dialog {
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--canvas);
+  color: var(--ink);
+  width: min(1120px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow: hidden;
+}
+
+.html-dialog[open] {
+  display: flex;
+}
+
+.html-dialog::backdrop {
+  background: rgba(9, 9, 11, 0.55);
+}
+
+.html-form {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-height: calc(100dvh - 26px);
+}
+
+.html-dialog-head,
+.html-dialog-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px;
+}
+
+.html-dialog-head {
+  border-bottom: 1px solid var(--border);
+}
+
+.html-dialog-foot {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+}
+
+.html-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.html-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.field,
+.field-row > .field {
+  min-width: 0;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: 10px;
+}
+
+.input-id,
+.html-source {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.html-source {
+  min-height: 140px;
+  white-space: pre;
+  overflow: auto;
+}
+
+.field-hint {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+
+.field-hint[data-kind="error"] {
+  color: var(--danger);
+}
+
+.field-hint[data-kind="success"] {
+  color: var(--success);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.check-row input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+
+.html-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.html-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.html-preview-frame {
+  width: 100%;
+  height: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+@media (min-width: 900px) {
+  .html-dialog-body {
+    grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .html-fields {
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .html-preview {
+    min-height: 0;
+  }
+
+  .html-preview-frame {
+    flex: 1;
+    height: auto;
+    min-height: 360px;
+  }
+
+  .html-dialog-body {
+    height: min(620px, calc(100dvh - 140px));
+  }
+}
+
+@media (max-width: 680px) {
+  .main-tabs {
+    width: 100%;
+  }
+
+  .main-tab {
+    flex: 1;
+    justify-content: center;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .html-dialog-head,
+  .html-dialog-foot {
+    padding: 10px 12px;
+  }
+
+  .html-dialog-body {
+    padding: 12px;
+  }
+
+  .card-header-actions {
+    width: 100%;
+  }
+
+  .tools-controls {
+    width: 100%;
+  }
+
+  .filter-tabs {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
