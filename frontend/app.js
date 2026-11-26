@@ -3,7 +3,6 @@
 // which talks to /api/me and /api/tools. This file only renders DOM.
 
 const DEFAULT_SITE_TITLE = "ToolStow";
-const MAX_COLLAPSED_TAGS = 8;
 const UNCATEGORIZED = "未分类";
 
 const els = {
@@ -14,14 +13,6 @@ const els = {
   searchInput: document.getElementById("search-input"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
-  emptyState: document.getElementById("empty-state"),
-  emptyTitle: document.getElementById("empty-title"),
-  emptyDesc: document.getElementById("empty-desc"),
-  emptyCount: document.getElementById("empty-count"),
-  categoryList: document.getElementById("category-list"),
-  tagList: document.getElementById("tag-list"),
-  clearFiltersBtn: document.getElementById("clear-filters-btn"),
-  refreshListBtn: document.getElementById("refresh-list-btn"),
   emptyGrid: document.getElementById("empty-grid"),
   toolView: document.getElementById("tool-view"),
   backBtn: document.getElementById("back-btn"),
@@ -50,7 +41,6 @@ const els = {
 const ui = {
   statusTimer: null,
   statusFromState: false,
-  tagsExpanded: false,
   infoOpen: false,
   lastSelectedId: null,
   switcherSignature: "",
@@ -107,165 +97,88 @@ function makeButton(className, text, onClick) {
 
 /* ───────────── directory view ───────────── */
 
-function renderCategories(s) {
-  const active = normalizeKey(s.filters.category);
-  const fragment = document.createDocumentFragment();
-
-  const makePill = (label, count, isActive, onClick) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "pill" + (isActive ? " active" : "");
-    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
-    const text = document.createElement("span");
-    text.textContent = label;
-    const num = document.createElement("span");
-    num.className = "pill-count";
-    num.textContent = String(count);
-    btn.append(text, num);
-    btn.addEventListener("click", onClick);
-    return btn;
-  };
-
-  fragment.appendChild(
-    makePill("全部", s.allTools.length, active === "", () => host.setFilters({ category: "" }))
-  );
-
-  for (const cat of s.categories) {
-    const name = cat && typeof cat === "object" ? cat.name : cat;
-    const count = cat && typeof cat === "object" ? cat.count : "";
-    const isActive = active !== "" && normalizeKey(name) === active;
-    fragment.appendChild(
-      makePill(name || UNCATEGORIZED, count, isActive, () =>
-        host.setFilters({ category: isActive ? "" : name })
-      )
-    );
-  }
-
-  els.categoryList.replaceChildren(fragment);
-}
-
-function toggleTagFilter(tag, activeTag) {
-  host.setFilters({ tag: normalizeKey(tag) === activeTag ? "" : tag });
-}
-
-function renderTags(s) {
-  const activeTag = normalizeKey(s.filters.tag);
-  const tags = Array.isArray(s.tags) ? s.tags : [];
-  const fragment = document.createDocumentFragment();
-
-  let visible = tags;
-  let hiddenCount = 0;
-  if (!ui.tagsExpanded && tags.length > MAX_COLLAPSED_TAGS) {
-    visible = tags.slice(0, MAX_COLLAPSED_TAGS);
-    const activeFull = tags.find((t) => normalizeKey(t) === activeTag);
-    if (activeFull && !visible.includes(activeFull)) visible.push(activeFull);
-    hiddenCount = tags.length - visible.length;
-  }
-
-  for (const tag of visible) {
-    const isActive = activeTag !== "" && normalizeKey(tag) === activeTag;
-    const btn = makeButton("tag-chip" + (isActive ? " active" : ""), `#${tag}`, () =>
-      toggleTagFilter(tag, activeTag)
-    );
-    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
-    fragment.appendChild(btn);
-  }
-
-  if (tags.length > MAX_COLLAPSED_TAGS) {
-    const label = ui.tagsExpanded ? "收起" : `+${hiddenCount} 更多`;
-    const more = makeButton("tag-chip tag-chip-more", label, () => {
-      ui.tagsExpanded = !ui.tagsExpanded;
-      renderTags(host.getState());
-    });
-    more.setAttribute("aria-expanded", ui.tagsExpanded ? "true" : "false");
-    fragment.appendChild(more);
-  }
-
-  els.tagList.replaceChildren(fragment);
-}
-
 function openTool(id) {
   host.selectTool(id, { updateHash: true, forceReload: false });
 }
 
-function renderGrid(s) {
+function renderDirectoryList(s) {
   const fragment = document.createDocumentFragment();
   const list = s.filteredTools;
 
   if (list.length === 0) {
-    const box = document.createElement("div");
-    box.className = "tool-card-empty";
+    const emptyItem = document.createElement("li");
+    emptyItem.className = "tool-list-empty";
+
+    const msg = document.createElement("span");
     if (s.loading) {
-      box.textContent = "正在加载工具列表...";
+      msg.textContent = "正在加载工具列表...";
     } else if (s.allTools.length === 0) {
-      box.textContent = "暂无已发布的工具。管理员可在后台收录工具包或单文件 HTML。";
+      msg.textContent = "暂无已发布的工具。管理员可在后台收录工具包或单文件 HTML。";
     } else {
-      box.textContent = "当前筛选条件下没有匹配的工具。";
+      msg.textContent = "没有匹配的工具。";
     }
-    fragment.appendChild(box);
+    emptyItem.appendChild(msg);
+
+    if (!s.loading && s.allTools.length > 0 && host.hasActiveFilters()) {
+      emptyItem.appendChild(
+        makeButton("btn btn-sm", "清空搜索", () => {
+          els.searchInput.value = "";
+          host.clearFilters();
+          focusSearch();
+        })
+      );
+    }
+
+    fragment.appendChild(emptyItem);
   } else {
     for (const tool of list) {
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "tool-card";
-
-      const head = document.createElement("div");
-      head.className = "tool-card-head";
+      const li = document.createElement("li");
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "tool-row";
 
       const iconWrap = document.createElement("span");
       iconWrap.className = "tool-icon";
       iconWrap.setAttribute("aria-hidden", "true");
       window.ToolStowHost.renderIcon(iconWrap, tool);
 
+      const body = document.createElement("span");
+      body.className = "tool-row-body";
+
       const nameEl = document.createElement("span");
-      nameEl.className = "tool-card-name";
+      nameEl.className = "tool-row-name";
       nameEl.textContent = tool.name || tool.id;
+      body.appendChild(nameEl);
 
-      head.append(iconWrap, nameEl);
+      const desc = typeof tool.description === "string" ? tool.description.trim() : "";
+      if (desc) {
+        const descEl = document.createElement("span");
+        descEl.className = "tool-row-desc";
+        descEl.textContent = desc;
+        body.appendChild(descEl);
+      }
 
-      const descEl = document.createElement("p");
-      descEl.className = "tool-card-desc";
-      descEl.textContent = tool.description || "点击打开此微工具";
+      row.append(iconWrap, body);
 
-      const catEl = document.createElement("span");
-      catEl.className = "tool-card-cat";
-      catEl.textContent = tool.category || UNCATEGORIZED;
+      const category = typeof tool.category === "string" ? tool.category.trim() : "";
+      if (category && category !== UNCATEGORIZED) {
+        const catEl = document.createElement("span");
+        catEl.className = "tool-row-cat";
+        catEl.textContent = category;
+        row.appendChild(catEl);
+      }
 
-      card.append(head, descEl, catEl);
-      card.addEventListener("click", () => openTool(tool.id));
-      fragment.appendChild(card);
+      row.addEventListener("click", () => openTool(tool.id));
+      li.appendChild(row);
+      fragment.appendChild(li);
     }
   }
 
   els.emptyGrid.replaceChildren(fragment);
 }
 
-function renderLandingHeader(s) {
-  const title = s.site.siteTitle || DEFAULT_SITE_TITLE;
-  els.emptyTitle.textContent = title;
-
-  const total = s.filteredTools.length;
-  els.emptyCount.textContent = `${total} ${total === 1 ? "tool" : "tools"}`;
-
-  const desc = s.site.siteDescription;
-  els.emptyDesc.replaceChildren();
-  if (desc) {
-    els.emptyDesc.appendChild(document.createTextNode(`${desc} · `));
-  }
-  els.emptyDesc.appendChild(document.createTextNode("选择任意工具即可运行，或按 "));
-  const kbd = document.createElement("kbd");
-  kbd.className = "inline-kbd";
-  kbd.textContent = "⌘K";
-  els.emptyDesc.appendChild(kbd);
-  els.emptyDesc.appendChild(document.createTextNode(" 快速搜索。"));
-}
-
 function renderDirectory(s) {
-  renderLandingHeader(s);
-  renderCategories(s);
-  renderTags(s);
-  renderGrid(s);
-  els.clearFiltersBtn.hidden = !host.hasActiveFilters();
+  renderDirectoryList(s);
 
   if (document.activeElement !== els.searchInput && els.searchInput.value !== s.filters.q) {
     els.searchInput.value = s.filters.q;
@@ -307,16 +220,17 @@ function renderInfoPopover(tool, s) {
 
   els.activeToolDesc.textContent = tool.description || "";
 
-  const activeTag = normalizeKey(s.filters.tag);
+  const activeQuery = normalizeKey(s.filters.q);
   const fragment = document.createDocumentFragment();
   if (Array.isArray(tool.tags)) {
     for (const tag of tool.tags) {
       if (!tag) continue;
       fragment.appendChild(
-        makeButton("tag-chip" + (normalizeKey(tag) === activeTag ? " active" : ""), `#${tag}`, () => {
-          // Jump back to the directory filtered by this tag.
+        makeButton("tag-chip" + (normalizeKey(tag) === activeQuery ? " active" : ""), `#${tag}`, () => {
+          // Jump back to the directory filtered by this tag in the search bar.
           setInfoOpen(false);
-          host.setFilters({ tag });
+          els.searchInput.value = tag;
+          host.setFilters({ q: tag, category: "", tag: "" });
           host.clearSelection({ updateHash: true });
         })
       );
@@ -521,6 +435,7 @@ function closePalette({ restoreFocus = true } = {}) {
 function render(s) {
   const siteTitle = s.site.siteTitle || DEFAULT_SITE_TITLE;
   els.brandTitle.textContent = siteTitle;
+  els.brandLink.title = s.site.siteDescription || "返回工具箱首页";
   els.adminLink.hidden = s.site.isAdmin !== true;
 
   const modeLabel = s.theme.mode === "dark" ? "亮色" : "暗色";
@@ -673,15 +588,6 @@ function bindEvents() {
       e.preventDefault();
       focusables[nextIdx].focus();
     }
-  });
-
-  els.refreshListBtn.addEventListener("click", () => {
-    host.refresh({ keepSelection: true });
-  });
-
-  els.clearFiltersBtn.addEventListener("click", () => {
-    els.searchInput.value = "";
-    host.clearFilters();
   });
 
   els.quickSwitcher.addEventListener("change", () => {

@@ -69,6 +69,7 @@ body {
 .tool-title-row h1,
 #active-tool-name,
 .workspace-bar h1,
+.tool-row-name,
 .ts-standalone-header h1,
 .ts-section-title,
 .ts-collection-group > h2,
@@ -79,15 +80,21 @@ body {
 
 .ts-card,
 .tool-card,
+.tool-row,
 .ts-empty,
-.tool-info-popover {
+.tool-info-popover,
+.info-popover,
+.cmd-palette-panel {
   box-shadow: 0 2px 8px rgba(41, 37, 36, 0.05);
 }
 
 :root[data-theme="dark"] .ts-card,
 :root[data-theme="dark"] .tool-card,
+:root[data-theme="dark"] .tool-row,
 :root[data-theme="dark"] .ts-empty,
-:root[data-theme="dark"] .tool-info-popover {
+:root[data-theme="dark"] .tool-info-popover,
+:root[data-theme="dark"] .info-popover,
+:root[data-theme="dark"] .cmd-palette-panel {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
 }
 

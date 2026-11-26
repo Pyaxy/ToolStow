@@ -11,7 +11,7 @@
   <div class="app-shell">
     <div id="status-banner" class="status-banner" role="status" aria-live="polite" hidden></div>
 
-    <!-- Directory View (home): one topbar + one tool grid -->
+    <!-- Directory View (home): single topbar + searchable tool list -->
     <div id="directory-view" class="directory-view">
       <header class="topbar">
         <a href="#" id="brand-link" class="brand" aria-label="返回工具箱首页">
@@ -27,7 +27,7 @@
           <input
             id="search-input"
             type="search"
-            placeholder="搜索工具名称、描述、标签或 ID..."
+            placeholder="搜索工具、分类或标签..."
             autocomplete="off"
             spellcheck="false"
             aria-label="搜索工具"
@@ -42,25 +42,8 @@
       </header>
 
       <main id="empty-state" class="empty-state">
-        <div class="landing">
-          <div class="landing-head">
-            <div class="landing-title-row">
-              <h1 id="empty-title">ToolStow</h1>
-              <span id="empty-count" class="mono-badge">0 tools</span>
-            </div>
-            <p id="empty-desc" class="empty-desc">选择任意工具即可运行，或按 <kbd class="inline-kbd">⌘K</kbd> 快速搜索。</p>
-          </div>
-
-          <div class="filter-strip" aria-label="筛选工具">
-            <div id="category-list" class="pill-list" role="group" aria-label="分类"></div>
-            <div class="filter-actions">
-              <button id="clear-filters-btn" class="btn-ghost" type="button" hidden>重置筛选</button>
-              <button id="refresh-list-btn" class="btn-ghost" type="button" title="重新加载列表">刷新</button>
-            </div>
-          </div>
-          <div id="tag-list" class="tag-list" role="group" aria-label="标签"></div>
-
-          <div id="empty-grid" class="tool-grid" aria-label="可用工具"></div>
+        <div class="tool-catalog">
+          <ul id="empty-grid" class="tool-list" aria-label="可用工具"></ul>
         </div>
       </main>
     </div>
