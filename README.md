@@ -12,9 +12,9 @@
 
 - **AI 通过 Skill 自主开发并上架工具（核心亮点）**：仓库内置自包含的 [Agent Skills](skills/toolstow-tool/SKILL.md)（含规范与零依赖校验/打包/发布脚本）。把 `skills/toolstow-tool/` 交给 AI Agent 后，只需一句话描述需求，**AI 就能自主完成「编写工具 → 自动校验安全与语法 → 打包 → 携 `TOOLSTOW_API_KEY` 一键发布到你的 ToolStow」全流程**（也可先以 `"draft": true` 草稿上架待你审核）；主题开发同理，交给 [skills/toolstow-theme/](skills/toolstow-theme/SKILL.md) 即可自动生成并校验打包自定义主题。
 - **单二进制、零数据库**：一个可执行文件开箱即用，所有数据集中在 `--data-dir`（默认 `./data`）下，文件系统即唯一事实来源（`tools/` + `themes/` + `settings.json`），支持文件变更自动热加载。
-- **热插拔与双密钥安全隔离**：支持 AI 携 `TOOLSTOW_API_KEY` 自动发布、在 `/admin` 网页拖拽上传 `.zip` 或直接放入 `data/tools/` 目录，均无需重启；管理员网页登录（`TOOLSTOW_ADMIN_KEY`）与机器发布密钥严格隔离，未配置密钥时管理入口默认关闭（`404`）。
+- **热插拔与双密钥安全隔离**：支持 AI 携 `TOOLSTOW_API_KEY` 自动发布、在 `/admin` 网页直接**拖拽单文件 `.html`（带沙箱实时预览与自动注入 SDK）或 `.zip` 压缩包**、粘贴 HTML 源码，或直接放入 `data/tools/` 目录，均无需重启；管理员网页登录（`TOOLSTOW_ADMIN_KEY`）与机器发布密钥严格隔离，未配置密钥时管理入口默认关闭（`404`）。
 - **草稿预览与双重沙箱**：支持 Hugo 风格 `"draft": true` 草稿（仅管理员可见）；所有子工具运行在 `<iframe sandbox>` + `Content-Security-Policy: sandbox` 双重隔离中（强制剥离 `allow-same-origin`），ZIP 解包防路径穿越、拒符号链接并做体积/文件数防炸弹限制。
-- **统一 UI SDK 与多主题换肤**：内置 `/ui/v1/toolstow.css` 与 `/ui/v1/theme.js`，主站与所有子工具自动同步明暗模式与主题皮肤；支持在 `/admin` 上传、预览并热切换多套前台主题，而 `/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定。
+- **4 层解耦 UI SDK 与跨主题布局重排**：内置 `/ui/v1/toolstow.css`、`/ui/v1/theme.js` 与无头宿主 SDK `/ui/v1/host.js`（`window.ToolStowHost`）。子工具通过 `.ts-workbench` 语义化插槽（`.ts-wb-toolbar`、`.ts-wb-nav`、`.ts-wb-aside`、`.ts-wb-main`、`.ts-collection`）声明界面结构，主题不仅能同步明暗模式与配色，还能在 `ui.css` 中自由重排工具内部的菜单、搜索栏与卡片流布局（如切换为左侧终端目录栏+底部命令栏，或右侧手绘书签栏），而 `/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定。
 
 ---
 
@@ -61,7 +61,7 @@ chmod 600 .env
 
 > **附带示例合集包**：Releases 同时提供两个可直接体验的合集包，解压后把里面单个 `.zip` 拖进 `/admin` 即可上传——
 > - `toolstow-plugins.zip`：内置示例工具 `docker-cheatsheet`（Docker 命令速查）、`dynamic-favicon`（随主题同步的动态 Favicon 生成器）。
-> - `toolstow-themes.zip`：内置示例主题 `ascii-probe`（终端 TUI）、`serverstatus`（运维表格控制台）、`rakugaki`（手绘笔记本涂鸦）、`paper-warm`（羊皮纸纯皮肤换肤）。
+> - `toolstow-themes.zip`：内置示例主题 `ascii-probe`（终端 TUI + 工具插槽重排）、`serverstatus`（运维表格控制台）、`rakugaki`（手绘笔记本涂鸦 + 右侧书签插槽）、`phosphor`（纯暗黑 CRT 荧光屏 NOC 终端，支持 P1/P3/P4 荧光色切换）、`paper-warm`（羊皮纸纯皮肤换肤）。
 
 ### 3. 使用 Docker / Docker Compose 运行（支持 `linux/amd64` / `linux/arm64`）
 
@@ -103,7 +103,7 @@ cargo build --release
 
 ## 如何制作工具
 
-每个 ToolStow 工具都是一个**零构建、自包含的静态网页目录**，放进 `data/tools/<id>/` 或打成 `.zip` 上传即可生效。
+每个 ToolStow 工具都是一个**零构建、自包含的静态网页**——既可以在 `/admin` 直接拖拽单个 `.html` 文件（或粘贴 HTML 源码）自动生成 `manifest.json` 并收录，也可以作为标准目录放进 `data/tools/<id>/` 或打成 `.zip` 上传。
 
 ### 最快方式：直接把 Skill 交给 AI
 

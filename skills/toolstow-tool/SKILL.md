@@ -62,7 +62,7 @@ my-tool/
 └── assets/         # Optional relative assets (CSS, JS, SVG, PNG, etc.)
 ```
 
-### ZIP Package Formats (Both Supported)
+### ZIP & Single-HTML Ingestion Formats (All Supported)
 
 Use `scripts/pack.py` to generate a verified, flat `.zip` automatically:
 
@@ -70,7 +70,10 @@ Use `scripts/pack.py` to generate a verified, flat `.zip` automatically:
 python3 skills/toolstow-tool/scripts/pack.py ./my-tool -o ./my-tool.zip
 ```
 
-ToolStow accepts both **Flat ZIP** (`manifest.json` at archive root, produced by `pack.py`) and **Single-root-folder ZIP** (`my-tool/manifest.json`, with `__MACOSX/` and `.DS_Store` automatically ignored).
+ToolStow accepts:
+1. **Flat ZIP** (`manifest.json` at archive root, produced by `pack.py`).
+2. **Single-root-folder ZIP** (`my-tool/manifest.json`, with `__MACOSX/` and `.DS_Store` automatically ignored).
+3. **Single-file `.html` / `.htm` drag-and-drop or Paste HTML in `/admin`** (and `POST /api/admin/tools/html`): Drop any standalone `.html` file directly into `/admin` -> **工具管理 -> 收录工具** (or click **粘贴 HTML**). ToolStow automatically extracts `<title>` and `<meta name="description">`, generates a valid `id` slug and `manifest.json`, previews the tool in a live sandboxed iframe, and optionally injects `<link rel="stylesheet" href="/ui/v1/toolstow.css">` + `<script src="/ui/v1/theme.js"></script>` before saving.
 
 ### Packaging Limits & Security Rules
 
@@ -176,23 +179,32 @@ Every native ToolStow plugin MUST include both lines in `<head>` (do **NOT** cop
 
 > Load `<script src="/ui/v1/theme.js"></script>` synchronously in `<head>` (without `defer`/`async`) so it sets `data-embed` and `data-theme` from the initial query parameters (`?theme=...&accent=...`) or OS preference before first paint, eliminating dark-mode white flash (FOUC).
 
-### 3-Layer UI Design Boundary
+### 4-Layer Decoupled UI Architecture & `.ts-workbench` Semantic Slots
 
-Follow this strict 3-layer separation so plugins feel native to ToolStow without constraining tool functionality:
+Follow ToolStow's 4-layer separation so plugins feel native to every theme and allow themes to rearrange tool layout slots via `ui.css` without breaking tool functionality:
 
-1. **Layer 1 — Shared controls & chrome (MUST reuse SDK)**:
-   - Use `.ts-*` primitives for pages, cards, buttons, inputs, selects, textareas, tabs, badges, code blocks, empty states, and toasts.
+1. **Layer 1 — Shared design tokens & controls (`/ui/v1/toolstow.css`)**:
+   - Use `.ts-*` primitives for cards, buttons, inputs, selects, textareas, tabs, badges, code blocks, empty states, and toasts.
    - Reference `var(--ts-*)` tokens for any custom border, surface, text, radius, spacing, or font styling.
    - **NEVER** hardcode UI chrome hex/rgb colors, decorative background gradients, heavy drop shadows, or custom external web fonts.
-2. **Layer 2 — Functional layout (MAY write minimal scoped CSS)**:
-   - Plugins MAY add a small `<style>` block for tool-specific layout structure: CSS Grid/Flex templates, panel widths, responsive media queries, and spacing using `var(--ts-space-*)`.
-3. **Layer 3 — Domain content visuals (FREE domain colors)**:
+2. **Layer 2 — Semantic workbench slots (`.ts-workbench` + `.ts-wb-*`)**:
+   - Structure your tool root with `<div class="ts-workbench">` (optional preferences: `data-width="narrow"`, `data-aside="left"`, or `data-aside="right"`) and direct semantic slot children:
+     - `<header class="ts-standalone-only ts-standalone-header">` — standalone page title (auto-hidden when embedded in an iframe).
+     - `<header class="ts-wb-toolbar">` — search bar, primary action buttons, status counters, keyboard hints.
+     - `<nav class="ts-wb-nav">` — category tabs (`.ts-tabs`) or section navigation.
+     - `<aside class="ts-wb-aside">` — optional configuration/inspector sidebar panel.
+     - `<main class="ts-wb-main">` — primary workspace output, cards, or preview stage.
+   - Inside `.ts-wb-main`, wrap grouped card sections in `.ts-collection-group` and multi-card grids in `.ts-collection` (setting a preferred minimum card width via `--ts-collection-min: 380px` on a custom class rather than hardcoding `grid-template-columns`).
+   - **Why semantic slots matter**: Tools declare *what* each slot is and its default preference (`data-aside="left|right"`, `--ts-collection-min`), while active themes can rearrange those slots via `ui.css` (for example, `ascii-probe` moves `.ts-wb-nav` to a left vertical directory rail, `.ts-wb-toolbar` to a bottom `grep>` command bar, and switches `.ts-collection` into a 1-column terminal stream; `rakugaki` turns `.ts-wb-nav` into right-edge vertical notebook index tabs). Do **NOT** hardcode `grid-template-areas` or `position: fixed` on `.ts-wb-*` in your tool's `<style>`.
+3. **Layer 3 — Scoped functional component styles (minimal `<style>`)**:
+   - Plugins MAY add a small `<style>` block for tool-specific inner component layout (e.g. `.io-area`, `.preview-stage`, `.color-picker`) using `var(--ts-space-*)` and `var(--ts-*)` tokens.
+4. **Layer 4 — Domain content visuals (FREE domain colors)**:
    - Canvas/SVG artwork, color pickers/swatches, image previews, charts, syntax highlighting, and diagram payloads may freely use domain-specific colors.
 
 ### No Duplicate Top Headers Inside Iframes
 
-- **FORBIDDEN inside the ToolStow shell**: Do NOT render a persistent top banner/hero/title `<h1>` repeating the tool name already shown in the host shell's top bar. Start directly with functional controls (search bar, toolbar, form inputs, split workspace).
-- **Standalone header pattern**: If you want a page title when the user opens the tool directly in a new tab at `/t/{id}/index.html`, wrap it in `.ts-standalone-only` (optionally paired with `.ts-standalone-header`):
+- **FORBIDDEN inside the ToolStow shell**: Do NOT render a persistent top banner/hero/title `<h1>` repeating the tool name already shown in the host shell's top bar. Start directly with functional controls (`.ts-wb-toolbar`, `.ts-wb-nav`, `.ts-wb-aside`, `.ts-wb-main`).
+- **Standalone header pattern**: If you want a page title when the user opens the tool directly in a new tab at `/t/{id}/index.html`, wrap it in `.ts-standalone-only` paired with `.ts-standalone-header` as the first child of `.ts-workbench`:
   ```html
   <header class="ts-standalone-only ts-standalone-header">
     <h1>🛠️ 工具名称</h1>
@@ -212,7 +224,7 @@ Follow this strict 3-layer separation so plugins feel native to ToolStow without
   <link rel="stylesheet" href="/ui/v1/toolstow.css">
   <script src="/ui/v1/theme.js"></script>
   <style>
-    /* Layer 2: minimal tool-specific layout only */
+    /* Layer 3: minimal tool-specific inner component styles only */
     .io-area {
       min-height: 220px;
       font-family: var(--ts-font-mono);
@@ -220,32 +232,32 @@ Follow this strict 3-layer separation so plugins feel native to ToolStow without
   </style>
 </head>
 <body>
-  <div class="ts-page">
+  <div class="ts-workbench" data-aside="left">
     <header class="ts-standalone-only ts-standalone-header">
       <h1>🛠️ 示例微工具</h1>
     </header>
 
-    <div class="ts-toolbar">
-      <button id="run-btn" class="ts-btn ts-btn-primary" type="button">转换</button>
-      <button id="copy-btn" class="ts-btn" type="button">复制结果</button>
+    <header class="ts-wb-toolbar">
+      <div class="ts-row">
+        <button id="run-btn" class="ts-btn ts-btn-primary" type="button">转换</button>
+        <button id="copy-btn" class="ts-btn" type="button">复制结果</button>
+      </div>
       <span id="meta-badge" class="ts-badge ts-badge-mono">0 字符</span>
-    </div>
+    </header>
 
-    <div class="ts-split">
-      <section class="ts-card">
-        <div class="ts-card-header">
-          <h2 class="ts-section-title">输入</h2>
-        </div>
-        <textarea id="input" class="ts-textarea io-area" placeholder="在此粘贴内容..."></textarea>
-      </section>
+    <aside class="ts-wb-aside ts-card" aria-label="输入面板">
+      <div class="ts-card-header">
+        <h2 class="ts-section-title">输入</h2>
+      </div>
+      <textarea id="input" class="ts-textarea io-area" placeholder="在此粘贴内容..."></textarea>
+    </aside>
 
-      <section class="ts-card">
-        <div class="ts-card-header">
-          <h2 class="ts-section-title">输出</h2>
-        </div>
-        <pre id="output" class="ts-code io-area"></pre>
-      </section>
-    </div>
+    <main class="ts-wb-main ts-card" aria-label="输出面板">
+      <div class="ts-card-header">
+        <h2 class="ts-section-title">输出</h2>
+      </div>
+      <pre id="output" class="ts-code io-area"></pre>
+    </main>
   </div>
 
   <script>
@@ -294,7 +306,13 @@ Follow this strict 3-layer separation so plugins feel native to ToolStow without
 
 | Class | Layout / Behavior & Expected Usage |
 | :--- | :--- |
-| `.ts-page` / `.ts-page-narrow` | Centered flex column (`max-width: 1080px` / `760px`, `padding: 20px`, `gap: 16px`; tightens to `12px` at `<= 720px`). |
+| `.ts-workbench` | **Recommended semantic root grid container** (`max-width: var(--ts-wb-max-width, 1120px)`, `padding: 20px`, `gap: 16px`). Supports `data-width="narrow"` (`760px`) and `data-aside="left\|right"` (2-column responsive aside+main layout on `>= 761px` when a direct `.ts-wb-aside` child is present). |
+| `.ts-wb-toolbar` | Direct child slot of `.ts-workbench` (`grid-column: 1 / -1`, space-between wrapping flex row) for search inputs, action buttons, and status badges. |
+| `.ts-wb-nav` | Direct child slot of `.ts-workbench` (`grid-column: 1 / -1`, wrapping flex row) for `.ts-tabs` or category/view switchers. Themes can dock `.ts-wb-nav` to the left, right, or top via `ui.css`. |
+| `.ts-wb-aside` | Direct child slot of `.ts-workbench` (`minmax(280px, 350px)` sidebar column on `>= 761px`, flex column `gap: 12px`) for form parameters or secondary controls. |
+| `.ts-wb-main` | Direct child slot of `.ts-workbench` (primary content column, flex column `gap: 16px`). |
+| `.ts-collection-group` / `.ts-collection` | Inside `.ts-wb-main`: `.ts-collection-group` stacks a section heading + collection (`gap: 8px`); `.ts-collection` renders a responsive card grid (`repeat(auto-fill, minmax(min(100%, var(--ts-collection-min, 340px)), 1fr))`) or 1-column list when `data-density="list"` or overridden by a terminal theme's `ui.css`. |
+| `.ts-page` / `.ts-page-narrow` | Legacy centered flex column (`max-width: 1080px` / `760px`, `padding: 20px`, `gap: 16px`; prefer `.ts-workbench` for new tools). |
 | `.ts-toolbar` | Flex row (`justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px`). |
 | `.ts-row` / `.ts-stack` | `.ts-row`: wrapping horizontal flex (`gap: 8px`); `.ts-stack`: vertical flex (`gap: 12px`). |
 | `.ts-split` | Responsive 2-column grid (`repeat(2, minmax(0, 1fr))`, `gap: 16px`, `align-items: start`); collapses to 1 column at `<= 720px`. |
