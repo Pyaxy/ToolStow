@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div class="tui-shell">
+  <div class="tui-shell" data-view="directory">
     <header class="tui-topbar">
       <div class="tui-topbar-left">
         <button
@@ -98,33 +98,72 @@
         </section>
 
         <section id="tool-view" class="tui-tool-view" hidden>
-          <div class="tui-tool-bar">
-            <div class="tui-tool-meta">
-              <button
-                id="mobile-back-btn"
-                class="tui-btn tui-mobile-only"
-                type="button"
-                aria-label="返回列表"
-              >&lt;- LIST</button>
+          <div class="tui-tool-head">
+            <div class="tui-tool-bar">
+              <div class="tui-tool-meta">
+                <button
+                  id="mobile-back-btn"
+                  class="tui-btn tui-mobile-only"
+                  type="button"
+                  aria-label="返回列表"
+                ><span aria-hidden="true">&lt;-</span><span class="tui-btn-label"> LIST</span></button>
 
-              <span id="active-tool-icon" class="tui-tool-icon tui-tool-icon-lg"></span>
+                <button
+                  id="tool-sidebar-btn"
+                  class="tui-btn tui-mobile-only"
+                  type="button"
+                  aria-label="切换侧边栏"
+                  aria-expanded="false"
+                  aria-controls="sidebar"
+                >[≡]</button>
 
-              <div class="tui-tool-text">
-                <div class="tui-tool-title-row">
-                  <span class="tui-exec-tag" aria-hidden="true">EXEC</span>
-                  <h1 id="active-tool-name"></h1>
-                  <span id="active-tool-id" class="tui-mono-pill"></span>
-                  <span id="active-tool-version" class="tui-mono-pill"></span>
-                  <span id="active-tool-theme-badge" class="tui-mono-pill tui-pill-accent" hidden>THEME:SYNC</span>
+                <span id="active-tool-icon" class="tui-tool-icon tui-tool-icon-lg"></span>
+
+                <div class="tui-tool-text">
+                  <div class="tui-tool-title-row">
+                    <span class="tui-exec-tag" aria-hidden="true">EXEC</span>
+                    <h1 id="active-tool-name"></h1>
+                    <span id="active-tool-id" class="tui-mono-pill"></span>
+                    <span id="active-tool-version" class="tui-mono-pill"></span>
+                    <span id="active-tool-theme-badge" class="tui-mono-pill tui-pill-accent" hidden>THEME:SYNC</span>
+                  </div>
+                  <p id="active-tool-desc" class="tui-tool-desc"></p>
                 </div>
-                <p id="active-tool-desc" class="tui-tool-desc"></p>
+              </div>
+
+              <div class="tui-tool-actions">
+                <button
+                  id="tool-details-toggle"
+                  class="tui-btn tui-details-toggle"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="tui-details-panel"
+                  data-role="tool-details-toggle"
+                >INFO</button>
+                <button id="reload-tool-btn" class="tui-btn" type="button" aria-label="刷新工具"><span aria-hidden="true">↻</span><span class="tui-btn-label"> 刷新</span></button>
+                <a id="standalone-link" class="tui-btn" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具"><span class="tui-btn-label">新标签页 </span><span aria-hidden="true">↗</span></a>
+                <button id="close-tool-btn" class="tui-btn" type="button" aria-label="关闭当前工具"><span aria-hidden="true">×</span><span class="tui-btn-label"> 关闭</span></button>
               </div>
             </div>
 
-            <div class="tui-tool-actions">
-              <button id="reload-tool-btn" class="tui-btn" type="button">刷新</button>
-              <a id="standalone-link" class="tui-btn" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具">新标签页 ↗</a>
-              <button id="close-tool-btn" class="tui-btn" type="button" aria-label="关闭当前工具">× 关闭</button>
+            <div id="tui-details-panel" class="tui-details-panel" role="region" aria-label="工具详情" hidden>
+              <div class="tui-details-header">
+                <div class="tui-details-title-row">
+                  <span class="tui-exec-tag" aria-hidden="true">EXEC</span>
+                  <h2 id="details-tool-name" class="tui-details-title"></h2>
+                </div>
+                <div class="tui-details-pills">
+                  <span id="details-tool-id" class="tui-mono-pill"></span>
+                  <span id="details-tool-version" class="tui-mono-pill"></span>
+                  <span id="details-tool-theme-badge" class="tui-mono-pill tui-pill-accent" hidden>THEME:SYNC</span>
+                </div>
+              </div>
+              <p id="details-tool-desc" class="tui-details-desc"></p>
+              <div id="details-switcher-row" class="tui-details-switcher" hidden>
+                <label for="details-quick-switcher" class="tui-details-label">SWITCH</label>
+                <select id="details-quick-switcher" class="tui-quick-select" aria-label="在详情中快速切换工具"></select>
+              </div>
+              <div id="details-tool-tags" class="tui-details-tags" role="group" aria-label="按标签返回目录"></div>
             </div>
           </div>
 

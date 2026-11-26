@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div class="rk-shell">
+  <div class="rk-shell" data-view="directory">
     <!-- Hand-Drawn Notebook Top Bar -->
     <header class="rk-topbar">
       <div class="rk-brand-group">
@@ -94,28 +94,55 @@
 
     <!-- Framed Sketchbook Tool Workspace -->
     <section id="tool-view" class="rk-workspace" hidden>
-      <div class="rk-workspace-bar">
-        <div class="rk-workspace-left">
-          <button id="back-to-notebook-btn" class="rk-btn rk-btn-sm" type="button">← 返回笔记本</button>
+      <div class="rk-workspace-head">
+        <div class="rk-workspace-bar">
+          <div class="rk-workspace-left">
+            <button id="back-to-notebook-btn" class="rk-btn rk-btn-sm" type="button" aria-label="返回笔记本"><span aria-hidden="true">←</span><span class="rk-btn-label"> 返回笔记本</span></button>
 
-          <select id="quick-switcher" class="rk-quick-select" aria-label="快速切换工具"></select>
+            <select id="quick-switcher" class="rk-quick-select" aria-label="快速切换工具"></select>
 
-          <span id="active-tool-icon" class="rk-tool-icon rk-tool-icon-lg"></span>
+            <span id="active-tool-icon" class="rk-tool-icon rk-tool-icon-lg"></span>
 
-          <div class="rk-tool-meta">
-            <div class="rk-tool-title-row">
-              <h1 id="active-tool-name"></h1>
-              <code id="active-tool-id" class="rk-mono-pill"></code>
-              <span id="active-tool-version" class="rk-mono-pill"></span>
-              <span id="active-tool-theme-badge" class="rk-sync-pill" hidden>手绘同步</span>
+            <div class="rk-tool-meta">
+              <div class="rk-tool-title-row">
+                <h1 id="active-tool-name"></h1>
+                <code id="active-tool-id" class="rk-mono-pill"></code>
+                <span id="active-tool-version" class="rk-mono-pill"></span>
+                <span id="active-tool-theme-badge" class="rk-sync-pill" hidden>手绘同步</span>
+              </div>
+              <p id="active-tool-desc" class="rk-tool-desc"></p>
             </div>
-            <p id="active-tool-desc" class="rk-tool-desc"></p>
+          </div>
+
+          <div class="rk-workspace-actions">
+            <button
+              id="tool-details-toggle"
+              class="rk-btn rk-btn-sm rk-details-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="tool-details-panel"
+              data-role="tool-details-toggle"
+            >详情</button>
+            <button id="reload-tool-btn" class="rk-btn rk-btn-sm" type="button" aria-label="刷新工具"><span aria-hidden="true">↻</span><span class="rk-btn-label"> 刷新</span></button>
+            <a id="standalone-link" class="rk-btn rk-btn-sm rk-btn-accent" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具"><span class="rk-btn-label">新标签页 </span><span aria-hidden="true">↗</span></a>
           </div>
         </div>
 
-        <div class="rk-workspace-actions">
-          <button id="reload-tool-btn" class="rk-btn rk-btn-sm" type="button">↻ 刷新</button>
-          <a id="standalone-link" class="rk-btn rk-btn-sm rk-btn-accent" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具">新标签页 ↗</a>
+        <div id="tool-details-panel" class="rk-details-panel" role="region" aria-label="工具详情" hidden>
+          <div class="rk-details-header">
+            <h2 id="details-tool-name" class="rk-details-title"></h2>
+            <div class="rk-details-pills">
+              <code id="details-tool-id" class="rk-mono-pill"></code>
+              <span id="details-tool-version" class="rk-mono-pill"></span>
+              <span id="details-tool-theme-badge" class="rk-sync-pill" hidden>手绘同步</span>
+            </div>
+          </div>
+          <p id="details-tool-desc" class="rk-details-desc"></p>
+          <div id="details-switcher-row" class="rk-details-switcher" hidden>
+            <label for="details-quick-switcher" class="rk-tags-label">切换工具</label>
+            <select id="details-quick-switcher" class="rk-quick-select" aria-label="在详情中快速切换工具"></select>
+          </div>
+          <div id="details-tool-tags" class="rk-details-tags"></div>
         </div>
       </div>
 
