@@ -127,6 +127,7 @@ function renderActiveFilterBar(s) {
   chip.append(label, close);
   chip.addEventListener("click", () => {
     host.setFilters({ tag: "" });
+    els.searchInput.focus();
   });
 
   els.activeFilterBar.hidden = false;
@@ -169,6 +170,17 @@ function renderDirectoryList(s) {
       );
     }
 
+    if (!s.loading && !s.error) {
+      emptyItem.appendChild(
+        makeButton("btn btn-sm", "刷新目录", async () => {
+          await host.refresh();
+          if (!host.getState().selectedId && document.activeElement === document.body) {
+            els.searchInput.focus({ preventScroll: true });
+          }
+        })
+      );
+    }
+
     fragment.appendChild(emptyItem);
   } else {
     for (const tool of list) {
@@ -176,6 +188,7 @@ function renderDirectoryList(s) {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "tool-row";
+      row.dataset.toolId = tool.id;
 
       const iconWrap = document.createElement("span");
       iconWrap.className = "tool-icon";
@@ -219,11 +232,20 @@ function renderDirectoryList(s) {
 }
 
 function renderDirectory(s) {
+  const focusedToolId = document.activeElement?.dataset.toolId;
+  const filterHadFocus = els.activeFilterBar.contains(document.activeElement);
   renderActiveFilterBar(s);
   renderDirectoryList(s);
 
   if (document.activeElement !== els.searchInput && els.searchInput.value !== s.filters.q) {
     els.searchInput.value = s.filters.q;
+  }
+
+  if (focusedToolId) {
+    const row = els.emptyGrid.querySelector(`[data-tool-id="${CSS.escape(focusedToolId)}"]`);
+    (row || els.searchInput).focus({ preventScroll: true });
+  } else if (filterHadFocus) {
+    (els.activeFilterBar.querySelector("button") || els.searchInput).focus({ preventScroll: true });
   }
 }
 
@@ -346,6 +368,7 @@ function selectPaletteTool(tool) {
 }
 
 function renderPaletteList(s) {
+  const hadResultFocus = els.cmdPaletteList.contains(document.activeElement);
   const results = filterPaletteTools(s.allTools, ui.paletteQuery);
   ui.paletteResults = results;
 
@@ -356,6 +379,7 @@ function renderPaletteList(s) {
     empty.textContent = s.allTools.length === 0 ? "暂无可用工具。" : "没有匹配的工具。";
     els.cmdPaletteList.replaceChildren(empty);
     els.cmdPaletteInput.removeAttribute("aria-activedescendant");
+    if (hadResultFocus) els.cmdPaletteInput.focus();
     return;
   }
 
@@ -412,11 +436,15 @@ function renderPaletteList(s) {
     idEl.textContent = tool.id;
 
     item.append(iconWrap, body, idEl);
-    item.addEventListener("mouseenter", () => {
+    const activate = () => {
       if (ui.paletteActiveIndex !== index) {
         ui.paletteActiveIndex = index;
         updatePaletteActiveRow();
       }
+    };
+    item.addEventListener("focus", activate);
+    item.addEventListener("mouseenter", () => {
+      if (document.activeElement === els.cmdPaletteInput) activate();
     });
     item.addEventListener("click", () => selectPaletteTool(tool));
 
@@ -425,6 +453,7 @@ function renderPaletteList(s) {
 
   els.cmdPaletteList.replaceChildren(fragment);
   updatePaletteActiveRow();
+  if (hadResultFocus) els.cmdPaletteList.children[ui.paletteActiveIndex]?.focus();
 }
 
 function openPalette() {
@@ -514,7 +543,20 @@ function focusSearch() {
   els.searchInput.select();
 }
 
+function refreshVisibleDirectory() {
+  const state = host.getState();
+  if (document.visibilityState === "visible" && !state.selectedId && !state.loading) {
+    host.refresh();
+  }
+}
+
 function bindEvents() {
+  document.addEventListener("visibilitychange", refreshVisibleDirectory);
+  window.addEventListener("focus", refreshVisibleDirectory);
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) refreshVisibleDirectory();
+  });
+
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
     host.clearSelection({ updateHash: true });
@@ -594,20 +636,16 @@ function bindEvents() {
       closePalette({ restoreFocus: true });
       return;
     }
-    if (e.key === "ArrowDown") {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (ui.paletteResults.length > 0) {
-        ui.paletteActiveIndex = (ui.paletteActiveIndex + 1) % ui.paletteResults.length;
+        const direction = e.key === "ArrowDown" ? 1 : -1;
+        const count = ui.paletteResults.length;
+        ui.paletteActiveIndex = (ui.paletteActiveIndex + direction + count) % count;
         updatePaletteActiveRow();
-      }
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (ui.paletteResults.length > 0) {
-        ui.paletteActiveIndex =
-          (ui.paletteActiveIndex - 1 + ui.paletteResults.length) % ui.paletteResults.length;
-        updatePaletteActiveRow();
+        if (els.cmdPaletteList.contains(document.activeElement)) {
+          els.cmdPaletteList.children[ui.paletteActiveIndex].focus();
+        }
       }
       return;
     }
@@ -657,6 +695,7 @@ async function bootstrap() {
   host = window.ToolStowHost.create({
     iframeHost: els.iframeHost,
     defaultMode: "auto",
+    onSearchShortcut: openPalette,
     onError: (message) => showStatus(message || "无法连接到 ToolStow 服务", "error", 6000),
   });
 

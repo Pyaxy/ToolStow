@@ -46,7 +46,7 @@ const els = {
 };
 
 let statusTimer = null;
-let searchTimer = null;
+let searchToolId = null;
 
 function readPhosphorStorage() {
   try {
@@ -312,7 +312,7 @@ function renderTable(state) {
       runBtn.textContent = "[RUN]";
       runBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        host.selectTool(tool.id, { updateHash: true, forceReload: false });
+        openTool(tool.id);
       });
       actionsWrap.appendChild(runBtn);
 
@@ -334,7 +334,7 @@ function renderTable(state) {
 
       tr.append(tdPid, tdTool, tdCat, tdTags, tdVer, tdActions);
       tr.addEventListener("click", () => {
-        host.selectTool(tool.id, { updateHash: true, forceReload: false });
+        openTool(tool.id);
       });
 
       fragment.appendChild(tr);
@@ -405,7 +405,14 @@ function renderActiveToolHeader(tool, state) {
   els.activeToolTags.replaceChildren(tagFrag);
 }
 
+function openTool(id) {
+  searchToolId = null;
+  host.selectTool(id);
+}
+
 function renderState(state) {
+  if (searchToolId !== state.selectedId) searchToolId = null;
+  const showingSearchResults = Boolean(searchToolId);
   els.brandTitle.textContent = state.site.siteTitle || DEFAULT_SITE_TITLE;
   els.siteDescLine.textContent = state.site.siteDescription || "";
   els.adminLink.hidden = state.site.isAdmin !== true;
@@ -422,14 +429,11 @@ function renderState(state) {
   els.footerToolsStat.textContent = `TOOLS:${String(state.filteredTools.length).padStart(2, "0")}/${String(state.allTools.length).padStart(2, "0")}`;
   els.footerStatus.textContent = state.selectedTool ? `PROC:${state.selectedTool.id}` : "NOC:ONLINE";
 
-  if (state.selectedTool) {
-    els.directoryView.hidden = true;
-    els.toolView.hidden = false;
-    renderActiveToolHeader(state.selectedTool, state);
-  } else {
-    els.toolView.hidden = true;
-    els.directoryView.hidden = false;
-  }
+  const showingTool = Boolean(state.selectedTool && !showingSearchResults);
+  els.directoryView.hidden = showingTool;
+  els.toolView.hidden = !showingTool;
+  els.clearFiltersBtn.textContent = showingSearchResults ? "返回当前工具" : "[RESET]";
+  if (showingTool) renderActiveToolHeader(state.selectedTool, state);
 }
 
 function bindEvents() {
@@ -445,7 +449,7 @@ function bindEvents() {
   els.quickSwitcher.addEventListener("change", (e) => {
     const nextId = e.target.value;
     if (nextId && nextId !== host.getState().selectedId) {
-      host.selectTool(nextId, { updateHash: true, forceReload: false });
+      openTool(nextId);
     }
   });
 
@@ -457,18 +461,14 @@ function bindEvents() {
 
   els.searchInput.addEventListener("input", (e) => {
     const query = e.target.value;
-    if (host.getState().selectedId) {
-      host.clearSelection();
-    }
-    if (searchTimer) window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(() => {
-      host.setFilters({ q: query });
-    }, 150);
+    searchToolId = query.trim() ? host.getState().selectedId : null;
+    host.setFilters({ q: query });
   });
 
   els.searchInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (els.searchInput.value) {
+        searchToolId = null;
         els.searchInput.value = "";
         host.setFilters({ q: "" });
       } else {
@@ -491,7 +491,12 @@ function bindEvents() {
 
   els.clearFiltersBtn.addEventListener("click", () => {
     els.searchInput.value = "";
-    host.clearFilters();
+    if (searchToolId) {
+      searchToolId = null;
+      host.setFilters({ q: "" });
+    } else {
+      host.clearFilters();
+    }
   });
 
   els.reloadToolBtn.addEventListener("click", () => {

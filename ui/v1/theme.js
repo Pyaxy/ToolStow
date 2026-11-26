@@ -152,6 +152,7 @@
   var listeners = new Set();
   var toastEl = null;
   var toastTimer = null;
+  var hostSearchShortcut = false;
 
   // Apply initial theme synchronously to prevent dark-mode first-frame FOUC.
   ROOT.dataset.theme = state.mode;
@@ -307,11 +308,31 @@
   window.addEventListener("message", function (event) {
     if (!event || !event.data || typeof event.data !== "object") return;
     if (event.data.type !== "toolstow:theme") return;
-    applyThemePayload(event.data.payload);
+    var payload = event.data.payload;
+    if (isEmbedded && event.source === window.parent) {
+      hostSearchShortcut = Boolean(payload && payload.searchShortcut === true);
+    }
+    applyThemePayload(payload);
   });
 
   // Notify host shell that this plugin is ready to receive theme sync.
   if (isEmbedded) {
+    window.addEventListener("keydown", function (event) {
+      if (
+        !hostSearchShortcut ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.keyCode === 229 ||
+        event.altKey ||
+        event.shiftKey ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== "k"
+      ) return;
+
+      event.preventDefault();
+      if (!event.repeat) window.parent.postMessage({ type: "toolstow:search" }, "*");
+    });
+
     try {
       window.parent.postMessage({ type: "toolstow:ready" }, "*");
     } catch (_) {

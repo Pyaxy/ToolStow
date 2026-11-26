@@ -469,6 +469,8 @@ Key `ToolStowHost` static helpers & instance methods:
 - **Static helpers**: `ToolStowHost.renderIcon(containerEl, tool, fallbackGlyph)`, `ToolStowHost.resolveIconUrl(tool)`, `ToolStowHost.isSafeToolUrl(url)`, `ToolStowHost.sanitizeSandboxTokens(tokens)`, `ToolStowHost.normalizeHexColor(val)`, `ToolStowHost.readStorage(key)` / `writeStorage(key, val)`.
 - **Instance methods**: `host.bootstrap()`, `host.getState()`, `host.refresh()`, `host.setFilters({ q, category, tag })`, `host.clearFilters()`, `host.hasActiveFilters()`, `host.selectTool(id)`, `host.clearSelection()`, `host.mountTool(containerEl, toolOrId, { cacheBust })`, `host.reloadTool()`, `host.getStandaloneUrl(tool)`, `host.setThemeMode(mode)`, `host.toggleThemeMode()`, `host.syncTheme()` (sync the current `data-ts-skin` and computed tokens to the active iframe), `host.subscribe(fn)`.
 
+Themes can pass `onSearchShortcut` to `ToolStowHost.create()` to receive `Cmd/Ctrl+K` from the focused tool iframe. Tools using the shared `theme.js` forward this shortcut after their own document-level handlers. Keep a visible search trigger when offering this shortcut so tools with their own keyboard handling remain usable.
+
 ---
 
 ### 7.1 Stylesheet Load Order & Anti-FOUC `<head>` Bootstrap (Raw Contract Details)
@@ -606,6 +608,7 @@ window.addEventListener("message", (event) => {
   - **Home & discovery freedom**: Full custom shells own the entire `/` layout (minimalist list, ops table, ad wall, or interactive town map), while skin-only themes inherit the built-in shell layout; simply avoid rendering the exact same tool list twice side-by-side on one screen.
   - **Catalog filters**. Prefer one visible control group per filter on a screen. Tool cards, table rows, and workspace headers can show the same labels as metadata. Use `aria-pressed` for tag filter buttons. If a tag action closes the tool and applies a filter in the directory, label that navigation explicitly.
   - **Active workspace**. Themes choose the size of the tool view and which navigation, metadata, or actions surround it. A focused workspace can use a compact toolbar and put secondary actions in a details popover.
+  - **Search from a workspace**. Keep the active iframe mounted while the user searches. Closing the results should resume the same tool. Use a selection or explicit return action to leave that workspace.
   - **New-tool discoverability**: Spatial or curated themes (e.g., mapping known tools to specific town buildings) should provide a fallback discovery surface (such as a notice board or catalog drawer) so newly uploaded tools from `/api/tools` are immediately reachable without editing the theme.
 - **Responsive & overflow guardrails (test at `320px`, `390px`, `844×390`, and `1280×600`)**:
   - **No clipped full-page backgrounds**: Put repeating wall/paper textures on `html, body` (or ensure `body { min-height: 100dvh; }`) so sparse pages (1–3 tools) fill the entire viewport without exposing a solid bottom band.

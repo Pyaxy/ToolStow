@@ -237,6 +237,7 @@
     var onStateChange = typeof opts.onStateChange === "function" ? opts.onStateChange : null;
     var onError = typeof opts.onError === "function" ? opts.onError : null;
     var onToolReady = typeof opts.onToolReady === "function" ? opts.onToolReady : null;
+    var onSearchShortcut = typeof opts.onSearchShortcut === "function" ? opts.onSearchShortcut : null;
 
     var mediaQuery = null;
     try {
@@ -517,6 +518,7 @@
               mode: state.theme.mode,
               accent: state.theme.accent,
               skin: readThemeSkin(),
+              searchShortcut: Boolean(onSearchShortcut),
               tokens: Object.assign({}, tokens),
             },
           },
@@ -901,7 +903,12 @@
       var iframe = state.activeIframe;
       if (!iframe || !event || event.source !== iframe.contentWindow) return;
       var data = event.data;
-      if (!data || typeof data !== "object" || data.type !== "toolstow:ready") return;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "toolstow:search" && onSearchShortcut && doc.activeElement === iframe) {
+        onSearchShortcut();
+        return;
+      }
+      if (data.type !== "toolstow:ready") return;
       state.activeIframeReady = true;
       readThemeFromCss();
       postThemeToActiveIframe();

@@ -34,7 +34,7 @@ const els = {
 };
 
 let statusTimer = null;
-let searchTimer = null;
+let searchToolId = null;
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
   if (statusTimer) {
@@ -242,7 +242,7 @@ function renderToolWall(state) {
       card.appendChild(foot);
 
       card.addEventListener("click", () => {
-        host.selectTool(tool.id, { updateHash: true, forceReload: false });
+        openTool(tool.id);
       });
 
       fragment.appendChild(card);
@@ -294,7 +294,14 @@ function renderActiveToolHeader(tool, state) {
   els.activeToolTags.replaceChildren(tagFrag);
 }
 
+function openTool(id) {
+  searchToolId = null;
+  host.selectTool(id);
+}
+
 function renderState(state) {
+  if (searchToolId !== state.selectedId) searchToolId = null;
+  const showingSearchResults = Boolean(searchToolId);
   const siteTitle = state.site.siteTitle || DEFAULT_SITE_TITLE;
   els.brandTitle.textContent = siteTitle;
   els.heroTitle.textContent = siteTitle;
@@ -316,14 +323,11 @@ function renderState(state) {
     ? `正在使用：${state.selectedTool.id}`
     : "笔记本就绪";
 
-  if (state.selectedTool) {
-    els.notebookView.hidden = true;
-    els.toolView.hidden = false;
-    renderActiveToolHeader(state.selectedTool, state);
-  } else {
-    els.toolView.hidden = true;
-    els.notebookView.hidden = false;
-  }
+  const showingTool = Boolean(state.selectedTool && !showingSearchResults);
+  els.notebookView.hidden = showingTool;
+  els.toolView.hidden = !showingTool;
+  els.clearFiltersBtn.textContent = showingSearchResults ? "返回当前工具" : "清空筛选";
+  if (showingTool) renderActiveToolHeader(state.selectedTool, state);
 }
 
 function bindEvents() {
@@ -339,7 +343,7 @@ function bindEvents() {
   els.quickSwitcher.addEventListener("change", (e) => {
     const targetId = e.target.value;
     if (targetId && targetId !== host.getState().selectedId) {
-      host.selectTool(targetId, { updateHash: true, forceReload: false });
+      openTool(targetId);
     }
   });
 
@@ -349,18 +353,14 @@ function bindEvents() {
 
   els.searchInput.addEventListener("input", (e) => {
     const query = e.target.value;
-    if (host.getState().selectedId) {
-      host.clearSelection();
-    }
-    if (searchTimer) window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(() => {
-      host.setFilters({ q: query });
-    }, 150);
+    searchToolId = query.trim() ? host.getState().selectedId : null;
+    host.setFilters({ q: query });
   });
 
   els.searchInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (els.searchInput.value) {
+        searchToolId = null;
         els.searchInput.value = "";
         host.setFilters({ q: "" });
       } else {
@@ -383,7 +383,12 @@ function bindEvents() {
 
   els.clearFiltersBtn.addEventListener("click", () => {
     els.searchInput.value = "";
-    host.clearFilters();
+    if (searchToolId) {
+      searchToolId = null;
+      host.setFilters({ q: "" });
+    } else {
+      host.clearFilters();
+    }
   });
 
   els.reloadToolBtn.addEventListener("click", () => {
