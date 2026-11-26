@@ -8,6 +8,7 @@ const PHOSPHOR_META = {
 };
 
 const els = {
+  shell: document.querySelector(".ph-shell"),
   brandLink: document.getElementById("brand-link"),
   brandTitle: document.getElementById("brand-title"),
   searchInput: document.getElementById("search-input"),
@@ -37,6 +38,18 @@ const els = {
   activeToolThemeBadge: document.getElementById("active-tool-theme-badge"),
   activeToolDesc: document.getElementById("active-tool-desc"),
   activeToolTags: document.getElementById("active-tool-tags"),
+  toolDetailsToggle: document.getElementById("tool-details-toggle"),
+  toolDetailsPanel: document.getElementById("tool-details-panel"),
+  toolDetailsBackdrop: document.getElementById("tool-details-backdrop"),
+  detailsToolId: document.getElementById("details-tool-id"),
+  detailsToolVersion: document.getElementById("details-tool-version"),
+  detailsToolCategory: document.getElementById("details-tool-category"),
+  detailsToolThemeBadge: document.getElementById("details-tool-theme-badge"),
+  detailsToolDesc: document.getElementById("details-tool-desc"),
+  detailsSwitcherRow: document.getElementById("details-switcher-row"),
+  detailsQuickSwitcher: document.getElementById("details-quick-switcher"),
+  detailsTagsSection: document.getElementById("details-tags-section"),
+  detailsToolTags: document.getElementById("details-tool-tags"),
   reloadToolBtn: document.getElementById("reload-tool-btn"),
   standaloneLink: document.getElementById("standalone-link"),
   iframeHost: document.getElementById("iframe-host"),
@@ -47,6 +60,30 @@ const els = {
 
 let statusTimer = null;
 let searchToolId = null;
+let lastActiveToolId = null;
+
+function isToolDetailsOpen() {
+  return Boolean(els.toolDetailsPanel && !els.toolDetailsPanel.hidden);
+}
+
+function setToolDetailsOpen(open, { returnFocus = false } = {}) {
+  if (!els.toolDetailsPanel || !els.toolDetailsToggle) return;
+  const next = Boolean(open);
+  els.toolDetailsPanel.hidden = !next;
+  if (els.toolDetailsBackdrop) {
+    els.toolDetailsBackdrop.hidden = !next;
+  }
+  els.toolDetailsToggle.setAttribute("aria-expanded", next ? "true" : "false");
+  if (!next && returnFocus) {
+    els.toolDetailsToggle.focus();
+  }
+}
+
+function closeToolDetails(options) {
+  if (isToolDetailsOpen()) {
+    setToolDetailsOpen(false, options);
+  }
+}
 
 function readPhosphorStorage() {
   try {
@@ -126,6 +163,9 @@ const host = window.ToolStowHost.create({
   },
   onToolReady() {
     els.activeToolThemeBadge.hidden = false;
+    if (els.detailsToolThemeBadge) {
+      els.detailsToolThemeBadge.hidden = false;
+    }
   },
 });
 
@@ -344,7 +384,8 @@ function renderTable(state) {
   els.toolTableBody.replaceChildren(fragment);
 }
 
-function renderQuickSwitcher(state) {
+function populateQuickSelect(selectEl, state) {
+  if (!selectEl) return;
   const fragment = document.createDocumentFragment();
   for (const tool of state.allTools) {
     const opt = document.createElement("option");
@@ -355,8 +396,41 @@ function renderQuickSwitcher(state) {
     }
     fragment.appendChild(opt);
   }
-  els.quickSwitcher.replaceChildren(fragment);
-  els.quickSwitcher.hidden = state.allTools.length === 0;
+  selectEl.replaceChildren(fragment);
+  selectEl.hidden = state.allTools.length === 0;
+}
+
+function renderQuickSwitcher(state) {
+  populateQuickSelect(els.quickSwitcher, state);
+  populateQuickSelect(els.detailsQuickSwitcher, state);
+  if (els.detailsSwitcherRow) {
+    els.detailsSwitcherRow.hidden = state.allTools.length <= 1;
+  }
+}
+
+function buildToolTagButtons(tags, includeLabel) {
+  const frag = document.createDocumentFragment();
+  if (!Array.isArray(tags) || tags.length === 0) return frag;
+  if (includeLabel) {
+    const label = document.createElement("span");
+    label.className = "ph-tag-label";
+    label.textContent = "按标签返回目录";
+    frag.appendChild(label);
+  }
+  for (const tag of tags) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ph-tag-pill";
+    btn.textContent = `#${tag}`;
+    btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
+    btn.addEventListener("click", () => {
+      closeToolDetails();
+      host.setFilters({ q: "", category: "", tag });
+      host.clearSelection();
+    });
+    frag.appendChild(btn);
+  }
+  return frag;
 }
 
 function renderActiveToolHeader(tool, state) {
@@ -366,12 +440,33 @@ function renderActiveToolHeader(tool, state) {
   els.activeToolId.textContent = tool.id;
   els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
   els.activeToolVersion.hidden = !tool.version;
-  els.activeToolThemeBadge.hidden = !(tool.themeAware === true || state.activeIframeReady);
+  const themeSyncActive = tool.themeAware === true || state.activeIframeReady;
+  els.activeToolThemeBadge.hidden = !themeSyncActive;
   els.activeToolDesc.textContent = tool.description || "";
   els.activeToolDesc.hidden = !tool.description;
 
+  if (els.detailsToolId) els.detailsToolId.textContent = tool.id;
+  if (els.detailsToolVersion) {
+    els.detailsToolVersion.textContent = tool.version ? `v${tool.version}` : "";
+    els.detailsToolVersion.hidden = !tool.version;
+  }
+  if (els.detailsToolCategory) {
+    els.detailsToolCategory.textContent = tool.category || "";
+    els.detailsToolCategory.hidden = !tool.category;
+  }
+  if (els.detailsToolThemeBadge) {
+    els.detailsToolThemeBadge.hidden = !themeSyncActive;
+  }
+  if (els.detailsToolDesc) {
+    els.detailsToolDesc.textContent = tool.description || "";
+    els.detailsToolDesc.hidden = !tool.description;
+  }
+
   if (els.quickSwitcher.value !== tool.id) {
     els.quickSwitcher.value = tool.id;
+  }
+  if (els.detailsQuickSwitcher && els.detailsQuickSwitcher.value !== tool.id) {
+    els.detailsQuickSwitcher.value = tool.id;
   }
 
   const standaloneUrl = host.getStandaloneUrl(tool);
@@ -383,29 +478,18 @@ function renderActiveToolHeader(tool, state) {
     els.standaloneLink.hidden = true;
   }
 
-  const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags) && tool.tags.length > 0) {
-    const label = document.createElement("span");
-    label.className = "ph-tag-label";
-    label.textContent = "按标签返回目录";
-    tagFrag.appendChild(label);
-    for (const tag of tool.tags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "ph-tag-pill";
-      btn.textContent = `#${tag}`;
-      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
-      btn.addEventListener("click", () => {
-        host.setFilters({ q: "", category: "", tag });
-        host.clearSelection();
-      });
-      tagFrag.appendChild(btn);
-    }
+  els.activeToolTags.replaceChildren(buildToolTagButtons(tool.tags, true));
+  const hasTags = Array.isArray(tool.tags) && tool.tags.length > 0;
+  if (els.detailsToolTags) {
+    els.detailsToolTags.replaceChildren(buildToolTagButtons(tool.tags, false));
   }
-  els.activeToolTags.replaceChildren(tagFrag);
+  if (els.detailsTagsSection) {
+    els.detailsTagsSection.hidden = !hasTags;
+  }
 }
 
 function openTool(id) {
+  closeToolDetails();
   searchToolId = null;
   host.selectTool(id);
 }
@@ -430,6 +514,14 @@ function renderState(state) {
   els.footerStatus.textContent = state.selectedTool ? `PROC:${state.selectedTool.id}` : "NOC:ONLINE";
 
   const showingTool = Boolean(state.selectedTool && !showingSearchResults);
+  if (els.shell) {
+    els.shell.dataset.view = showingTool ? "tool" : "directory";
+  }
+  if (!showingTool || state.selectedId !== lastActiveToolId) {
+    closeToolDetails();
+  }
+  lastActiveToolId = showingTool ? state.selectedId : null;
+
   els.directoryView.hidden = showingTool;
   els.toolView.hidden = !showingTool;
   els.clearFiltersBtn.textContent = showingSearchResults ? "返回当前工具" : "[RESET]";
@@ -439,19 +531,68 @@ function renderState(state) {
 function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
+    closeToolDetails();
     host.clearSelection();
   });
 
   els.backToListBtn.addEventListener("click", () => {
+    closeToolDetails();
     host.clearSelection();
   });
 
-  els.quickSwitcher.addEventListener("change", (e) => {
+  const handleQuickSwitch = (e) => {
     const nextId = e.target.value;
     if (nextId && nextId !== host.getState().selectedId) {
       openTool(nextId);
     }
+  };
+
+  els.quickSwitcher.addEventListener("change", handleQuickSwitch);
+  if (els.detailsQuickSwitcher) {
+    els.detailsQuickSwitcher.addEventListener("change", handleQuickSwitch);
+  }
+
+  if (els.toolDetailsToggle) {
+    els.toolDetailsToggle.addEventListener("click", () => {
+      setToolDetailsOpen(!isToolDetailsOpen());
+    });
+  }
+
+  if (els.toolDetailsBackdrop) {
+    els.toolDetailsBackdrop.addEventListener("click", () => {
+      closeToolDetails();
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!isToolDetailsOpen()) return;
+    if (
+      els.toolDetailsPanel.contains(e.target) ||
+      (els.toolDetailsToggle && els.toolDetailsToggle.contains(e.target))
+    ) {
+      return;
+    }
+    closeToolDetails();
   });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isToolDetailsOpen()) {
+      e.preventDefault();
+      closeToolDetails({ returnFocus: true });
+    }
+  });
+
+  if (typeof window.matchMedia === "function") {
+    const compactMq = window.matchMedia("(max-width: 820px), (max-height: 500px)");
+    const onCompactChange = (e) => {
+      if (!e.matches) {
+        closeToolDetails();
+      }
+    };
+    if (typeof compactMq.addEventListener === "function") {
+      compactMq.addEventListener("change", onCompactChange);
+    }
+  }
 
   els.phosphorSwitch.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-phosphor-choice]");

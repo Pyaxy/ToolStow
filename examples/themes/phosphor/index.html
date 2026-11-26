@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div class="ph-shell">
+  <div class="ph-shell" data-view="directory">
     <header class="ph-topbar">
       <div class="ph-brand-group">
         <a href="#" id="brand-link" class="ph-brand" aria-label="返回 NOC 目录">
@@ -109,7 +109,7 @@
     <section id="tool-view" class="ph-workspace" hidden>
       <div class="ph-workspace-bar">
         <div class="ph-workspace-left">
-          <button id="back-to-list-btn" class="ph-btn ph-btn-xs" type="button">← 返回</button>
+          <button id="back-to-list-btn" class="ph-btn ph-btn-xs" type="button" aria-label="返回 NOC 目录">← 返回</button>
 
           <select id="quick-switcher" class="ph-quick-select" aria-label="快速切换工具"></select>
 
@@ -127,12 +127,43 @@
         </div>
 
         <div class="ph-workspace-actions">
-          <button id="reload-tool-btn" class="ph-btn ph-btn-xs" type="button">刷新</button>
-          <a id="standalone-link" class="ph-btn ph-btn-xs ph-btn-accent" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具">新标签页 ↗</a>
+          <button
+            id="tool-details-toggle"
+            class="ph-btn ph-btn-xs ph-details-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="tool-details-panel"
+            data-role="tool-details-toggle"
+            title="展开工具详情"
+          >INFO</button>
+          <button id="reload-tool-btn" class="ph-btn ph-btn-xs" type="button" title="刷新工具" aria-label="刷新工具"><span aria-hidden="true">↻</span><span class="ph-action-label"> 刷新</span></button>
+          <a id="standalone-link" class="ph-btn ph-btn-xs ph-btn-accent" href="#" target="_blank" rel="noopener noreferrer" title="在新标签页打开工具" aria-label="在新标签页打开工具"><span class="ph-action-label">新标签页 </span><span aria-hidden="true">↗</span></a>
+        </div>
+
+        <div id="tool-details-panel" class="ph-tool-details" role="region" aria-label="工具详情" hidden>
+          <div class="ph-details-head">
+            <span class="ph-details-kicker">PROC::DETAILS</span>
+            <div class="ph-details-pills">
+              <code id="details-tool-id" class="ph-mono-pill"></code>
+              <span id="details-tool-version" class="ph-mono-pill"></span>
+              <span id="details-tool-category" class="ph-mono-pill"></span>
+              <span id="details-tool-theme-badge" class="ph-sync-pill" hidden>SYNC</span>
+            </div>
+          </div>
+          <p id="details-tool-desc" class="ph-details-desc"></p>
+          <div id="details-switcher-row" class="ph-details-section">
+            <label for="details-quick-switcher" class="ph-tag-label">SWITCH</label>
+            <select id="details-quick-switcher" class="ph-quick-select ph-details-select" aria-label="快速切换工具"></select>
+          </div>
+          <div id="details-tags-section" class="ph-details-section">
+            <span class="ph-tag-label">按标签返回目录</span>
+            <div id="details-tool-tags" class="ph-details-tags"></div>
+          </div>
         </div>
       </div>
 
       <div id="active-tool-tags" class="ph-active-tags"></div>
+      <div id="tool-details-backdrop" class="ph-details-backdrop" aria-hidden="true" hidden></div>
       <div id="iframe-host" class="ph-iframe-host"></div>
     </section>
 
