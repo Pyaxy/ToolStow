@@ -10,7 +10,7 @@ use uuid::Uuid;
 use zip::ZipArchive;
 
 use crate::error::AppError;
-use crate::manifest::{self, ToolEntry};
+use crate::manifest::{self, RawManifest, ToolEntry};
 
 /// Default maximum compressed `.zip` size (50 MiB).
 pub const DEFAULT_MAX_ZIP_BYTES: usize = 50 * 1024 * 1024;
@@ -63,19 +63,42 @@ pub struct InstallResult {
     pub updated: bool,
 }
 
-/// Outcome of [`install_zip_bytes_checked`], distinguishing a completed install from an existing-ID
-/// conflict when overwrite is not permitted.
+/// Outcome of [`install_zip_bytes_checked`] or [`install_single_html_checked`], distinguishing a
+/// completed install from an existing-ID conflict when overwrite is not permitted.
 #[derive(Debug, Clone)]
 pub enum InstallOutcome {
-    /// Archive passed validation and was installed or atomically replaced.
+    /// Package passed validation and was installed or atomically replaced.
     Installed(InstallResult),
     /// A tool with the same `id` already exists and `allow_overwrite` was `false`.
     AlreadyExists {
         /// Currently installed tool metadata (if its existing `manifest.json` is valid).
         existing: Option<Box<ToolEntry>>,
-        /// Validated metadata of the newly uploaded archive.
+        /// Validated metadata of the newly submitted tool.
         incoming: ToolEntry,
     },
+}
+
+/// Input payload for ingesting a standalone single-file HTML tool without a `.zip` archive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SingleHtmlToolInput {
+    /// Unique tool identifier (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, 1..=64).
+    pub id: String,
+    /// Human-readable display name.
+    pub name: String,
+    /// Raw HTML document content for `index.html`.
+    pub html: String,
+    /// Optional one-line description.
+    pub description: Option<String>,
+    /// Optional category name.
+    pub category: Option<String>,
+    /// Optional list of search/filter tags.
+    pub tags: Option<Vec<String>>,
+    /// Optional Emoji icon.
+    pub icon: Option<String>,
+    /// Whether this tool is saved as a draft.
+    pub draft: bool,
+    /// When `true`, injects `/ui/v1/toolstow.css` and `/ui/v1/theme.js` into the HTML document.
+    pub inject_sdk: bool,
 }
 
 /// Inspected metadata for a non-ignored zip entry prior to extraction.
@@ -202,6 +225,242 @@ pub fn install_zip_bytes_checked(
     cleanup.disarm();
 
     Ok(InstallOutcome::Installed(InstallResult { entry, updated }))
+}
+
+/// Validates, optionally injects the ToolStow UI SDK, and atomically installs a standalone
+/// single-file HTML tool into `tools_dir/{id}`.
+///
+/// When `allow_overwrite` is `false` and `tools_dir/{id}` already exists, the staging directory is
+/// cleaned up automatically and [`InstallOutcome::AlreadyExists`] is returned without modifying the
+/// existing tool.
+pub fn install_single_html_checked(
+    tools_dir: &Path,
+    input: SingleHtmlToolInput,
+    limits: ArchiveLimits,
+    allow_overwrite: bool,
+) -> Result<InstallOutcome, AppError> {
+    manifest::validate_id(&input.id)?;
+
+    let trimmed_name = input.name.trim();
+    if trimmed_name.is_empty() {
+        return Err(AppError::unprocessable("tool 'name' must not be empty"));
+    }
+
+    if input.html.len() > limits.max_zip_bytes {
+        return Err(AppError::payload_too_large(format!(
+            "uploaded HTML document is {} bytes, exceeding limit of {} bytes",
+            input.html.len(),
+            limits.max_zip_bytes
+        )));
+    }
+
+    if input.html.trim().is_empty() {
+        return Err(AppError::unprocessable("HTML content must not be empty"));
+    }
+
+    let final_html = if input.inject_sdk {
+        inject_toolstow_sdk(&input.html)
+    } else {
+        input.html
+    };
+
+    let theme_aware = input.inject_sdk || final_html.contains("/ui/v1/theme.js");
+
+    let staging_root = tools_dir.join(STAGING_DIR_NAME);
+    fs::create_dir_all(&staging_root).map_err(|err| {
+        AppError::internal(format!(
+            "failed to create staging directory '{}': {err}",
+            staging_root.display()
+        ))
+    })?;
+
+    let stage_dir = tempfile::Builder::new()
+        .prefix("stage-html-")
+        .tempdir_in(&staging_root)
+        .map_err(|err| {
+            AppError::internal(format!(
+                "failed to create temporary staging directory in '{}': {err}",
+                staging_root.display()
+            ))
+        })?;
+
+    fs::write(stage_dir.path().join("index.html"), final_html.as_bytes()).map_err(|err| {
+        AppError::internal(format!("failed to write staged index.html: {err}"))
+    })?;
+
+    let raw_manifest = RawManifest {
+        id: input.id,
+        name: trimmed_name.to_string(),
+        version: None,
+        description: input.description,
+        category: input.category,
+        tags: input.tags,
+        icon: input.icon,
+        entry: Some(manifest::DEFAULT_ENTRY.to_string()),
+        runtime: Some(manifest::DEFAULT_RUNTIME.to_string()),
+        theme_aware: Some(theme_aware),
+        sandbox: None,
+        draft: input.draft,
+    };
+
+    let mut manifest_bytes = serde_json::to_vec_pretty(&raw_manifest)
+        .map_err(|err| AppError::internal(format!("failed to serialize manifest.json: {err}")))?;
+    manifest_bytes.push(b'\n');
+
+    fs::write(stage_dir.path().join("manifest.json"), &manifest_bytes).map_err(|err| {
+        AppError::internal(format!("failed to write staged manifest.json: {err}"))
+    })?;
+
+    let entry = manifest::load_and_validate_manifest(stage_dir.path(), None)?;
+    let target = tools_dir.join(&entry.id);
+
+    if !allow_overwrite && target.exists() {
+        let existing = manifest::load_and_validate_manifest(&target, Some(&entry.id))
+            .ok()
+            .map(Box::new);
+        return Ok(InstallOutcome::AlreadyExists {
+            existing,
+            incoming: entry,
+        });
+    }
+
+    let staged_path = stage_dir.keep();
+    let mut cleanup = CleanupPath::new(staged_path.clone());
+
+    let updated = install_staged_dir(&staging_root, &staged_path, &target, &entry.id)?;
+    cleanup.disarm();
+
+    Ok(InstallOutcome::Installed(InstallResult { entry, updated }))
+}
+
+/// Safely injects missing ToolStow UI stylesheet and theme bridge tags into an HTML document.
+fn inject_toolstow_sdk(html: &str) -> String {
+    const CSS_URL: &str = "/ui/v1/toolstow.css";
+    const THEME_JS_URL: &str = "/ui/v1/theme.js";
+    const CSS_TAG: &str = r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#;
+    const THEME_JS_TAG: &str = r#"<script src="/ui/v1/theme.js"></script>"#;
+
+    let has_css = html.contains(CSS_URL);
+    let has_theme_js = html.contains(THEME_JS_URL);
+
+    let snippet = match (has_css, has_theme_js) {
+        (true, true) => return html.to_string(),
+        (false, false) => format!("{CSS_TAG}\n{THEME_JS_TAG}"),
+        (false, true) => CSS_TAG.to_string(),
+        (true, false) => THEME_JS_TAG.to_string(),
+    };
+
+    // ASCII lowercasing strictly preserves byte lengths and indices in UTF-8 strings.
+    let lower = html.to_ascii_lowercase();
+
+    // 1. Insert right before `</head>` if present.
+    if let Some(pos) = find_closing_tag(&lower, "head") {
+        let mut out = String::with_capacity(html.len() + snippet.len() + 2);
+        out.push_str(&html[..pos]);
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&snippet);
+        out.push('\n');
+        out.push_str(&html[pos..]);
+        return out;
+    }
+
+    // 2. Otherwise insert right after `<head...>` if present.
+    if let Some((_, end)) = find_opening_tag(&lower, "head") {
+        let mut out = String::with_capacity(html.len() + snippet.len() + 2);
+        out.push_str(&html[..end]);
+        out.push('\n');
+        out.push_str(&snippet);
+        if !html[end..].starts_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&html[end..]);
+        return out;
+    }
+
+    // 3. Otherwise insert right before `<body...>` if present.
+    if let Some((start, _)) = find_opening_tag(&lower, "body") {
+        let mut out = String::with_capacity(html.len() + snippet.len() + 2);
+        out.push_str(&html[..start]);
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&snippet);
+        out.push('\n');
+        out.push_str(&html[start..]);
+        return out;
+    }
+
+    // 4. Otherwise insert right after a leading `<!doctype ...>` (preserving standards mode),
+    //    or prepend directly to the HTML fragment.
+    if let Some(doctype_end) = find_leading_doctype_end(&lower) {
+        let mut out = String::with_capacity(html.len() + snippet.len() + 2);
+        out.push_str(&html[..doctype_end]);
+        out.push('\n');
+        out.push_str(&snippet);
+        if !html[doctype_end..].starts_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&html[doctype_end..]);
+        return out;
+    }
+
+    format!("{snippet}\n{html}")
+}
+
+/// Finds the start byte offset of a closing tag like `</head>` in an ASCII-lowercased HTML string.
+fn find_closing_tag(lower: &str, tag: &str) -> Option<usize> {
+    let needle = format!("</{tag}");
+    let bytes = lower.as_bytes();
+    let mut offset = 0;
+
+    while let Some(rel) = lower[offset..].find(&needle) {
+        let start = offset + rel;
+        let mut idx = start + needle.len();
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx < bytes.len() && bytes[idx] == b'>' {
+            return Some(start);
+        }
+        offset = start + needle.len();
+    }
+
+    None
+}
+
+/// Finds `(start, end_exclusive)` byte offsets of an opening tag like `<head ...>` or `<body>`
+/// in an ASCII-lowercased HTML string, avoiding prefix false positives such as `<header>`.
+fn find_opening_tag(lower: &str, tag: &str) -> Option<(usize, usize)> {
+    let needle = format!("<{tag}");
+    let bytes = lower.as_bytes();
+    let mut offset = 0;
+
+    while let Some(rel) = lower[offset..].find(&needle) {
+        let start = offset + rel;
+        let after = start + needle.len();
+        if let Some(&next) = bytes.get(after)
+            && (next == b'>' || next == b'/' || next.is_ascii_whitespace())
+            && let Some(gt_rel) = lower[after..].find('>')
+        {
+            return Some((start, after + gt_rel + 1));
+        }
+        offset = after;
+    }
+
+    None
+}
+
+/// Returns the byte offset immediately after a leading `<!doctype ...>` declaration, if present.
+fn find_leading_doctype_end(lower: &str) -> Option<usize> {
+    let trimmed_start = lower.len() - lower.trim_start().len();
+    if lower[trimmed_start..].starts_with("<!doctype")
+        && let Some(gt_rel) = lower[trimmed_start..].find('>')
+    {
+        return Some(trimmed_start + gt_rel + 1);
+    }
+    None
 }
 
 /// Deletes `tools_dir/{id}` after validating `id`, returning `Ok(true)` if removed or `Ok(false)` if absent.
@@ -1237,5 +1496,273 @@ mod tests {
             fs::read_to_string(tools_dir.join("dup-tool/index.html")).unwrap(),
             "<h1>v2</h1>"
         );
+    }
+
+    #[test]
+    fn install_single_html_checked_stages_manifest_and_handles_conflicts() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let first = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "my-html-tool".to_string(),
+                name: "  My HTML Tool  ".to_string(),
+                html: "<!doctype html><html><head><title>v1</title></head><body><h1>v1</h1></body></html>".to_string(),
+                description: Some("First version".to_string()),
+                category: Some("Utilities".to_string()),
+                tags: Some(vec!["html".to_string(), " single ".to_string(), "html".to_string()]),
+                icon: Some("📄".to_string()),
+                draft: false,
+                inject_sdk: false,
+            },
+            ArchiveLimits::default(),
+            false,
+        )
+        .unwrap();
+
+        match first {
+            InstallOutcome::Installed(res) => {
+                assert!(!res.updated);
+                assert_eq!(res.entry.id, "my-html-tool");
+                assert_eq!(res.entry.name, "My HTML Tool");
+                assert_eq!(res.entry.description, "First version");
+                assert_eq!(res.entry.category, "Utilities");
+                assert_eq!(res.entry.tags, vec!["html", "single"]);
+                assert_eq!(res.entry.icon, "📄");
+                assert_eq!(res.entry.runtime, "static");
+                assert_eq!(res.entry.entry, "index.html");
+                assert!(!res.entry.theme_aware);
+                assert!(!res.entry.draft);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected first install to succeed"),
+        }
+        assert!(staging_is_empty(&tools_dir));
+
+        // Conflict when allow_overwrite is false
+        let conflict = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "my-html-tool".to_string(),
+                name: "My HTML Tool v2".to_string(),
+                html: "<h1>v2</h1>".to_string(),
+                description: Some("Second version".to_string()),
+                category: None,
+                tags: None,
+                icon: None,
+                draft: true,
+                inject_sdk: true,
+            },
+            ArchiveLimits::default(),
+            false,
+        )
+        .unwrap();
+
+        match conflict {
+            InstallOutcome::AlreadyExists { existing, incoming } => {
+                let existing = existing.expect("existing tool should load");
+                assert_eq!(existing.name, "My HTML Tool");
+                assert!(!existing.theme_aware);
+                assert_eq!(incoming.name, "My HTML Tool v2");
+                assert!(incoming.theme_aware);
+                assert!(incoming.draft);
+            }
+            InstallOutcome::Installed(_) => panic!("expected AlreadyExists when overwrite=false"),
+        }
+        assert!(
+            fs::read_to_string(tools_dir.join("my-html-tool/index.html"))
+                .unwrap()
+                .contains("<h1>v1</h1>")
+        );
+        assert!(staging_is_empty(&tools_dir));
+
+        // Overwrite when allow_overwrite is true
+        let replaced = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "my-html-tool".to_string(),
+                name: "My HTML Tool v2".to_string(),
+                html: "<h1>v2</h1>".to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                draft: true,
+                inject_sdk: true,
+            },
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap();
+
+        match replaced {
+            InstallOutcome::Installed(res) => {
+                assert!(res.updated);
+                assert_eq!(res.entry.name, "My HTML Tool v2");
+                assert!(res.entry.theme_aware);
+                assert!(res.entry.draft);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected overwrite to succeed"),
+        }
+        let disk_html = fs::read_to_string(tools_dir.join("my-html-tool/index.html")).unwrap();
+        assert!(disk_html.contains("/ui/v1/toolstow.css"));
+        assert!(disk_html.contains("/ui/v1/theme.js"));
+        assert!(disk_html.contains("<h1>v2</h1>"));
+        assert!(staging_is_empty(&tools_dir));
+    }
+
+    #[test]
+    fn install_single_html_checked_validates_inputs_and_size_limit() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let make_input = |id: &str, name: &str, html: &str| SingleHtmlToolInput {
+            id: id.to_string(),
+            name: name.to_string(),
+            html: html.to_string(),
+            description: None,
+            category: None,
+            tags: None,
+            icon: None,
+            draft: false,
+            inject_sdk: false,
+        };
+
+        // Invalid id -> 422
+        let err = install_single_html_checked(
+            &tools_dir,
+            make_input("Bad_ID", "Tool", "<h1>ok</h1>"),
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+
+        // Blank name -> 422
+        let err = install_single_html_checked(
+            &tools_dir,
+            make_input("valid-id", "   ", "<h1>ok</h1>"),
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+
+        // Blank HTML -> 422
+        let err = install_single_html_checked(
+            &tools_dir,
+            make_input("valid-id", "Valid", "  \n\t "),
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+
+        // Exceeds max_zip_bytes -> 413
+        let err = install_single_html_checked(
+            &tools_dir,
+            make_input("valid-id", "Valid", "<h1>too large payload</h1>"),
+            ArchiveLimits {
+                max_zip_bytes: 10,
+                ..ArchiveLimits::default()
+            },
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err.error_code(), "PAYLOAD_TOO_LARGE");
+
+        // Path-like nonexistent icon -> 422 and clean staging
+        let err = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                icon: Some("assets/missing.svg".to_string()),
+                ..make_input("valid-id", "Valid", "<h1>ok</h1>")
+            },
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+        assert!(!tools_dir.join("valid-id").exists());
+        assert!(staging_is_empty(&tools_dir));
+    }
+
+    #[test]
+    fn inject_toolstow_sdk_handles_all_html_structures_and_partial_presence() {
+        // 1. Standard document with uppercase </HEAD>
+        let with_head = "<!doctype html><HTML><HEAD><title>App</title></HEAD><BODY>Hi</BODY></HTML>";
+        let injected = inject_toolstow_sdk(with_head);
+        let css_pos = injected.find(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#).unwrap();
+        let js_pos = injected.find(r#"<script src="/ui/v1/theme.js"></script>"#).unwrap();
+        let close_head_pos = injected.find("</HEAD>").unwrap();
+        assert!(css_pos < js_pos && js_pos < close_head_pos);
+
+        // 2. Already links toolstow.css only -> injects only theme.js
+        let css_only = "<head><link rel=\"stylesheet\" href=\"/ui/v1/toolstow.css\"></head><body>x</body>";
+        let injected = inject_toolstow_sdk(css_only);
+        assert_eq!(injected.matches("/ui/v1/toolstow.css").count(), 1);
+        assert_eq!(injected.matches("/ui/v1/theme.js").count(), 1);
+
+        // 3. Already links theme.js only -> injects only toolstow.css
+        let js_only = "<head><script src=\"/ui/v1/theme.js\"></script></head><body>x</body>";
+        let injected = inject_toolstow_sdk(js_only);
+        assert_eq!(injected.matches("/ui/v1/toolstow.css").count(), 1);
+        assert_eq!(injected.matches("/ui/v1/theme.js").count(), 1);
+
+        // 4. Already links both -> untouched
+        let both = "<head><link rel=\"stylesheet\" href=\"/ui/v1/toolstow.css\"><script src=\"/ui/v1/theme.js\"></script></head>";
+        assert_eq!(inject_toolstow_sdk(both), both);
+
+        // 5. Opening <head lang="en"> without closing </head> -> after <head ...>
+        let open_head_only = "<html lang=\"en\"><head data-x=\"1\"><title>Hi</title><body>Ok</body></html>";
+        let injected = inject_toolstow_sdk(open_head_only);
+        let head_end = injected.find(r#"<head data-x="1">"#).unwrap() + r#"<head data-x="1">"#.len();
+        let css_pos = injected.find("/ui/v1/toolstow.css").unwrap();
+        assert!(css_pos >= head_end);
+
+        // 6. No <head>, only <body class="app"> (plus <header> inside) -> before <body>, not matching <header>
+        let body_only = "<html><body class=\"app\"><header>Top</header><p>Body</p></body></html>";
+        let injected = inject_toolstow_sdk(body_only);
+        let css_pos = injected.find("/ui/v1/toolstow.css").unwrap();
+        let body_pos = injected.find(r#"<body class="app">"#).unwrap();
+        assert!(css_pos < body_pos);
+
+        // 7. Leading doctype without head or body -> after doctype
+        let doctype_only = "<!DOCTYPE html><div>Hello</div>";
+        let injected = inject_toolstow_sdk(doctype_only);
+        assert!(injected.starts_with("<!DOCTYPE html>\n"));
+        assert!(injected.contains("/ui/v1/toolstow.css"));
+        assert!(injected.contains("/ui/v1/theme.js"));
+
+        // 8. Bare HTML fragment with non-ASCII UTF-8 characters -> prepended cleanly
+        let fragment = "<h1>你好工具</h1>";
+        let injected = inject_toolstow_sdk(fragment);
+        assert!(injected.starts_with(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#));
+        assert!(injected.ends_with(fragment));
+
+        // 9. Existing /ui/v1/theme.js with inject_sdk=false still sets theme_aware=true
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+        let outcome = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "already-themed".to_string(),
+                name: "Already Themed".to_string(),
+                html: "<head><script src=\"/ui/v1/theme.js\"></script></head><body>Hi</body>".to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                draft: false,
+                inject_sdk: false,
+            },
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap();
+        match outcome {
+            InstallOutcome::Installed(res) => assert!(res.entry.theme_aware),
+            InstallOutcome::AlreadyExists { .. } => panic!("expected install"),
+        }
     }
 }
