@@ -268,18 +268,128 @@ jobs:
           if-no-files-found: error
 
   # =========================================================
-  # 任务 3：核对 6 个附件齐全 + 生成有序校验码 + 发布 GitHub Release
+  # 任务 3：复用 Linux 静态二进制构建多架构 Docker 镜像并推送至 GHCR
+  # =========================================================
+  docker:
+    name: Build & Push Docker Image (GHCR)
+    needs: [preflight, build-binaries]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download Linux binary artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: release-bin-linux-*
+          path: linux-archives
+          merge-multiple: true
+
+      - name: Stage multi-arch static binaries
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-docker/amd64 dist-docker/arm64
+          tar -xzf "linux-archives/toolstow-${TAG_NAME}-linux-amd64.tar.gz" -C dist-docker/amd64 ./toolstow
+          tar -xzf "linux-archives/toolstow-${TAG_NAME}-linux-arm64.tar.gz" -C dist-docker/arm64 ./toolstow
+          chmod 0755 dist-docker/amd64/toolstow dist-docker/arm64/toolstow
+          test -s dist-docker/amd64/toolstow
+          test -s dist-docker/arm64/toolstow
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Smoke-test Docker image (linux/amd64)
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          expected_ver="${TAG_NAME#v}"
+          docker buildx build --platform linux/amd64 --target prebuilt --load -t toolstow:smoke .
+
+          cleanup() {
+            docker rm -f toolstow-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run -d --name toolstow-smoke -p 127.0.0.1:18080:8080 toolstow:smoke
+
+          ready=0
+          health_json=""
+          for _ in $(seq 1 30); do
+            if health_json="$(curl -fsS http://127.0.0.1:18080/healthz 2>/dev/null)"; then
+              ready=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "ERROR: toolstow container failed /healthz check:" >&2
+            docker logs toolstow-smoke >&2 || true
+            exit 1
+          fi
+
+          echo "Container /healthz: $health_json"
+          grep -q '"status":"ok"' <<<"$health_json"
+          grep -q "\"version\":\"${expected_ver}\"" <<<"$health_json"
+
+          uid="$(docker exec toolstow-smoke id -u)"
+          test "$uid" = "1000"
+
+          curl -fsS http://127.0.0.1:18080/ | grep -qi "<html"
+          curl -fsS http://127.0.0.1:18080/ui/v1/theme.js | grep -q "ToolStow"
+          echo "Docker image smoke test passed."
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},prefix=v
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push multi-arch Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prebuilt
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # =========================================================
+  # 任务 4：核对 6 个附件齐全 + 生成有序校验码 + 发布 GitHub Release
   # =========================================================
   release:
     name: Publish GitHub Release
-    needs: [build-binaries, package-assets]
+    needs: [build-binaries, package-assets, docker]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download release artifacts
         uses: actions/download-artifact@v7
         with:
+          pattern: release-*
           path: artifacts
           merge-multiple: true
 
@@ -318,6 +428,7 @@ jobs:
           body: |
             ### 快速下载与安装
             - 按平台下载对应二进制压缩包（`linux-amd64` / `linux-arm64` / `macos-arm64` / `windows-amd64`），解压后直接运行即可。
+            - Docker 镜像（支持 `linux/amd64` / `linux/arm64`）：`docker pull ghcr.io/pyaxy/toolstow:${{ github.ref_name }}`
             - 可选使用 `SHA256SUMS.txt` 校验文件完整性。
             - `toolstow-plugins.zip` 与 `toolstow-themes.zip` 为内置示例合集包，解压后把里面的单个 `.zip` 拖进 `/admin` 上传即可使用。
           files: artifacts/*

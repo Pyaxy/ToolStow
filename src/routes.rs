@@ -94,6 +94,13 @@ struct AdminListToolsQuery {
     draft: Option<String>,
 }
 
+/// JSON response payload for `GET /healthz`.
+#[derive(Debug, Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    version: &'static str,
+}
+
 /// JSON response payload for `GET /api/me`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -473,6 +480,8 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Public frontend shell root
         .route("/", get(serve_index))
+        // Locked liveness / health check endpoint
+        .route("/healthz", get(healthz))
         // Public read-only API
         .route("/api/me", get(get_me))
         .route("/api/tools", get(list_tools))
@@ -1038,6 +1047,17 @@ async fn read_optional_theme_ui_override(theme_dir: &Path) -> Result<Option<Vec<
     };
 
     Ok(Some(bytes))
+}
+
+/// `GET /healthz`: returns server liveness and compiled crate version with `no-store` caching.
+async fn healthz() -> Response {
+    no_store_json(
+        StatusCode::OK,
+        HealthResponse {
+            status: "ok",
+            version: env!("CARGO_PKG_VERSION"),
+        },
+    )
 }
 
 /// `GET /api/me`: returns public site settings, current admin session state, active theme,

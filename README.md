@@ -63,7 +63,32 @@ chmod 600 .env
 > - `toolstow-plugins.zip`：内置示例工具 `docker-cheatsheet`（Docker 命令速查）、`dynamic-favicon`（随主题同步的动态 Favicon 生成器）。
 > - `toolstow-themes.zip`：内置示例主题 `ascii-probe`（终端 TUI）、`serverstatus`（运维表格控制台）、`rakugaki`（手绘笔记本涂鸦）、`paper-warm`（羊皮纸纯皮肤换肤）。
 
-### 3. 从源码编译（可选）
+### 3. 使用 Docker / Docker Compose 运行（支持 `linux/amd64` / `linux/arm64`）
+
+下载仓库中的 [compose.yml](compose.yml)（如需启用管理密钥，可在同目录放一份基于 [.env.example](.env.example) 修改的 `.env`），然后启动：
+
+```bash
+# 拉取预构建镜像并启动（默认使用 compose.yml 中的 TOOLSTOW_HOST=0.0.0.0 与 /data 持久化卷）
+docker compose up -d
+```
+
+或者直接 `docker run`（配置好密钥见上一步 `.env`）：
+
+```bash
+docker run -d \
+  --name toolstow \
+  --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  --env-file .env \
+  -e TOOLSTOW_HOST=0.0.0.0 \
+  -e TOOLSTOW_DATA_DIR=/data \
+  -v toolstow_data:/data \
+  ghcr.io/pyaxy/toolstow:latest
+```
+
+更多挂载权限、本地源码镜像构建与反代细节见 [docs/deployment.md](docs/deployment.md)。
+
+### 4. 从源码编译（可选）
 
 需要 Rust 最新稳定版（Edition 2024）：
 

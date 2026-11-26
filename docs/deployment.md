@@ -46,7 +46,51 @@ TOOLSTOW_API_KEY=<另一把 64 位随机十六进制 API Key>
 
 ---
 
-## 3. `systemd` 常驻服务示例
+## 3. Docker / Docker Compose 部署（推荐容器化方式）
+
+每次发布 `v*` 版本 Tag 时，GitHub Actions 会同步构建并推送 `linux/amd64` 与 `linux/arm64` 双架构镜像至 `ghcr.io/pyaxy/toolstow`。
+
+容器镜像内置以下默认配置（以非 root 用户 `1000:1000` 运行，并通过 `GET /healthz` 提供内置健康检查）：
+- `TOOLSTOW_HOST=0.0.0.0`（覆盖裸机默认 `127.0.0.1`，确保容器端口映射可访问）
+- `TOOLSTOW_PORT=8080`（如需调整宿主机访问端口，直接改端口映射 `-p 127.0.0.1:<宿主机端口>:8080`；若要改动容器内部监听端口，请通过环境变量 `TOOLSTOW_PORT` 修改并同步更新端口映射，勿用 `--port` 覆盖，以免内置 `HEALTHCHECK` 探测失配）
+- `TOOLSTOW_DATA_DIR=/data`
+
+### 3.1 使用 [compose.yml](../compose.yml) 快速启动
+
+在同目录准备 [compose.yml](../compose.yml) 与可选的 [.env.example](../.env.example)（重命名为 `.env`）：
+
+```bash
+# 1. 配置密钥（可选，不配则以只读模式运行）
+cp .env.example .env
+# 编辑 .env 填入 TOOLSTOW_ADMIN_KEY 与 TOOLSTOW_API_KEY（容器环境下若直接用 compose.yml，已默认覆盖 HOST=0.0.0.0 与 DATA_DIR=/data）
+chmod 600 .env
+
+# 2. 启动后台服务
+docker compose up -d
+
+# 3. 查看运行状态与健康检查
+docker compose ps
+docker compose logs -f
+```
+
+> **关于挂载宿主机目录（Bind Mount）的权限**：`compose.yml` 默认使用 Docker 命名卷 `toolstow_data:/data`。如果你改用宿主机目录 `./data:/data`，在 Linux 上请提前创建目录并赋权给容器内 UID `1000`：
+> ```bash
+> mkdir -p data && chown -R 1000:1000 data
+> ```
+
+### 3.2 日常升级与本地源码构建
+
+```bash
+# 拉取新版本镜像并平滑重建容器（数据保留在 /data 卷内）
+docker compose pull && docker compose up -d
+
+# 如需从本地源码构建镜像
+docker build -t toolstow:local .
+```
+
+---
+
+## 4. `systemd` 常驻服务示例
 
 创建 `/etc/systemd/system/toolstow.service`：
 
@@ -78,7 +122,7 @@ sudo journalctl -u toolstow -f
 
 ---
 
-## 4. Caddy HTTPS 反向代理示例
+## 5. Caddy HTTPS 反向代理示例
 
 ToolStow 默认仅监听 `127.0.0.1:8080`，建议前置 Caddy 自动签发 TLS 证书并透传 `X-Forwarded-Proto`：
 
@@ -93,11 +137,11 @@ tools.example.com {
 
 ---
 
-## 5. 多主题管理与自定义皮肤（`data/themes/` 与 `/admin`）
+## 6. 多主题管理与自定义皮肤（`data/themes/` 与 `/admin`）
 
 ToolStow 支持借鉴 [monitor-probe/themes](https://github.com/monitor-probe/themes) 思路的**多主题热插拔管理**：管理员可在 `/admin` 的「主题管理」卡片直接上传 `.zip` 主题包、查看 16:9 预览图、一键切换当前启用主题或删除主题，全程**无需重启或重编二进制**。
 
-### 5.1 多主题目录布局（`data/themes/<short>/`）
+### 6.1 多主题目录布局（`data/themes/<short>/`）
 
 ```text
 /opt/toolstow/data/themes/
@@ -134,7 +178,7 @@ ToolStow 支持借鉴 [monitor-probe/themes](https://github.com/monitor-probe/th
 
 > 可通过 CLI `--themes-dir` 或环境变量 `TOOLSTOW_THEMES_DIR` 覆盖默认 `<data-dir>/themes` 路径。当前激活主题持久化在 `data/settings.json` 的 `activeTheme` 字段（默认 `"default"`）。
 
-### 5.2 `theme.json` 规范与两种主题形态
+### 6.2 `theme.json` 规范与两种主题形态
 
 每个主题根目录必须包含 `theme.json`：
 
@@ -164,7 +208,7 @@ ToolStow 支持借鉴 [monitor-probe/themes](https://github.com/monitor-probe/th
    - 公开前台 `/` 直接托管该主题静态文件（支持原生静态页或 Vite / React / Tailwind 构建后的 `dist/` 目录）；若同时包含 `ui.css`，也会自动追加至 `/ui/v1/toolstow.css` 使子工具与外壳保持视觉统一。
    - 自定义前台需遵循只读契约：先加载 `/ui/v1/toolstow.css`，请求 `GET /api/me` 仅当 `isAdmin === true` 时显示 `/admin` 管理入口，请求 `GET /api/tools` 并保持 `<iframe sandbox>` 安全白名单（永不授予 `allow-same-origin`）与 `toolstow:theme` / `toolstow:ready` 握手。
 
-### 5.3 `/admin` 主题管理操作与 API（仅 Admin Session）
+### 6.3 `/admin` 主题管理操作与 API（仅 Admin Session）
 
 - **网页管理（`/admin`）**：登录后台后在「主题管理」卡片拖拽或选择 `.zip` 主题包上传。前端默认先携带 `?overwrite=false` 预检；若同 `short` 主题已存在，后端返回 `409 Conflict`（`THEME_EXISTS`，含 `existing` 与 `incoming` 对比元数据），弹窗经管理员确认后再携带 `?overwrite=true` 原子覆盖。点击卡片上的「启用主题」立即切换，点击「删除」删除磁盘目录（若删除的是当前启用主题，后端自动安全回退至内置 `"default"` 主题）。
 - **HTTP 接口（仅允许 Admin Session Cookie，严格拒绝 `TOOLSTOW_API_KEY` Bearer，未配置 `TOOLSTOW_ADMIN_KEY` 时返回 `404`）**：
@@ -174,7 +218,7 @@ ToolStow 支持借鉴 [monitor-probe/themes](https://github.com/monitor-probe/th
   - `PUT /api/admin/themes/active`：JSON `{ "short": "<short>" }` 切换当前启用主题并持久化 `settings.json`。
   - `DELETE /api/admin/themes/{short}`：删除已安装主题（拒绝删除 `"default"` 返回 `400`）。
 
-### 5.4 快速体验仓库内置 4 套示例主题
+### 6.4 快速体验仓库内置 4 套示例主题
 
 仓库 `examples/themes/` 随附 4 套开箱即用的主题包：
 - `examples/themes/ascii-probe/`：复古终端 TUI 完整主题 + `ui.css`（等宽排版、2px 框线、荧光绿强调色）。
@@ -192,7 +236,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/r
 (cd examples/themes/rakugaki && zip -r /tmp/rakugaki.zip .)
 ```
 
-### 5.5 路由安全锁定、`/ui/v1/theme-assets/` 与旧版 `data/theme/` 向后兼容
+### 6.5 路由安全锁定、`/ui/v1/theme-assets/` 与旧版 `data/theme/` 向后兼容
 
 - `/admin*`、`/api/*`、`/t/*` 与 `/ui/*`（`/ui/v1/toolstow.css`、`/ui/v1/theme.js`、`/ui/v1/theme-assets/{*path}`，其余未知 `/ui/*` 路径一律返回 `404`）始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱边界。
 - **跨沙箱主题静态资源（`GET /ui/v1/theme-assets/{*path}`）**：无论当前启用的是**纯皮肤主题**还是**完整自定义前台**（或 `default` 下的旧版 `data/theme/`），主题内自带的 `.woff2` 字体、背景图与 SVG 纹理均可通过 `/ui/v1/theme-assets/<rel-path>` 加载；后端固定返回 `Access-Control-Allow-Origin: *`、`Cache-Control: no-cache`、`X-Content-Type-Options: nosniff`（对 `.svg`/`.html` 额外附带 `Content-Security-Policy: sandbox;`），并拒绝点开头路径、越界路径、`theme.json` 与符号链接逃逸（`403 Forbidden`），确保字体与纹理在公开首页 `/` 与 `Origin: null` 沙箱插件 iframe 内一致生效。
