@@ -709,6 +709,12 @@ a {
   flex-direction: column;
 }
 
+.rk-workspace-head {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 20;
+}
+
 .rk-workspace-bar {
   display: flex;
   align-items: center;
@@ -745,7 +751,7 @@ a {
 
 .rk-tool-meta {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 220px;
 }
 
 .rk-tool-title-row {
@@ -753,18 +759,26 @@ a {
   align-items: center;
   gap: 7px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .rk-tool-title-row h1 {
   margin: 0;
   font-size: 15.5px;
   font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .rk-tool-desc {
   margin: 2px 0 0;
   font-size: 12px;
   color: var(--ts-ink-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .rk-workspace-actions {
@@ -774,10 +788,112 @@ a {
   flex-shrink: 0;
 }
 
+.rk-details-toggle,
+.rk-mobile-search-toggle {
+  display: none;
+}
+
+.rk-mobile-search-toggle[aria-expanded="true"] {
+  background: var(--rk-highlight);
+  color: #1f1c18;
+}
+
+.rk-details-panel {
+  position: absolute;
+  top: 100%;
+  left: 10px;
+  right: 10px;
+  margin-top: 6px;
+  padding: 12px 14px;
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  z-index: 30;
+  border: 1.75px solid var(--ts-ink);
+  border-radius: var(--rk-radius-card);
+  background: var(--ts-surface);
+  box-shadow: 4px 4px 0 var(--rk-ink-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rk-details-panel[hidden] {
+  display: none;
+}
+
+.rk-details-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rk-details-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.rk-details-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rk-details-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ts-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.rk-details-desc[hidden] {
+  display: none;
+}
+
+.rk-details-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rk-details-switcher[hidden] {
+  display: none;
+}
+
+.rk-details-switcher .rk-quick-select {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+}
+
+.rk-details-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rk-details-tags:empty {
+  display: none;
+}
+
 .rk-active-tags {
   padding: 6px 18px;
   background: transparent;
   border-bottom: 1.5px dashed var(--ts-border);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+.rk-active-tags > * {
+  flex-shrink: 0;
 }
 
 .rk-active-tags:empty {
@@ -901,6 +1017,168 @@ a {
 
   .rk-canvas-wrap {
     padding: 8px;
+  }
+}
+
+@media (max-width: 760px), (max-height: 500px) {
+  .rk-shell[data-view="tool"] .rk-topbar {
+    min-height: 42px;
+    padding: 4px 10px;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .rk-shell[data-view="tool"] .rk-brand-group {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .rk-shell[data-view="tool"] .rk-brand {
+    min-width: 0;
+    max-width: 100%;
+    padding: 2px 4px;
+    gap: 6px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-brand-doodle {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+
+  .rk-shell[data-view="tool"] .rk-brand-doodle svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-brand-title {
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rk-shell[data-view="tool"] .rk-brand-stamp {
+    display: none;
+  }
+
+  .rk-shell[data-view="tool"] .rk-topbar-actions {
+    gap: 6px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-topbar .rk-btn {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 11.5px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-footer {
+    display: none;
+  }
+
+  .rk-shell[data-view="tool"] .rk-workspace-bar {
+    padding: 5px 8px;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .rk-shell[data-view="tool"] .rk-workspace-left {
+    gap: 6px;
+    flex-wrap: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .rk-shell[data-view="tool"] .rk-quick-select {
+    display: none;
+  }
+
+  .rk-shell[data-view="tool"] .rk-details-switcher .rk-quick-select {
+    display: block;
+  }
+
+  .rk-shell[data-view="tool"] .rk-tool-icon-lg {
+    width: 26px;
+    height: 26px;
+    font-size: 14px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-tool-icon-lg img {
+    width: 15px;
+    height: 15px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-tool-meta {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .rk-shell[data-view="tool"] .rk-tool-title-row {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .rk-shell[data-view="tool"] .rk-tool-title-row h1 {
+    flex: 1;
+    min-width: 0;
+    font-size: 13.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .rk-shell[data-view="tool"] #active-tool-id,
+  .rk-shell[data-view="tool"] #active-tool-version,
+  .rk-shell[data-view="tool"] #active-tool-theme-badge,
+  .rk-shell[data-view="tool"] .rk-tool-desc,
+  .rk-shell[data-view="tool"] .rk-active-tags,
+  .rk-shell[data-view="tool"] .rk-workspace-bar .rk-btn-label {
+    display: none;
+  }
+
+  .rk-shell[data-view="tool"] .rk-workspace-actions {
+    gap: 5px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-workspace-bar .rk-btn-sm {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-details-toggle {
+    display: inline-flex;
+  }
+
+  .rk-shell[data-view="tool"] .rk-canvas-wrap {
+    padding: 6px;
+  }
+}
+
+@media (max-width: 760px) {
+  .rk-shell[data-view="tool"]:not([data-search-open="true"]) .rk-search-wrap {
+    display: none;
+  }
+
+  .rk-shell[data-view="tool"][data-search-open="true"] .rk-topbar {
+    flex-wrap: wrap;
+    padding-bottom: 8px;
+  }
+
+  .rk-shell[data-view="tool"] .rk-mobile-search-toggle {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 420px) {
+  .rk-shell[data-view="tool"] .rk-tool-icon-lg {
+    display: none;
+  }
+}
+
+@media (min-width: 761px) and (min-height: 501px) {
+  .rk-details-panel {
+    display: none;
   }
 }
 

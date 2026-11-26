@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div class="ops-shell">
+  <div class="ops-shell" data-view="directory">
     <header class="ops-topbar">
       <div class="ops-brand-group">
         <a href="#" id="brand-link" class="ops-brand" aria-label="返回工具目录">
@@ -101,7 +101,7 @@
     <section id="tool-view" class="ops-workspace" hidden>
       <div class="ops-workspace-bar">
         <div class="ops-workspace-left">
-          <button id="back-to-list-btn" class="ops-btn ops-btn-xs" type="button">← 返回列表</button>
+          <button id="back-to-list-btn" class="ops-btn ops-btn-xs" type="button" aria-label="返回工具列表"><span aria-hidden="true">←</span><span> 返回</span><span class="ops-back-label-long">列表</span></button>
 
           <select id="quick-switcher" class="ops-quick-select" aria-label="快速切换工具"></select>
 
@@ -119,12 +119,53 @@
         </div>
 
         <div class="ops-workspace-actions">
-          <button id="reload-tool-btn" class="ops-btn ops-btn-xs" type="button">刷新</button>
-          <a id="standalone-link" class="ops-btn ops-btn-xs ops-btn-primary" href="#" target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开工具">新标签页 ↗</a>
+          <button
+            id="mobile-search-toggle"
+            class="ops-btn ops-btn-xs ops-mobile-search-toggle"
+            type="button"
+            aria-label="搜索工具"
+            aria-expanded="false"
+            aria-controls="search-input"
+            data-role="tool-search-toggle"
+            title="搜索工具 (⌘K)"
+          ><svg width="12" height="12" viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.25" stroke="currentColor" stroke-width="1.8"/><path d="M12.2 12.2L15.6 15.7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></button>
+          <button
+            id="tool-details-toggle"
+            class="ops-btn ops-btn-xs ops-details-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="tool-details-panel"
+            data-role="tool-details-toggle"
+            title="展开工具详情"
+          >详情</button>
+          <button id="reload-tool-btn" class="ops-btn ops-btn-xs" type="button" title="刷新工具" aria-label="刷新工具"><span aria-hidden="true">↻</span><span class="ops-action-label"> 刷新</span></button>
+          <a id="standalone-link" class="ops-btn ops-btn-xs ops-btn-primary" href="#" target="_blank" rel="noopener noreferrer" title="在新标签页打开工具" aria-label="在新标签页打开工具"><span class="ops-action-label">新标签页 </span><span aria-hidden="true">↗</span></a>
+        </div>
+
+        <div id="tool-details-panel" class="ops-tool-details" role="region" aria-label="工具详情" hidden>
+          <div class="ops-details-head">
+            <span class="ops-details-kicker">工具详情</span>
+            <div class="ops-details-pills">
+              <code id="details-tool-id" class="ops-code-pill"></code>
+              <span id="details-tool-version" class="ops-code-pill"></span>
+              <span id="details-tool-category" class="ops-cat-badge"></span>
+              <span id="details-tool-theme-badge" class="ops-sync-pill" hidden>theme-sync</span>
+            </div>
+          </div>
+          <p id="details-tool-desc" class="ops-details-desc"></p>
+          <div id="details-switcher-row" class="ops-details-section">
+            <label for="details-quick-switcher" class="ops-tag-bar-label">切换工具</label>
+            <select id="details-quick-switcher" class="ops-quick-select ops-details-select" aria-label="快速切换工具"></select>
+          </div>
+          <div id="details-tags-section" class="ops-details-section">
+            <span class="ops-tag-bar-label">按标签返回目录</span>
+            <div id="details-tool-tags" class="ops-details-tags"></div>
+          </div>
         </div>
       </div>
 
       <div id="active-tool-tags" class="ops-active-tags"></div>
+      <div id="tool-details-backdrop" class="ops-details-backdrop" aria-hidden="true" hidden></div>
       <div id="iframe-host" class="ops-iframe-host"></div>
     </section>
   </div>

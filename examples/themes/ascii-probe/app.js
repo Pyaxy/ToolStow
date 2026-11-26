@@ -1,12 +1,15 @@
 const DEFAULT_SITE_TITLE = "ToolStow";
 
 const els = {
+  shell: document.querySelector(".tui-shell"),
   brandLink: document.getElementById("brand-link"),
   brandTitle: document.getElementById("brand-title"),
   sidebarToggle: document.getElementById("sidebar-toggle"),
+  toolSidebarBtn: document.getElementById("tool-sidebar-btn"),
   sidebar: document.getElementById("sidebar"),
   sidebarBackdrop: document.getElementById("sidebar-backdrop"),
   searchInput: document.getElementById("search-input"),
+  mobileSearchToggle: document.getElementById("mobile-search-toggle"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
   statusBanner: document.getElementById("status-banner"),
@@ -32,6 +35,16 @@ const els = {
   activeToolThemeBadge: document.getElementById("active-tool-theme-badge"),
   activeToolDesc: document.getElementById("active-tool-desc"),
   activeToolTags: document.getElementById("active-tool-tags"),
+  toolDetailsToggle: document.getElementById("tool-details-toggle"),
+  tuiDetailsPanel: document.getElementById("tui-details-panel"),
+  detailsToolName: document.getElementById("details-tool-name"),
+  detailsToolId: document.getElementById("details-tool-id"),
+  detailsToolVersion: document.getElementById("details-tool-version"),
+  detailsToolThemeBadge: document.getElementById("details-tool-theme-badge"),
+  detailsToolDesc: document.getElementById("details-tool-desc"),
+  detailsSwitcherRow: document.getElementById("details-switcher-row"),
+  detailsQuickSwitcher: document.getElementById("details-quick-switcher"),
+  detailsToolTags: document.getElementById("details-tool-tags"),
   reloadToolBtn: document.getElementById("reload-tool-btn"),
   standaloneLink: document.getElementById("standalone-link"),
   closeToolBtn: document.getElementById("close-tool-btn"),
@@ -42,6 +55,8 @@ const els = {
 
 let statusTimer = null;
 let searchTimer = null;
+let lastSidebarTrigger = null;
+let lastSelectedToolId = null;
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
   if (statusTimer) {
@@ -65,19 +80,64 @@ function clearErrorBanner() {
   }
 }
 
-function openMobileSidebar() {
+function setMobileSearchOpen(open, { focus = false, restoreFocus = false } = {}) {
+  if (!els.shell) return;
+  const isOpen = Boolean(open);
+  if (isOpen) {
+    setDetailsOpen(false);
+    els.shell.dataset.searchOpen = "true";
+  } else {
+    delete els.shell.dataset.searchOpen;
+  }
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.setAttribute("aria-expanded", String(isOpen));
+  }
+  if (isOpen && focus) {
+    els.searchInput.focus();
+    els.searchInput.select();
+  } else if (!isOpen && restoreFocus && els.mobileSearchToggle && els.mobileSearchToggle.offsetParent !== null) {
+    els.mobileSearchToggle.focus();
+  }
+}
+
+function setDetailsOpen(open, { restoreFocus = false } = {}) {
+  const isOpen = Boolean(open);
+  if (isOpen) {
+    setMobileSearchOpen(false);
+  }
+  els.tuiDetailsPanel.hidden = !isOpen;
+  els.toolDetailsToggle.setAttribute("aria-expanded", String(isOpen));
+  if (!isOpen && restoreFocus && !els.toolDetailsToggle.hidden) {
+    els.toolDetailsToggle.focus();
+  }
+}
+
+function openMobileSidebar(trigger) {
+  setDetailsOpen(false);
+  lastSidebarTrigger = trigger || els.sidebarToggle;
   els.sidebar.classList.add("open");
   els.sidebarBackdrop.hidden = false;
   els.sidebarToggle.setAttribute("aria-expanded", "true");
+  els.toolSidebarBtn.setAttribute("aria-expanded", "true");
 }
 
-function closeMobileSidebar() {
-  if (els.sidebar.classList.contains("open") && els.sidebar.contains(document.activeElement)) {
-    els.sidebarToggle.focus();
-  }
+function closeMobileSidebar({ restoreFocus = false } = {}) {
+  const shouldFocus =
+    restoreFocus ||
+    (els.sidebar.classList.contains("open") && els.sidebar.contains(document.activeElement));
   els.sidebar.classList.remove("open");
   els.sidebarBackdrop.hidden = true;
   els.sidebarToggle.setAttribute("aria-expanded", "false");
+  els.toolSidebarBtn.setAttribute("aria-expanded", "false");
+  if (shouldFocus) {
+    const target =
+      lastSidebarTrigger && lastSidebarTrigger.offsetParent !== null
+        ? lastSidebarTrigger
+        : els.toolSidebarBtn.offsetParent !== null
+          ? els.toolSidebarBtn
+          : els.sidebarToggle;
+    target.focus();
+  }
 }
 
 const host = window.ToolStowHost.create({
@@ -97,6 +157,7 @@ const host = window.ToolStowHost.create({
   },
   onToolReady() {
     els.activeToolThemeBadge.hidden = false;
+    els.detailsToolThemeBadge.hidden = false;
   },
 });
 
@@ -328,16 +389,67 @@ function updateEmptyState(state) {
   renderEmptyGrid(state);
 }
 
+function buildTagReturnFragment(tags, { includeLabel = false } = {}) {
+  const tagFrag = document.createDocumentFragment();
+  if (Array.isArray(tags) && tags.length > 0) {
+    if (includeLabel) {
+      const label = document.createElement("span");
+      label.className = "tui-details-label";
+      label.textContent = "TAGS";
+      tagFrag.appendChild(label);
+    }
+    for (const tag of tags) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tui-tag-chip";
+      btn.textContent = `#${tag}`;
+      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
+      btn.addEventListener("click", () => {
+        setDetailsOpen(false);
+        host.setFilters({ q: "", category: "", tag });
+        host.clearSelection();
+      });
+      tagFrag.appendChild(btn);
+    }
+  }
+  return tagFrag;
+}
+
+function renderDetailsQuickSwitcher(state) {
+  const hasMultiple = state.allTools.length > 1;
+  const fragment = document.createDocumentFragment();
+  for (const tool of state.allTools) {
+    const opt = document.createElement("option");
+    opt.value = tool.id;
+    opt.textContent = tool.name;
+    opt.selected = tool.id === state.selectedId;
+    fragment.appendChild(opt);
+  }
+  els.detailsQuickSwitcher.replaceChildren(fragment);
+  els.detailsSwitcherRow.hidden = !hasMultiple;
+}
+
 function renderActiveToolHeader(tool, state) {
   if (!tool) return;
   window.ToolStowHost.renderIcon(els.activeToolIcon, tool, "#");
+  const versionText = tool.version ? `v${tool.version}` : "";
+  const themeReady = tool.themeAware === true || state.activeIframeReady;
+
   els.activeToolName.textContent = tool.name;
   els.activeToolId.textContent = tool.id;
-  els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
+  els.activeToolVersion.textContent = versionText;
   els.activeToolVersion.hidden = !tool.version;
-  els.activeToolThemeBadge.hidden = !(tool.themeAware === true || state.activeIframeReady);
+  els.activeToolThemeBadge.hidden = !themeReady;
   els.activeToolDesc.textContent = tool.description || "";
   els.activeToolDesc.hidden = !tool.description;
+
+  els.detailsToolName.textContent = tool.name;
+  els.detailsToolId.textContent = tool.id;
+  els.detailsToolVersion.textContent = versionText;
+  els.detailsToolVersion.hidden = !tool.version;
+  els.detailsToolThemeBadge.hidden = !themeReady;
+  els.detailsToolDesc.textContent = tool.description || "";
+  els.detailsToolDesc.hidden = !tool.description;
 
   const standaloneUrl = host.getStandaloneUrl(tool);
   if (standaloneUrl) {
@@ -348,16 +460,8 @@ function renderActiveToolHeader(tool, state) {
     els.standaloneLink.hidden = true;
   }
 
-  const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags)) {
-    for (const tag of tool.tags) {
-      const label = document.createElement("span");
-      label.className = "tui-tag-chip";
-      label.textContent = `#${tag}`;
-      tagFrag.appendChild(label);
-    }
-  }
-  els.activeToolTags.replaceChildren(tagFrag);
+  els.activeToolTags.replaceChildren(buildTagReturnFragment(tool.tags));
+  els.detailsToolTags.replaceChildren(buildTagReturnFragment(tool.tags, { includeLabel: true }));
 }
 
 function renderState(state) {
@@ -371,6 +475,7 @@ function renderState(state) {
 
   renderCategories(state);
   renderTags(state);
+  renderDetailsQuickSwitcher(state);
   els.toolsBox.hidden = !state.selectedTool;
   if (state.selectedTool) {
     renderToolList(state);
@@ -379,11 +484,24 @@ function renderState(state) {
   els.footerToolsStat.textContent = `TOOLS:${state.filteredTools.length}/${state.allTools.length}`;
   els.footerStatus.textContent = state.selectedTool ? `PROC:${state.selectedTool.id}` : "SYS:READY";
 
-  if (state.selectedTool) {
+  const showingTool = Boolean(state.selectedTool);
+  if (els.shell) {
+    els.shell.dataset.view = showingTool ? "tool" : "directory";
+  }
+
+  if (showingTool) {
+    if (lastSelectedToolId !== state.selectedTool.id) {
+      setDetailsOpen(false);
+      setMobileSearchOpen(false);
+    }
+    lastSelectedToolId = state.selectedTool.id;
     els.emptyState.hidden = true;
     els.toolView.hidden = false;
     renderActiveToolHeader(state.selectedTool, state);
   } else {
+    lastSelectedToolId = null;
+    setDetailsOpen(false);
+    setMobileSearchOpen(false);
     els.toolView.hidden = true;
     els.emptyState.hidden = false;
     updateEmptyState(state);
@@ -393,27 +511,72 @@ function renderState(state) {
 function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
+    setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
     closeMobileSidebar();
   });
 
-  els.sidebarToggle.addEventListener("click", () => {
+  const handleSidebarToggle = (trigger) => {
     if (els.sidebar.classList.contains("open")) {
       closeMobileSidebar();
     } else {
-      openMobileSidebar();
+      openMobileSidebar(trigger);
     }
-  });
+  };
 
-  els.sidebarBackdrop.addEventListener("click", closeMobileSidebar);
+  els.sidebarToggle.addEventListener("click", () => handleSidebarToggle(els.sidebarToggle));
+  els.toolSidebarBtn.addEventListener("click", () => handleSidebarToggle(els.toolSidebarBtn));
+
+  els.sidebarBackdrop.addEventListener("click", () => closeMobileSidebar());
 
   els.mobileBackBtn.addEventListener("click", () => {
+    setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
     closeMobileSidebar();
   });
 
   els.closeToolBtn.addEventListener("click", () => {
+    setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
+  });
+
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.addEventListener("click", () => {
+      const next = els.shell?.dataset.searchOpen !== "true";
+      setMobileSearchOpen(next, { focus: next });
+    });
+  }
+
+  els.toolDetailsToggle.addEventListener("click", () => {
+    if (els.sidebar.classList.contains("open")) {
+      closeMobileSidebar();
+    }
+    setDetailsOpen(els.tuiDetailsPanel.hidden);
+  });
+
+  els.detailsQuickSwitcher.addEventListener("change", (e) => {
+    const targetId = e.target.value;
+    setDetailsOpen(false);
+    if (targetId && targetId !== host.getState().selectedId) {
+      host.selectTool(targetId, { updateHash: true, forceReload: false });
+    }
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (els.tuiDetailsPanel.hidden) return;
+    if (els.tuiDetailsPanel.contains(e.target) || els.toolDetailsToggle.contains(e.target)) {
+      return;
+    }
+    setDetailsOpen(false);
+  });
+
+  window.addEventListener("blur", () => {
+    if (!els.tuiDetailsPanel.hidden && document.activeElement?.tagName === "IFRAME") {
+      setDetailsOpen(false);
+    }
   });
 
   els.themeToggle.addEventListener("click", () => {
@@ -422,8 +585,12 @@ function bindEvents() {
 
   els.searchInput.addEventListener("input", (e) => {
     const query = e.target.value;
-    if (window.innerWidth <= 780 && host.getState().selectedId && !els.sidebar.classList.contains("open")) {
-      openMobileSidebar();
+    if (
+      (window.innerWidth <= 780 || window.innerHeight <= 500) &&
+      host.getState().selectedId &&
+      !els.sidebar.classList.contains("open")
+    ) {
+      openMobileSidebar(els.toolSidebarBtn);
     }
     if (searchTimer) window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
@@ -436,6 +603,9 @@ function bindEvents() {
       if (els.searchInput.value) {
         els.searchInput.value = "";
         host.setFilters({ q: "" });
+      } else if (els.shell?.dataset.view === "tool" && els.shell?.dataset.searchOpen === "true") {
+        e.preventDefault();
+        setMobileSearchOpen(false, { restoreFocus: true });
       } else {
         els.searchInput.blur();
       }
@@ -443,10 +613,29 @@ function bindEvents() {
   });
 
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (!els.tuiDetailsPanel.hidden) {
+        e.preventDefault();
+        setDetailsOpen(false, { restoreFocus: true });
+        return;
+      }
+      if (els.sidebar.classList.contains("open")) {
+        e.preventDefault();
+        closeMobileSidebar({ restoreFocus: true });
+        return;
+      }
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      els.searchInput.focus();
-      els.searchInput.select();
+      const searchHidden =
+        els.shell?.dataset.view === "tool" &&
+        (els.searchInput.offsetParent === null || els.searchInput.getBoundingClientRect().width === 0);
+      if (searchHidden) {
+        setMobileSearchOpen(true, { focus: true });
+      } else {
+        els.searchInput.focus();
+        els.searchInput.select();
+      }
     }
   });
 

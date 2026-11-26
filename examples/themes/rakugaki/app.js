@@ -1,9 +1,11 @@
 const DEFAULT_SITE_TITLE = "ToolStow";
 
 const els = {
+  shell: document.querySelector(".rk-shell"),
   brandLink: document.getElementById("brand-link"),
   brandTitle: document.getElementById("brand-title"),
   searchInput: document.getElementById("search-input"),
+  mobileSearchToggle: document.getElementById("mobile-search-toggle"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
   statusBanner: document.getElementById("status-banner"),
@@ -25,6 +27,16 @@ const els = {
   activeToolVersion: document.getElementById("active-tool-version"),
   activeToolThemeBadge: document.getElementById("active-tool-theme-badge"),
   activeToolDesc: document.getElementById("active-tool-desc"),
+  toolDetailsToggle: document.getElementById("tool-details-toggle"),
+  toolDetailsPanel: document.getElementById("tool-details-panel"),
+  detailsToolName: document.getElementById("details-tool-name"),
+  detailsToolId: document.getElementById("details-tool-id"),
+  detailsToolVersion: document.getElementById("details-tool-version"),
+  detailsToolThemeBadge: document.getElementById("details-tool-theme-badge"),
+  detailsToolDesc: document.getElementById("details-tool-desc"),
+  detailsSwitcherRow: document.getElementById("details-switcher-row"),
+  detailsQuickSwitcher: document.getElementById("details-quick-switcher"),
+  detailsToolTags: document.getElementById("details-tool-tags"),
   reloadToolBtn: document.getElementById("reload-tool-btn"),
   standaloneLink: document.getElementById("standalone-link"),
   activeToolTags: document.getElementById("active-tool-tags"),
@@ -35,6 +47,7 @@ const els = {
 
 let statusTimer = null;
 let searchToolId = null;
+let lastSelectedToolId = null;
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
   if (statusTimer) {
@@ -58,6 +71,38 @@ function clearErrorBanner() {
   }
 }
 
+function setMobileSearchOpen(open, { focus = false, restoreFocus = false } = {}) {
+  if (!els.shell) return;
+  const isOpen = Boolean(open);
+  if (isOpen) {
+    setDetailsOpen(false);
+    els.shell.dataset.searchOpen = "true";
+  } else {
+    delete els.shell.dataset.searchOpen;
+  }
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.setAttribute("aria-expanded", String(isOpen));
+  }
+  if (isOpen && focus) {
+    els.searchInput.focus();
+    els.searchInput.select();
+  } else if (!isOpen && restoreFocus && els.mobileSearchToggle && els.mobileSearchToggle.offsetParent !== null) {
+    els.mobileSearchToggle.focus();
+  }
+}
+
+function setDetailsOpen(open, { restoreFocus = false } = {}) {
+  const isOpen = Boolean(open);
+  if (isOpen) {
+    setMobileSearchOpen(false);
+  }
+  els.toolDetailsPanel.hidden = !isOpen;
+  els.toolDetailsToggle.setAttribute("aria-expanded", String(isOpen));
+  if (!isOpen && restoreFocus && !els.toolDetailsToggle.hidden) {
+    els.toolDetailsToggle.focus();
+  }
+}
+
 const host = window.ToolStowHost.create({
   iframeHost: els.iframeHost,
   defaultMode: "light",
@@ -75,6 +120,7 @@ const host = window.ToolStowHost.create({
   },
   onToolReady() {
     els.activeToolThemeBadge.hidden = false;
+    els.detailsToolThemeBadge.hidden = false;
   },
 });
 
@@ -151,7 +197,7 @@ function renderTags(state) {
   els.clearFiltersBtn.hidden = !host.hasActiveFilters();
 }
 
-function renderQuickSwitcher(state) {
+function populateSelectOptions(selectEl, state) {
   const fragment = document.createDocumentFragment();
   for (const tool of state.allTools) {
     const opt = document.createElement("option");
@@ -160,8 +206,15 @@ function renderQuickSwitcher(state) {
     opt.selected = tool.id === state.selectedId;
     fragment.appendChild(opt);
   }
-  els.quickSwitcher.replaceChildren(fragment);
-  els.quickSwitcher.hidden = state.allTools.length <= 1;
+  selectEl.replaceChildren(fragment);
+}
+
+function renderQuickSwitcher(state) {
+  const hasMultiple = state.allTools.length > 1;
+  populateSelectOptions(els.quickSwitcher, state);
+  populateSelectOptions(els.detailsQuickSwitcher, state);
+  els.quickSwitcher.hidden = !hasMultiple;
+  els.detailsSwitcherRow.hidden = !hasMultiple;
 }
 
 function renderToolWall(state) {
@@ -252,16 +305,51 @@ function renderToolWall(state) {
   els.toolGrid.replaceChildren(fragment);
 }
 
+function buildTagReturnFragment(tags) {
+  const tagFrag = document.createDocumentFragment();
+  if (Array.isArray(tags) && tags.length > 0) {
+    const label = document.createElement("span");
+    label.className = "rk-tags-label";
+    label.textContent = "按标签返回目录";
+    tagFrag.appendChild(label);
+    for (const tag of tags) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "rk-tag-pill";
+      btn.textContent = `#${tag}`;
+      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
+      btn.addEventListener("click", () => {
+        setDetailsOpen(false);
+        host.setFilters({ q: "", category: "", tag });
+        host.clearSelection();
+      });
+      tagFrag.appendChild(btn);
+    }
+  }
+  return tagFrag;
+}
+
 function renderActiveToolHeader(tool, state) {
   if (!tool) return;
   window.ToolStowHost.renderIcon(els.activeToolIcon, tool, "✎");
+  const versionText = tool.version ? `v${tool.version}` : "";
+  const themeReady = tool.themeAware === true || state.activeIframeReady;
+
   els.activeToolName.textContent = tool.name;
   els.activeToolId.textContent = tool.id;
-  els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
+  els.activeToolVersion.textContent = versionText;
   els.activeToolVersion.hidden = !tool.version;
-  els.activeToolThemeBadge.hidden = !(tool.themeAware === true || state.activeIframeReady);
+  els.activeToolThemeBadge.hidden = !themeReady;
   els.activeToolDesc.textContent = tool.description || "";
   els.activeToolDesc.hidden = !tool.description;
+
+  els.detailsToolName.textContent = tool.name;
+  els.detailsToolId.textContent = tool.id;
+  els.detailsToolVersion.textContent = versionText;
+  els.detailsToolVersion.hidden = !tool.version;
+  els.detailsToolThemeBadge.hidden = !themeReady;
+  els.detailsToolDesc.textContent = tool.description || "";
+  els.detailsToolDesc.hidden = !tool.description;
 
   const standaloneUrl = host.getStandaloneUrl(tool);
   if (standaloneUrl) {
@@ -272,29 +360,13 @@ function renderActiveToolHeader(tool, state) {
     els.standaloneLink.hidden = true;
   }
 
-  const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags) && tool.tags.length > 0) {
-    const label = document.createElement("span");
-    label.className = "rk-tags-label";
-    label.textContent = "按标签返回目录";
-    tagFrag.appendChild(label);
-    for (const tag of tool.tags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "rk-tag-pill";
-      btn.textContent = `#${tag}`;
-      btn.setAttribute("aria-label", `返回目录并查看 #${tag} 工具`);
-      btn.addEventListener("click", () => {
-        host.setFilters({ q: "", category: "", tag });
-        host.clearSelection();
-      });
-      tagFrag.appendChild(btn);
-    }
-  }
-  els.activeToolTags.replaceChildren(tagFrag);
+  els.activeToolTags.replaceChildren(buildTagReturnFragment(tool.tags));
+  els.detailsToolTags.replaceChildren(buildTagReturnFragment(tool.tags));
 }
 
 function openTool(id) {
+  setDetailsOpen(false);
+  setMobileSearchOpen(false);
   searchToolId = null;
   host.selectTool(id);
 }
@@ -324,26 +396,72 @@ function renderState(state) {
     : "笔记本就绪";
 
   const showingTool = Boolean(state.selectedTool && !showingSearchResults);
+  if (els.shell) {
+    els.shell.dataset.view = showingTool ? "tool" : "directory";
+  }
   els.notebookView.hidden = showingTool;
   els.toolView.hidden = !showingTool;
   els.clearFiltersBtn.textContent = showingSearchResults ? "返回当前工具" : "清空筛选";
-  if (showingTool) renderActiveToolHeader(state.selectedTool, state);
+  if (showingTool) {
+    if (lastSelectedToolId !== state.selectedTool.id) {
+      setDetailsOpen(false);
+      setMobileSearchOpen(false);
+    }
+    lastSelectedToolId = state.selectedTool.id;
+    renderActiveToolHeader(state.selectedTool, state);
+  } else {
+    lastSelectedToolId = null;
+    setDetailsOpen(false);
+  }
 }
 
 function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
+    setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
 
   els.backToNotebookBtn.addEventListener("click", () => {
+    setDetailsOpen(false);
+    setMobileSearchOpen(false);
     host.clearSelection();
   });
 
-  els.quickSwitcher.addEventListener("change", (e) => {
+  const handleSwitcherChange = (e) => {
     const targetId = e.target.value;
     if (targetId && targetId !== host.getState().selectedId) {
       openTool(targetId);
+    } else {
+      setDetailsOpen(false);
+    }
+  };
+  els.quickSwitcher.addEventListener("change", handleSwitcherChange);
+  els.detailsQuickSwitcher.addEventListener("change", handleSwitcherChange);
+
+  if (els.mobileSearchToggle) {
+    els.mobileSearchToggle.addEventListener("click", () => {
+      const next = els.shell?.dataset.searchOpen !== "true";
+      setMobileSearchOpen(next, { focus: next });
+    });
+  }
+
+  els.toolDetailsToggle.addEventListener("click", () => {
+    setDetailsOpen(els.toolDetailsPanel.hidden);
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (els.toolDetailsPanel.hidden) return;
+    if (els.toolDetailsPanel.contains(e.target) || els.toolDetailsToggle.contains(e.target)) {
+      return;
+    }
+    setDetailsOpen(false);
+  });
+
+  window.addEventListener("blur", () => {
+    if (!els.toolDetailsPanel.hidden && document.activeElement?.tagName === "IFRAME") {
+      setDetailsOpen(false);
     }
   });
 
@@ -363,6 +481,9 @@ function bindEvents() {
         searchToolId = null;
         els.searchInput.value = "";
         host.setFilters({ q: "" });
+      } else if (els.shell?.dataset.view === "tool" && els.shell?.dataset.searchOpen === "true") {
+        e.preventDefault();
+        setMobileSearchOpen(false, { restoreFocus: true });
       } else {
         els.searchInput.blur();
       }
@@ -370,10 +491,22 @@ function bindEvents() {
   });
 
   window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.toolDetailsPanel.hidden) {
+      e.preventDefault();
+      setDetailsOpen(false, { restoreFocus: true });
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      els.searchInput.focus();
-      els.searchInput.select();
+      const searchHidden =
+        els.shell?.dataset.view === "tool" &&
+        (els.searchInput.offsetParent === null || els.searchInput.getBoundingClientRect().width === 0);
+      if (searchHidden) {
+        setMobileSearchOpen(true, { focus: true });
+      } else {
+        els.searchInput.focus();
+        els.searchInput.select();
+      }
     }
   });
 
@@ -383,6 +516,7 @@ function bindEvents() {
 
   els.clearFiltersBtn.addEventListener("click", () => {
     els.searchInput.value = "";
+    setMobileSearchOpen(false);
     if (searchToolId) {
       searchToolId = null;
       host.setFilters({ q: "" });

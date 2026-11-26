@@ -216,7 +216,9 @@ a {
 .tui-nav-btn:focus-visible,
 .tui-tool-btn:focus-visible,
 .tui-tag-chip:focus-visible,
-.tui-card:focus-visible {
+.tui-card:focus-visible,
+.tui-quick-select:focus-visible,
+.tui-link-btn:focus-visible {
   outline: 1px solid var(--ts-accent);
   outline-offset: 1px;
 }
@@ -668,6 +670,12 @@ button.tui-tag-chip:hover {
   flex-direction: column;
 }
 
+.tui-tool-head {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 20;
+}
+
 .tui-tool-bar {
   display: flex;
   align-items: center;
@@ -684,11 +692,12 @@ button.tui-tag-chip:hover {
   align-items: center;
   gap: 9px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 220px;
 }
 
 .tui-tool-text {
   min-width: 0;
+  flex: 1 1 180px;
 }
 
 .tui-tool-title-row {
@@ -696,6 +705,7 @@ button.tui-tag-chip:hover {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .tui-exec-tag {
@@ -705,18 +715,26 @@ button.tui-tag-chip:hover {
   color: var(--ts-inverted-ink);
   font-size: 10px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .tui-tool-title-row h1 {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tui-tool-desc {
   margin: 2px 0 0;
   font-size: 11.5px;
   color: var(--ts-ink-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .tui-tool-actions {
@@ -726,10 +744,135 @@ button.tui-tag-chip:hover {
   flex-shrink: 0;
 }
 
+.tui-details-toggle,
+.tui-mobile-search-toggle {
+  display: none;
+}
+
+.tui-mobile-search-toggle[aria-expanded="true"] {
+  background: var(--ts-accent);
+  border-color: var(--ts-accent);
+  color: var(--ts-inverted-ink);
+}
+
+.tui-details-panel {
+  position: absolute;
+  top: 100%;
+  left: 8px;
+  right: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  z-index: 30;
+  border: 1px solid var(--ts-border-strong);
+  border-left: 3px solid var(--ts-accent);
+  border-radius: 2px;
+  background: var(--ts-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tui-details-panel[hidden] {
+  display: none;
+}
+
+.tui-details-header {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tui-details-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tui-details-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.tui-details-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tui-details-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ts-ink-secondary);
+  overflow-wrap: anywhere;
+}
+
+.tui-details-desc[hidden] {
+  display: none;
+}
+
+.tui-details-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tui-details-switcher[hidden] {
+  display: none;
+}
+
+.tui-details-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ts-accent);
+}
+
+.tui-quick-select {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--ts-border);
+  border-radius: 2px;
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-size: 11.5px;
+}
+
+.tui-details-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tui-details-tags:empty {
+  display: none;
+}
+
 .tui-active-tags {
   padding: 6px 12px;
   background: var(--ts-canvas);
   border-bottom: 1px solid var(--ts-border);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+.tui-active-tags > * {
+  flex-shrink: 0;
 }
 
 .tui-active-tags:empty {
@@ -791,7 +934,7 @@ button.tui-tag-chip:hover {
 }
 
 /* Responsive */
-@media (max-width: 780px) {
+@media (max-width: 780px), (max-height: 500px) {
   .tui-mobile-only {
     display: inline-flex;
   }
@@ -852,5 +995,153 @@ button.tui-tag-chip:hover {
     order: 3;
     flex: 1 1 100%;
     max-width: none;
+  }
+}
+
+@media (max-width: 780px), (max-height: 500px) {
+  .tui-shell[data-view="tool"] .tui-topbar {
+    height: 42px;
+    min-height: 42px;
+    padding: 0 8px;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .tui-shell[data-view="tool"] .tui-topbar-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .tui-shell[data-view="tool"] .tui-brand {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .tui-shell[data-view="tool"] #brand-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tui-shell[data-view="tool"] .tui-brand-flag,
+  .tui-shell[data-view="tool"] .tui-cursor {
+    display: none;
+  }
+
+  .tui-shell[data-view="tool"] .tui-topbar-actions {
+    gap: 6px;
+  }
+
+  .tui-shell[data-view="tool"] .tui-topbar .tui-btn {
+    height: 26px;
+    padding: 0 7px;
+    font-size: 11px;
+  }
+
+  .tui-shell[data-view="tool"] .tui-statusbar {
+    display: none;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-bar {
+    padding: 5px 8px;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-meta {
+    gap: 5px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-icon-lg {
+    display: none;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-text {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-title-row {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-title-row h1 {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-bar .tui-exec-tag,
+  .tui-shell[data-view="tool"] #active-tool-id,
+  .tui-shell[data-view="tool"] #active-tool-version,
+  .tui-shell[data-view="tool"] #active-tool-theme-badge,
+  .tui-shell[data-view="tool"] .tui-tool-desc,
+  .tui-shell[data-view="tool"] .tui-active-tags,
+  .tui-shell[data-view="tool"] .tui-tool-bar .tui-btn-label {
+    display: none;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-actions {
+    gap: 4px;
+  }
+
+  .tui-shell[data-view="tool"] .tui-tool-bar .tui-btn {
+    height: 28px;
+    padding: 0 7px;
+    font-size: 11.5px;
+  }
+
+  .tui-shell[data-view="tool"] .tui-details-toggle {
+    display: inline-flex;
+  }
+
+  .tui-shell[data-view="tool"] #sidebar-toggle,
+  .tui-shell[data-view="tool"] #close-tool-btn {
+    display: none;
+  }
+
+  .tui-shell[data-view="tool"] .tui-sidebar,
+  .tui-shell[data-view="tool"] .tui-backdrop {
+    top: 42px;
+    bottom: 0;
+  }
+}
+
+@media (max-width: 780px) {
+  .tui-shell[data-view="tool"]:not([data-search-open="true"]) .tui-search-wrap {
+    display: none;
+  }
+
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 6px 8px;
+  }
+
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-search-wrap {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-sidebar,
+  .tui-shell[data-view="tool"][data-search-open="true"] .tui-backdrop {
+    top: 80px;
+  }
+
+  .tui-shell[data-view="tool"] .tui-mobile-search-toggle {
+    display: inline-flex;
+  }
+}
+
+@media (min-width: 781px) and (min-height: 501px) {
+  .tui-details-panel {
+    display: none;
   }
 }
