@@ -183,7 +183,7 @@ Because both your shell and every ToolStow plugin load `/ui/v1/toolstow.css`, de
 
 ### 5.1 Complete `--ts-*` Design Token Catalog
 
-Always define **both** `:root` (Light mode, `color-scheme: light`) and `:root[data-theme="dark"]` (Dark mode, `color-scheme: dark`):
+Define `:root` (Light mode, `color-scheme: light`) and `:root[data-theme="dark"]` (Dark mode, `color-scheme: dark`). For **dark-only themes** (such as CRT/terminal themes like `phosphor`), set `color-scheme: dark` and your dark palette on **both** `:root` and `:root[data-theme="dark"]` in `ui.css` so standalone plugins opened at `/t/{id}/` also resolve dark mode and your theme's computed `--ts-accent` automatically:
 
 | Token | Built-in Light Default | Built-in Dark Default | Semantic Role |
 | :--- | :--- | :--- | :--- |
@@ -284,6 +284,7 @@ Plugins build their UI with shared `.ts-*` classes from `/ui/v1/toolstow.css`. O
 | **Form Controls** | `.ts-input`, `.ts-textarea`, `.ts-select` | Customize border, radius, shadow, and `:focus` accent border/ring. Keep padding & full readability intact. |
 | **Tabs & Chips** | `.ts-tabs`, `.ts-tab`, `.ts-tab.active`, `.ts-badge`, `.ts-badge-mono`, `.ts-kbd` | Great places to inject signature theme identity (pills, stamps, sharp terminal boxes, wobbly ink outlines). |
 | **Code & Feedback** | `.ts-code`, `.ts-code-row`, `.ts-toast` | Keep `.ts-code` monospace and readable; remember `.ts-code-row > code` sits on `--ts-canvas` (not `--ts-code-bg`). |
+| **Workbench Slots** | `.ts-workbench`, `.ts-wb-toolbar`, `.ts-wb-nav`, `.ts-wb-aside`, `.ts-wb-main`, `.ts-collection`, `.ts-collection-group` | Rearrange plugin internal layouts via CSS Grid in `ui.css`! E.g. dock `.ts-wb-nav` as a left directory rail or right-edge vertical notebook tabs, pin `.ts-wb-toolbar` to the bottom as a `grep>` bar, or set `.ts-collection { --ts-collection-min: 100%; grid-template-columns: 1fr; }` for a 1-column terminal readout. Always guard desktop slot rearrangements inside `@media (min-width: 761px)` and handle `:not(:has(> .ts-wb-nav))` / `:has(> .ts-wb-aside)` cleanly. |
 
 > **Base `/ui/v1/toolstow.css` resets & defaults**: Before your `ui.css` and `style.css` run, `/ui/v1/toolstow.css` sets `*, *::before, *::after { box-sizing: border-box; }`, `color-scheme: light` (and `dark` under `:root[data-theme="dark"]`), `html, body` (`margin: 0; padding: 0; font-size: 14px; line-height: 1.5; background: var(--ts-canvas); color: var(--ts-ink);`), `body { min-height: 100dvh; }`, `[hidden] { display: none !important; }`, `.ts-btn` / `.ts-input` / `.ts-select` (`height: 34px; font-size: 13px;`), and `.ts-card` (`padding: 16px; border: 1px solid var(--ts-border); background: var(--ts-surface);`).
 >
@@ -331,8 +332,9 @@ body {
 | `/api/me` | `GET` | Public (reads optional session cookie) | Site title/description, admin visibility flag (`isAdmin`), active theme info. |
 | `/api/tools` | `GET` | Public | Published tool catalog with optional `q`, `category`, `tag` filters. |
 | `/t/{id}/{*path}` | `GET` | Public (published tools) | Sandboxed static tool assets (`CSP: sandbox ...;`, `nosniff`, `no-cache`). |
-| `/ui/v1/toolstow.css` | `GET`/`HEAD` | Public | Base design tokens + active theme's `ui.css`. |
+| `/ui/v1/toolstow.css` | `GET`/`HEAD` | Public | Base design tokens + `.ts-workbench` slots + active theme's `ui.css`. |
 | `/ui/v1/theme.js` | `GET`/`HEAD` | Public | Plugin-side theme bridge (`toolstow:ready` / `toolstow:theme`). |
+| `/ui/v1/host.js` | `GET`/`HEAD` | Public | Headless Host SDK (`window.ToolStowHost`) implementing Contract A for full custom shells. |
 | `/ui/v1/theme-assets/{*path}` | `GET`/`HEAD` | Public | Active theme static assets with `Access-Control-Allow-Origin: *`. |
 | `/admin*` & `/api/admin/*` | Locked | Admin Session ONLY (tools also accept API key) | Never called by public shells — only link to `/admin` when `me.isAdmin === true`. |
 
@@ -427,9 +429,49 @@ Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false
 
 ## 7. Hosting Plugins & Live Theme Sync Contract (Mandatory for Full Shells)
 
-Every full custom shell MUST implement all 6 requirements below:
+Full custom shells can satisfy the host runtime contract (**Contract A**) in one of two ways:
+- **Recommended — Use the Headless Host SDK (`/ui/v1/host.js`, `window.ToolStowHost`)**: Eliminates ~250 lines of fetch, filter, hash-routing, sandbox allowlist, iframe mounting, and `postMessage` boilerplate while leaving 100% of DOM structure and visual design to your theme. When `<script src="/ui/v1/host.js"></script>` is loaded in your shell HTML and `ToolStowHost` is used in JS, `validate.py` automatically marks the `/api/me`, `/api/tools`, `toolstow:theme`, and `toolstow:ready` checks as satisfied (while still enforcing `isAdmin` gating for `/admin`).
+- **Alternative — Standalone Custom Implementation (e.g. bundled React/Vite SPA)**: Directly fetch `/api/me` and `/api/tools` and implement the URL validation, sandbox filtering, and `postMessage` handshake below.
 
-### 7.1 Stylesheet Load Order & Anti-FOUC `<head>` Bootstrap
+### 7.0 Using `/ui/v1/host.js` (`window.ToolStowHost` Headless SDK)
+
+Load `/ui/v1/host.js` in `<head>` or before your shell's `app.js`:
+
+```html
+<link rel="stylesheet" href="/ui/v1/toolstow.css">
+<link rel="stylesheet" href="./style.css">
+<script src="/ui/v1/host.js"></script>
+<script type="module" src="./app.js"></script>
+```
+
+Create and bootstrap a host controller:
+
+```js
+const host = window.ToolStowHost.create({
+  iframeHost: document.getElementById("iframe-host"), // optional auto-mount container
+  defaultMode: "auto",   // "auto" | "light" | "dark"
+  lockMode: null,        // set "dark" for dark-only themes like phosphor
+  hashRouting: true,     // automatic #tool=<id> deep-linking
+  onStateChange(state) {
+    // state.site: { siteTitle, siteDescription, isAdmin, adminEnabled, activeTheme, themeSource }
+    // state.allTools, state.filteredTools, state.categories ([{name, count}]), state.tags
+    // state.filters: { q, category, tag }
+    // state.selectedId, state.selectedTool, state.theme: { mode, accent }, state.loading, state.error
+    adminLink.hidden = !state.site.isAdmin;
+    renderShell(state);
+  },
+});
+
+await host.bootstrap();
+```
+
+Key `ToolStowHost` static helpers & instance methods:
+- **Static helpers**: `ToolStowHost.renderIcon(containerEl, tool, fallbackGlyph)`, `ToolStowHost.resolveIconUrl(tool)`, `ToolStowHost.isSafeToolUrl(url)`, `ToolStowHost.sanitizeSandboxTokens(tokens)`, `ToolStowHost.normalizeHexColor(val)`, `ToolStowHost.readStorage(key)` / `writeStorage(key, val)`.
+- **Instance methods**: `host.bootstrap()`, `host.getState()`, `host.refresh()`, `host.setFilters({ q, category, tag })`, `host.clearFilters()`, `host.hasActiveFilters()`, `host.selectTool(id)`, `host.clearSelection()`, `host.mountTool(containerEl, toolOrId, { cacheBust })`, `host.reloadTool()`, `host.getStandaloneUrl(tool)`, `host.setThemeMode(mode)`, `host.toggleThemeMode()`, `host.syncTheme()` (call after switching custom sub-skins like `data-skin` or `data-phosphor` to push all 27 computed `--ts-*` tokens to the active plugin iframe), `host.subscribe(fn)`.
+
+---
+
+### 7.1 Stylesheet Load Order & Anti-FOUC `<head>` Bootstrap (Raw Contract Details)
 
 Always load `/ui/v1/toolstow.css` **FIRST** in `<head>` before your shell stylesheet:
 
@@ -554,8 +596,8 @@ window.addEventListener("message", (event) => {
 
 - **Zero unsafe HTML sinks**: Never use `.innerHTML`, `.outerHTML`, `.insertAdjacentHTML()`, or `document.write()`. Build all DOM nodes with `document.createElement()`, `textContent`, and `replaceChildren()`.
 - **Mode persistence**: Persist `"light"` / `"dark"` in host `localStorage` under `"toolstow:mode"` (wrapped in `try/catch`), falling back to `window.matchMedia("(prefers-color-scheme: dark)")`, and set `document.documentElement.dataset.theme = mode`.
-- **Deep-linking & navigation**: Support `#tool=<encodedId>` hash navigation (`hashchange` listener + restore on page load), a clear "返回列表" action, "刷新" (remount iframe with `_ts` cache-bust), and "独立打开" (`target="_blank" rel="noopener noreferrer"`).
-- **Keyboard & accessibility**: Support `Cmd/Ctrl+K` to focus search, `Escape` to clear/blur search, visible `:focus-visible` outlines, responsive mobile layout, and `@media (prefers-reduced-motion: reduce)` for animations/marquees.
+- **Deep-linking & navigation**: Support `#tool=<encodedId>` hash navigation (`hashchange` listener + restore on page load so existing `#tool=<id>` deep links open cleanly), a clear "返回列表" action, "刷新" (remount iframe with `_ts` cache-bust), and "独立打开" (`target="_blank" rel="noopener noreferrer"`).
+- **Keyboard & accessibility**: Every navigation or control surface the theme provides (search, map pins, modal triggers, quick switcher, etc.) must be keyboard-operable with visible `:focus-visible` outlines, alongside a responsive mobile layout and `@media (prefers-reduced-motion: reduce)` for animations/marquees. Map-, town-, or shortcut-driven themes with no persistent search bar are explicitly allowed. *(Optional for search-bar themes: e.g., `Cmd/Ctrl+K` to focus search or open a quick-switcher palette without discarding an active tool iframe, and `Escape` to close overlays or clear/blur search.)*
 - **Responsive & overflow guardrails (test at `320px`, `390px`, `844×390`, and `1280×600`)**:
   - **No clipped full-page backgrounds**: Put repeating wall/paper textures on `html, body` (or ensure `body { min-height: 100dvh; }`) so sparse pages (1–3 tools) fill the entire viewport without exposing a solid bottom band.
   - **No obstructive `position: fixed` stickers/badges**: Decorative floating widgets must never cover tool cards or buttons on short desktop (`1280×600`) or landscape mobile (`844×390`) viewports — keep them in normal document flow, or hide them with `@media (max-width: 1180px), (max-height: 780px)` and add bottom padding to the main container.
@@ -605,9 +647,10 @@ python3 skills/toolstow-theme/scripts/pack.py --strict --strict-dir-name ./my-th
 
 Inspect the bundled examples in `examples/themes/` as working references:
 - **Skin-Only**: `examples/themes/paper-warm/` (`theme.json`, `ui.css`, `preview.svg`)
-- **Full TUI Shell**: `examples/themes/ascii-probe/`
-- **Full Ops Table Shell**: `examples/themes/serverstatus/`
-- **Full Sketchbook Shell + Shared SVG Paper Assets**: `examples/themes/rakugaki/` (demonstrates `/ui/v1/theme-assets/assets/paper-grid-*.svg` across both host and plugins)
+- **Full TUI Shell + Workbench Slot Rearrangement**: `examples/themes/ascii-probe/` (uses `/ui/v1/host.js` and rearranges `.ts-workbench` in `ui.css` into a left vertical `.ts-wb-nav` rail, bottom `grep>` `.ts-wb-toolbar`, and 1-column `.ts-collection`)
+- **Full Ops Table Shell**: `examples/themes/serverstatus/` (uses `/ui/v1/host.js`)
+- **Full Sketchbook Shell + Shared SVG Paper Assets + Right-Edge Workbench Tabs**: `examples/themes/rakugaki/` (demonstrates `/ui/v1/theme-assets/assets/paper-grid-*.svg` and right-hand vertical notebook index tabs on `.ts-wb-nav`)
+- **Dark-Only NOC CRT Phosphor Terminal Shell**: `examples/themes/phosphor/` (demonstrates dark-only `lockMode: "dark"`, `color-scheme: dark` on `:root`, P1 Green / P3 Amber / P4 Ice phosphor switching via `host.syncTheme()`, and CRT scanline overlays across host and plugins)
 
 ### Pre-Delivery Compliance Checklist
 
@@ -615,6 +658,6 @@ Inspect the bundled examples in `examples/themes/` as working references:
 - [ ] `theme.json` has valid `short` (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, not `"default"`, matching directory name) and non-empty `name`.
 - [ ] Contains `ui.css` (defining both `:root` + `color-scheme: light` and `:root[data-theme="dark"]` + `color-scheme: dark`, with hex `--ts-accent`) and/or `index.html` (`dist/index.html`).
 - [ ] Every `.svg` file (`preview.svg`, `assets/*.svg`, etc.) is valid XML with zero `<script>`, zero `on*` attributes, and zero `javascript:`.
-- [ ] Full custom shell loads `/ui/v1/toolstow.css` **first**, uses hash routing (`#tool=<id>`), shows `/admin` strictly when `me.isAdmin === true`, and renders zero upload/delete controls.
+- [ ] Full custom shell loads `/ui/v1/toolstow.css` **first**, opens `#tool=<id>` deep links cleanly, keeps every provided navigation/control surface (search, map pins, modal triggers, quick switcher, etc.) keyboard-operable with visible `:focus-visible` outlines, shows `/admin` strictly when `me.isAdmin === true`, and renders zero upload/delete controls.
 - [ ] Full custom shell validates `entryUrl`/`iconUrl` (`startsWith("/t/") && !startsWith("//")`), filters `sandbox` through the 6-token allowlist while preserving `[]`, sends `?theme=&accent=` + `toolstow:theme` on `load`/`toolstow:ready`/toggle, and contains zero `innerHTML`, zero `allow-same-origin`, zero `allow-top-navigation*`, and zero inline `setProperty("--ts-accent", ...)`.
 - [ ] Packaged cleanly with `scripts/pack.py` (no `node_modules/`), uploaded via `/admin` -> **主题管理**, and verified on `/` in both Light and Dark modes alongside a plugin across desktop (`1280×600`), narrow mobile (`320px`/`390px`, including logged-in admin link), and landscape mobile (`844×390`) viewports (full-height background, zero horizontal overflow, zero overlapping floating elements).

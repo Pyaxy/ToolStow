@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-phosphor="green">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ToolStow :: Phosphor CRT</title>
+  <link rel="stylesheet" href="/ui/v1/toolstow.css">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="ph-shell">
+    <header class="ph-topbar">
+      <div class="ph-brand-group">
+        <a href="#" id="brand-link" class="ph-brand" aria-label="返回 NOC 目录">
+          <span class="ph-crt-block" aria-hidden="true"></span>
+          <span id="brand-title">ToolStow</span>
+          <span class="ph-brand-tag" aria-hidden="true">// CRT</span>
+        </a>
+      </div>
+
+      <div class="ph-search-wrap">
+        <span class="ph-search-prefix" aria-hidden="true">grep&gt;</span>
+        <input
+          id="search-input"
+          class="ph-search-input"
+          type="search"
+          placeholder="搜索工具名 / ID / 描述 / 标签..."
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="搜索工具"
+        >
+        <kbd class="ph-kbd" aria-hidden="true">⌘K</kbd>
+      </div>
+
+      <div class="ph-topbar-actions">
+        <div id="phosphor-switch" class="ph-phosphor-switch" role="group" aria-label="切换荧光粉颜色">
+          <button type="button" class="ph-phosphor-btn active" data-phosphor-choice="green" aria-pressed="true">P1 GREEN</button>
+          <button type="button" class="ph-phosphor-btn" data-phosphor-choice="amber" aria-pressed="false">P3 AMBER</button>
+          <button type="button" class="ph-phosphor-btn" data-phosphor-choice="ice" aria-pressed="false">P4 ICE</button>
+        </div>
+
+        <a id="admin-link" class="ph-btn ph-btn-accent" href="/admin" hidden>管理 / 设置</a>
+      </div>
+    </header>
+
+    <div id="status-banner" class="ph-status-banner" role="status" aria-live="polite" hidden></div>
+
+    <!-- NOC CRT Directory View -->
+    <main id="directory-view" class="ph-directory">
+      <section class="ph-htop-panel" aria-label="NOC 终端概览与筛选">
+        <div class="ph-htop-head">
+          <div class="ph-htop-title-wrap">
+            <span class="ph-htop-label">SYS::TELEMETRY</span>
+            <span id="site-desc-line" class="ph-site-desc"></span>
+          </div>
+          <div class="ph-htop-actions">
+            <button id="clear-filters-btn" class="ph-btn ph-btn-xs" type="button" hidden>[RESET]</button>
+            <button id="refresh-list-btn" class="ph-btn ph-btn-xs" type="button" title="刷新列表">[SYNC]</button>
+          </div>
+        </div>
+
+        <div class="ph-meters" aria-label="指标条">
+          <div class="ph-meter">
+            <span class="ph-meter-key">MOUNT</span>
+            <span class="ph-meter-bar" aria-hidden="true"><span id="meter-mount-fill" class="ph-meter-fill"></span></span>
+            <strong id="stat-shown" class="ph-meter-val">0</strong>
+            <span class="ph-meter-sep">/</span>
+            <strong id="stat-total" class="ph-meter-val">0</strong>
+          </div>
+          <div class="ph-meter">
+            <span class="ph-meter-key">GROUPS</span>
+            <span class="ph-meter-bar" aria-hidden="true"><span id="meter-cats-fill" class="ph-meter-fill"></span></span>
+            <strong id="stat-cats" class="ph-meter-val">0</strong>
+          </div>
+          <div class="ph-meter">
+            <span class="ph-meter-key">CRT</span>
+            <strong id="stat-phosphor" class="ph-meter-val">P1 GREEN</strong>
+          </div>
+        </div>
+
+        <div id="category-tabs" class="ph-cat-tabs" role="tablist" aria-label="分类筛选"></div>
+
+        <div class="ph-tag-bar">
+          <span class="ph-tag-label">TAGS</span>
+          <div id="tag-list" class="ph-tag-list"></div>
+        </div>
+      </section>
+
+      <section class="ph-table-panel" aria-label="工具进程列表">
+        <div class="ph-table-wrap">
+          <table class="ph-table">
+            <thead>
+              <tr>
+                <th scope="col" class="col-pid">PID</th>
+                <th scope="col" class="col-tool">TOOL / DESC</th>
+                <th scope="col" class="col-cat">GROUP</th>
+                <th scope="col" class="col-tags">TAGS</th>
+                <th scope="col" class="col-ver">VER / SYNC</th>
+                <th scope="col" class="col-actions">EXEC</th>
+              </tr>
+            </thead>
+            <tbody id="tool-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <!-- Active Tool CRT Workspace -->
+    <section id="tool-view" class="ph-workspace" hidden>
+      <div class="ph-workspace-bar">
+        <div class="ph-workspace-left">
+          <button id="back-to-list-btn" class="ph-btn ph-btn-xs" type="button">← 返回</button>
+
+          <select id="quick-switcher" class="ph-quick-select" aria-label="快速切换工具"></select>
+
+          <span id="active-tool-icon" class="ph-tool-icon ph-tool-icon-lg"></span>
+
+          <div class="ph-tool-meta">
+            <div class="ph-tool-title-row">
+              <h1 id="active-tool-name"></h1>
+              <code id="active-tool-id" class="ph-mono-pill"></code>
+              <span id="active-tool-version" class="ph-mono-pill"></span>
+              <span id="active-tool-theme-badge" class="ph-sync-pill" hidden>SYNC</span>
+            </div>
+            <p id="active-tool-desc" class="ph-tool-desc"></p>
+          </div>
+        </div>
+
+        <div class="ph-workspace-actions">
+          <button id="reload-tool-btn" class="ph-btn ph-btn-xs" type="button">刷新</button>
+          <a id="standalone-link" class="ph-btn ph-btn-xs ph-btn-accent" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
+        </div>
+      </div>
+
+      <div id="active-tool-tags" class="ph-active-tags"></div>
+      <div id="iframe-host" class="ph-iframe-host"></div>
+    </section>
+
+    <footer class="ph-statusbar" aria-label="CRT 状态栏">
+      <div class="ph-statusbar-left">
+        <span class="ph-status-dot" aria-hidden="true"></span>
+        <span id="footer-status">NOC:ONLINE</span>
+        <span class="ph-sep" aria-hidden="true">|</span>
+        <span id="footer-tools-stat">TOOLS:0/0</span>
+      </div>
+      <div class="ph-statusbar-right">
+        <span id="footer-phosphor">CRT:P1-GREEN</span>
+        <span class="ph-sep" aria-hidden="true">·</span>
+        <span>⌘K SEARCH</span>
+        <span class="ph-sep" aria-hidden="true">·</span>
+        <span>ESC CLEAR</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/ui/v1/host.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

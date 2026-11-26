@@ -59,6 +59,53 @@
     return mode === "dark" ? "#fafafa" : "#18181b";
   }
 
+  // Accepts #rgb / #rrggbb / rgb() / rgba() computed values and returns lowercase #rrggbb.
+  function cssColorToHex(value) {
+    var hex = normalizeHexColor(value);
+    if (hex) return hex;
+    if (typeof value !== "string") return null;
+    var m = value
+      .trim()
+      .match(
+        /^rgba?\(\s*(\d{1,3}(?:\.\d+)?)[\s,]+(\d{1,3}(?:\.\d+)?)[\s,]+(\d{1,3}(?:\.\d+)?)\s*(?:[,/]\s*[\d.]+%?\s*)?\)$/i
+      );
+    if (!m) return null;
+    var out = "#";
+    for (var i = 1; i <= 3; i++) {
+      var n = Math.round(Number(m[i]));
+      if (!(n >= 0 && n <= 255)) return null;
+      out += (n < 16 ? "0" : "") + n.toString(16);
+    }
+    return out;
+  }
+
+  function readComputedStyleSafe() {
+    try {
+      return window.getComputedStyle(ROOT);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Reads the cascaded --ts-accent (toolstow.css + optional theme ui.css overrides).
+  function readComputedAccent() {
+    var cs = readComputedStyleSafe();
+    if (!cs) return null;
+    return cssColorToHex(cs.getPropertyValue("--ts-accent"));
+  }
+
+  // Returns "dark" / "light" when the stylesheet pins a single color-scheme, else null.
+  function readComputedScheme() {
+    var cs = readComputedStyleSafe();
+    if (!cs) return null;
+    var raw = String(cs.getPropertyValue("color-scheme") || cs.colorScheme || "")
+      .trim()
+      .toLowerCase();
+    if (raw === "dark" || raw === "only dark") return "dark";
+    if (raw === "light" || raw === "only light") return "light";
+    return null;
+  }
+
   var isEmbedded = detectEmbedded();
   ROOT.dataset.embed = isEmbedded ? "true" : "false";
 
@@ -87,6 +134,8 @@
     mode: initialMode,
     accent: queryAccent || defaultAccentForMode(initialMode),
     explicitAccent: queryAccent,
+    // True once the mode was dictated by ?theme= or a host toolstow:theme payload.
+    explicitMode: Boolean(queryMode),
     embedded: isEmbedded,
     tokens: {},
   };
@@ -101,6 +150,35 @@
   if (state.explicitAccent) {
     ROOT.style.setProperty("--ts-accent", state.explicitAccent);
   }
+
+  // When the mode was self-detected (standalone, no ?theme=), honour themes whose
+  // ui.css pins a single color-scheme (e.g. dark-only themes) over the OS preference.
+  function reconcileComputedScheme() {
+    if (state.explicitMode) return false;
+    var scheme = readComputedScheme();
+    if (!scheme || scheme === state.mode) return false;
+    state.mode = scheme;
+    ROOT.dataset.theme = scheme;
+    return true;
+  }
+
+  // Without an explicit ?accent= / host accent, mirror the computed --ts-accent.
+  function refreshComputedAccent() {
+    if (state.explicitAccent) return false;
+    var next = readComputedAccent() || defaultAccentForMode(state.mode);
+    if (next === state.accent) return false;
+    state.accent = next;
+    return true;
+  }
+
+  function syncFromStylesheets() {
+    var schemeChanged = reconcileComputedScheme();
+    var accentChanged = refreshComputedAccent();
+    return schemeChanged || accentChanged;
+  }
+
+  // Synchronous pass (stylesheets linked before this script are already parsed).
+  syncFromStylesheets();
 
   function getTheme() {
     return {
@@ -133,6 +211,7 @@
     var nextMode = normalizeMode(payload.mode);
     if (nextMode) {
       state.mode = nextMode;
+      state.explicitMode = true;
       ROOT.dataset.theme = nextMode;
     }
 
@@ -175,8 +254,8 @@
       state.accent = nextAccent;
       ROOT.style.setProperty("--ts-accent", nextAccent);
     } else if (!state.explicitAccent) {
-      var tokenAccent = normalizeHexColor(state.tokens["--ts-accent"]);
-      state.accent = tokenAccent || defaultAccentForMode(state.mode);
+      var tokenAccent = cssColorToHex(state.tokens["--ts-accent"]);
+      state.accent = readComputedAccent() || tokenAccent || defaultAccentForMode(state.mode);
     }
 
     notifyThemeChange();
@@ -185,12 +264,12 @@
   // Subscribe to OS theme changes when opened standalone (without explicit ?theme= override).
   if (!isEmbedded && !queryMode && mediaQuery) {
     var handleMediaChange = function (e) {
+      // A host payload may have taken over since load; it stays authoritative.
+      if (state.explicitMode) return;
       var nextMode = e && e.matches ? "dark" : "light";
       state.mode = nextMode;
       ROOT.dataset.theme = nextMode;
-      if (!state.explicitAccent) {
-        state.accent = defaultAccentForMode(nextMode);
-      }
+      syncFromStylesheets();
       notifyThemeChange();
     };
     if (typeof mediaQuery.addEventListener === "function") {
@@ -198,6 +277,19 @@
     } else if (typeof mediaQuery.addListener === "function") {
       mediaQuery.addListener(handleMediaChange);
     }
+  }
+
+  // Re-sync once stylesheets (including appended theme ui.css) are definitely applied.
+  function handleStylesheetsReady() {
+    if (syncFromStylesheets()) {
+      notifyThemeChange();
+    }
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", handleStylesheetsReady, { once: true });
+  }
+  if (document.readyState !== "complete") {
+    window.addEventListener("load", handleStylesheetsReady, { once: true });
   }
 
   // Listen for live theme updates from the ToolStow host shell.

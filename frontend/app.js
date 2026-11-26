@@ -1,565 +1,207 @@
-const SANDBOX_ALLOWLIST = new Set([
-  "allow-scripts",
-  "allow-downloads",
-  "allow-forms",
-  "allow-modals",
-  "allow-popups",
-  "allow-popups-to-escape-sandbox",
-]);
+// ToolStow default public shell.
+// All data/theme/iframe plumbing lives in window.ToolStowHost (/ui/v1/host.js),
+// which talks to /api/me and /api/tools. This file only renders DOM.
 
-const DEFAULT_SANDBOX = ["allow-scripts", "allow-downloads", "allow-forms"];
-const STORAGE_KEY_MODE = "toolstow:mode";
-const FALLBACK_ACCENT_LIGHT = "#18181b";
-const FALLBACK_ACCENT_DARK = "#fafafa";
 const DEFAULT_SITE_TITLE = "ToolStow";
-const DEFAULT_SITE_DESC = "Personal Micro-App Toolbox";
-const SYNCED_TOKEN_NAMES = [
-  "--ts-canvas",
-  "--ts-surface",
-  "--ts-surface-hover",
-  "--ts-border",
-  "--ts-border-strong",
-  "--ts-ink",
-  "--ts-ink-secondary",
-  "--ts-ink-muted",
-  "--ts-inverted-bg",
-  "--ts-inverted-bg-hover",
-  "--ts-inverted-ink",
-  "--ts-accent",
-  "--ts-danger",
-  "--ts-danger-bg",
-  "--ts-danger-border",
-  "--ts-success",
-  "--ts-code-bg",
-  "--ts-code-ink",
-  "--ts-radius-sm",
-  "--ts-radius-md",
-  "--ts-space-1",
-  "--ts-space-2",
-  "--ts-space-3",
-  "--ts-space-4",
-  "--ts-space-5",
-  "--ts-font-sans",
-  "--ts-font-mono",
-];
-
-const state = {
-  site: {
-    siteTitle: DEFAULT_SITE_TITLE,
-    siteDescription: DEFAULT_SITE_DESC,
-    isAdmin: false,
-    adminEnabled: false,
-    activeTheme: "default",
-    themeSource: "embedded",
-  },
-  allTools: [],
-  filteredTools: [],
-  selectedId: null,
-  activeIframe: null,
-  activeIframeReady: false,
-  filters: {
-    q: "",
-    category: "",
-    tag: "",
-  },
-  theme: {
-    mode: "light",
-    accent: FALLBACK_ACCENT_LIGHT,
-  },
-  statusTimer: null,
-  searchTimer: null,
-};
+const MAX_COLLAPSED_TAGS = 8;
+const UNCATEGORIZED = "未分类";
 
 const els = {
+  statusBanner: document.getElementById("status-banner"),
+  directoryView: document.getElementById("directory-view"),
   brandLink: document.getElementById("brand-link"),
   brandTitle: document.getElementById("brand-title"),
-  sidebarToggle: document.getElementById("sidebar-toggle"),
-  sidebar: document.getElementById("sidebar"),
-  sidebarBackdrop: document.getElementById("sidebar-backdrop"),
   searchInput: document.getElementById("search-input"),
   themeToggle: document.getElementById("theme-toggle"),
   adminLink: document.getElementById("admin-link"),
-  statusBanner: document.getElementById("status-banner"),
-  refreshListBtn: document.getElementById("refresh-list-btn"),
-  clearFiltersBtn: document.getElementById("clear-filters-btn"),
-  categoryList: document.getElementById("category-list"),
-  tagList: document.getElementById("tag-list"),
-  toolList: document.getElementById("tool-list"),
-  toolsCount: document.getElementById("tools-count"),
   emptyState: document.getElementById("empty-state"),
   emptyTitle: document.getElementById("empty-title"),
-  emptyCount: document.getElementById("empty-count"),
   emptyDesc: document.getElementById("empty-desc"),
+  emptyCount: document.getElementById("empty-count"),
+  categoryList: document.getElementById("category-list"),
+  tagList: document.getElementById("tag-list"),
+  clearFiltersBtn: document.getElementById("clear-filters-btn"),
+  refreshListBtn: document.getElementById("refresh-list-btn"),
   emptyGrid: document.getElementById("empty-grid"),
   toolView: document.getElementById("tool-view"),
-  mobileBackBtn: document.getElementById("mobile-back-btn"),
+  backBtn: document.getElementById("back-btn"),
+  quickSwitcher: document.getElementById("quick-switcher"),
   activeToolIcon: document.getElementById("active-tool-icon"),
   activeToolName: document.getElementById("active-tool-name"),
+  infoToggle: document.getElementById("info-toggle"),
+  infoPopover: document.getElementById("info-popover"),
   activeToolId: document.getElementById("active-tool-id"),
   activeToolVersion: document.getElementById("active-tool-version"),
-  activeToolThemeBadge: document.getElementById("active-tool-theme-badge"),
+  infoVersionRow: document.getElementById("info-version-row"),
+  infoThemeRow: document.getElementById("info-theme-row"),
   activeToolDesc: document.getElementById("active-tool-desc"),
   activeToolTags: document.getElementById("active-tool-tags"),
   reloadToolBtn: document.getElementById("reload-tool-btn"),
   standaloneLink: document.getElementById("standalone-link"),
+  toolThemeToggle: document.getElementById("tool-theme-toggle"),
   iframeHost: document.getElementById("iframe-host"),
+  cmdPaletteTrigger: document.getElementById("cmd-palette-trigger"),
+  cmdPalette: document.getElementById("cmd-palette"),
+  cmdPaletteBackdrop: document.getElementById("cmd-palette-backdrop"),
+  cmdPaletteInput: document.getElementById("cmd-palette-input"),
+  cmdPaletteList: document.getElementById("cmd-palette-list"),
 };
 
-function readStorage(key) {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
+const ui = {
+  statusTimer: null,
+  statusFromState: false,
+  tagsExpanded: false,
+  infoOpen: false,
+  lastSelectedId: null,
+  switcherSignature: "",
+  paletteOpen: false,
+  paletteQuery: "",
+  paletteActiveIndex: 0,
+  paletteResults: [],
+  paletteReturnFocus: null,
+};
 
-function writeStorage(key, value) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Ignore storage errors (private mode / quota).
-  }
-}
+let host = null;
 
-function normalizeHexColor(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
-    return trimmed.toLowerCase();
-  }
-  const shortMatch = trimmed.match(/^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/);
-  if (shortMatch) {
-    const [, r, g, b] = shortMatch;
-    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
-  }
-  return null;
-}
+/* ───────────── helpers ───────────── */
 
-function isSafeToolUrl(url) {
-  return typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//");
-}
-
-function initTheme() {
-  const savedMode = readStorage(STORAGE_KEY_MODE);
-  if (savedMode === "dark" || savedMode === "light") {
-    state.theme.mode = savedMode;
-  } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-    state.theme.mode = "dark";
-  }
-
-  applyThemeToHost();
-}
-
-function readThemeAccent(mode) {
-  const computed = normalizeHexColor(
-    window.getComputedStyle(document.documentElement).getPropertyValue("--ts-accent")
-  );
-  return computed || (mode === "dark" ? FALLBACK_ACCENT_DARK : FALLBACK_ACCENT_LIGHT);
-}
-
-function applyThemeToHost() {
-  document.documentElement.dataset.theme = state.theme.mode;
-  state.theme.accent = readThemeAccent(state.theme.mode);
-  els.themeToggle.textContent = state.theme.mode === "dark" ? "亮色" : "暗色";
-}
-
-function setThemeMode(mode) {
-  state.theme.mode = mode === "dark" ? "dark" : "light";
-  writeStorage(STORAGE_KEY_MODE, state.theme.mode);
-  applyThemeToHost();
-  postThemeToActiveIframe();
-}
-
-function updateDocumentTitle(tool = null) {
-  const siteTitle = state.site.siteTitle || DEFAULT_SITE_TITLE;
-  document.title = tool ? `${tool.name} · ${siteTitle}` : siteTitle;
-}
-
-function applySiteInfo() {
-  const title = state.site.siteTitle || DEFAULT_SITE_TITLE;
-  els.brandTitle.textContent = title;
-  els.adminLink.hidden = state.site.isAdmin !== true;
-  updateDocumentTitle(getSelectedTool());
-
-  if (!state.selectedId) {
-    updateEmptyState();
-  }
-}
-
-function getSelectedTool() {
-  if (!state.selectedId) return null;
-  return (
-    state.allTools.find((t) => t.id === state.selectedId) ||
-    state.filteredTools.find((t) => t.id === state.selectedId) ||
-    null
-  );
-}
-
-function collectThemeTokens() {
-  const computed = window.getComputedStyle(document.documentElement);
-  const tokens = {};
-  for (const name of SYNCED_TOKEN_NAMES) {
-    const val = computed.getPropertyValue(name).trim();
-    if (val) {
-      tokens[name] = val;
-    }
-  }
-  return tokens;
-}
-
-function postThemeToActiveIframe() {
-  const tool = getSelectedTool();
-  const shouldSync = Boolean((tool && tool.themeAware === true) || state.activeIframeReady);
-  if (!shouldSync) return;
-  const iframe = state.activeIframe;
-  if (!iframe || !iframe.contentWindow) return;
-
-  iframe.contentWindow.postMessage(
-    {
-      type: "toolstow:theme",
-      payload: {
-        mode: state.theme.mode,
-        accent: state.theme.accent,
-        tokens: collectThemeTokens(),
-      },
-    },
-    "*"
-  );
+function normalizeKey(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
-  if (state.statusTimer) {
-    window.clearTimeout(state.statusTimer);
-    state.statusTimer = null;
+  if (ui.statusTimer) {
+    window.clearTimeout(ui.statusTimer);
+    ui.statusTimer = null;
   }
+  ui.statusFromState = false;
   els.statusBanner.textContent = message;
   els.statusBanner.dataset.kind = kind;
   els.statusBanner.hidden = false;
-
   if (autoHideMs > 0) {
-    state.statusTimer = window.setTimeout(() => {
+    ui.statusTimer = window.setTimeout(() => {
       els.statusBanner.hidden = true;
     }, autoHideMs);
   }
 }
 
-function parseErrorPayload(body, fallback) {
-  if (body && typeof body === "object") {
-    const msg = body.error || body.message;
-    if (msg && body.code) return `[${body.code}] ${msg}`;
-    if (msg) return String(msg);
-  }
-  return fallback;
-}
-
-async function fetchSiteMe() {
-  try {
-    const res = await fetch("/api/me", {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data || typeof data !== "object") return;
-
-    state.site = {
-      siteTitle:
-        typeof data.siteTitle === "string" && data.siteTitle.trim()
-          ? data.siteTitle.trim()
-          : DEFAULT_SITE_TITLE,
-      siteDescription:
-        typeof data.siteDescription === "string"
-          ? data.siteDescription.trim()
-          : DEFAULT_SITE_DESC,
-      isAdmin: data.isAdmin === true,
-      adminEnabled: data.adminEnabled === true,
-      activeTheme: typeof data.activeTheme === "string" ? data.activeTheme : "default",
-      themeSource: typeof data.themeSource === "string" ? data.themeSource : "embedded",
-    };
-
-    applySiteInfo();
-  } catch {
-    // Keep safe defaults (isAdmin: false) if /api/me is unavailable.
+function syncStateError(error) {
+  if (error) {
+    const message = typeof error === "string" ? error : error.message || "无法连接到 ToolStow 服务";
+    showStatus(message, "error", 0);
+    ui.statusFromState = true;
+  } else if (ui.statusFromState) {
+    ui.statusFromState = false;
+    els.statusBanner.hidden = true;
   }
 }
 
-async function fetchToolsFromApi(filters = {}) {
-  const params = new URLSearchParams();
-  if (filters.q && filters.q.trim()) params.set("q", filters.q.trim());
-  if (filters.category) params.set("category", filters.category);
-  if (filters.tag) params.set("tag", filters.tag);
-
-  const query = params.toString();
-  const url = query ? `/api/tools?${query}` : "/api/tools";
-  const res = await fetch(url, {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    let body = null;
-    try {
-      body = await res.json();
-    } catch {
-      // ignore non-json error body
-    }
-    throw new Error(parseErrorPayload(body, `加载工具列表失败 (HTTP ${res.status})`));
-  }
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+function makeButton(className, text, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = className;
+  btn.textContent = text;
+  btn.addEventListener("click", onClick);
+  return btn;
 }
 
-function hasActiveFilters() {
-  return Boolean(state.filters.q.trim() || state.filters.category || state.filters.tag);
-}
+/* ───────────── directory view ───────────── */
 
-async function refreshAllAndFiltered(keepSelection = true) {
-  try {
-    const allTools = await fetchToolsFromApi({});
-    state.allTools = allTools;
-
-    if (hasActiveFilters()) {
-      state.filteredTools = await fetchToolsFromApi(state.filters);
-    } else {
-      state.filteredTools = allTools;
-    }
-
-    renderSidebar();
-
-    if (keepSelection && state.selectedId) {
-      const stillExists = state.allTools.some((t) => t.id === state.selectedId);
-      if (!stillExists) {
-        clearSelection(true);
-      } else {
-        renderActiveToolHeader(getSelectedTool());
-      }
-    } else if (!state.selectedId) {
-      updateEmptyState();
-    }
-  } catch (err) {
-    showStatus(err.message || "无法连接到 ToolStow 服务", "error", 0);
-  }
-}
-
-async function refreshFilteredOnly() {
-  try {
-    state.filteredTools = await fetchToolsFromApi(state.filters);
-    renderSidebar();
-    if (!state.selectedId) {
-      updateEmptyState();
-    }
-  } catch (err) {
-    showStatus(err.message || "筛选工具失败", "error", 5000);
-  }
-}
-
-function isRelativeIconPath(tool) {
-  if (tool.iconIsPath === true) return true;
-  const icon = tool.icon;
-  if (typeof icon !== "string" || !icon) return false;
-  if (/^(https?:|data:|javascript:|vbscript:)/i.test(icon)) return false;
-  return icon.includes("/") || /\.(svg|png|jpe?g|webp|gif|ico)$/i.test(icon);
-}
-
-function resolveIconUrl(tool) {
-  if (isSafeToolUrl(tool.iconUrl)) {
-    return tool.iconUrl;
-  }
-  if (isSafeToolUrl(tool.icon)) {
-    return tool.icon;
-  }
-  const encodedSegments = String(tool.icon)
-    .split("/")
-    .filter((s) => s && s !== "." && s !== "..")
-    .map((s) => encodeURIComponent(s))
-    .join("/");
-  return `/t/${encodeURIComponent(tool.id)}/${encodedSegments}`;
-}
-
-function renderIconInto(container, tool) {
-  container.replaceChildren();
-  if (isRelativeIconPath(tool)) {
-    const url = resolveIconUrl(tool);
-    if (isSafeToolUrl(url)) {
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = "";
-      img.loading = "lazy";
-      img.addEventListener("error", () => {
-        container.replaceChildren(document.createTextNode("🛠️"));
-      });
-      container.appendChild(img);
-      return;
-    }
-  }
-  container.textContent = tool.icon || "🛠️";
-}
-
-function sanitizeSandboxTokens(rawTokens) {
-  if (!Array.isArray(rawTokens)) {
-    return DEFAULT_SANDBOX;
-  }
-  return rawTokens.filter((token) => typeof token === "string" && SANDBOX_ALLOWLIST.has(token));
-}
-
-function renderCategories() {
-  const counts = new Map();
-  for (const tool of state.allTools) {
-    const cat = tool.category || "未分类";
-    counts.set(cat, (counts.get(cat) || 0) + 1);
-  }
-
+function renderCategories(s) {
+  const active = normalizeKey(s.filters.category);
   const fragment = document.createDocumentFragment();
 
-  const allItem = document.createElement("li");
-  const allBtn = document.createElement("button");
-  allBtn.type = "button";
-  allBtn.className = "nav-item-btn" + (state.filters.category === "" ? " active" : "");
-  const allLabel = document.createElement("span");
-  allLabel.textContent = "全部";
-  const allCount = document.createElement("span");
-  allCount.className = "nav-count";
-  allCount.textContent = String(state.allTools.length);
-  allBtn.append(allLabel, allCount);
-  allBtn.addEventListener("click", () => {
-    if (state.filters.category !== "") {
-      state.filters.category = "";
-      refreshFilteredOnly();
-    }
-  });
-  allItem.appendChild(allBtn);
-  fragment.appendChild(allItem);
-
-  const sortedCategories = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b, "zh-CN"));
-  for (const category of sortedCategories) {
-    const li = document.createElement("li");
+  const makePill = (label, count, isActive, onClick) => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "nav-item-btn" + (state.filters.category === category ? " active" : "");
+    btn.className = "pill" + (isActive ? " active" : "");
+    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    const text = document.createElement("span");
+    text.textContent = label;
+    const num = document.createElement("span");
+    num.className = "pill-count";
+    num.textContent = String(count);
+    btn.append(text, num);
+    btn.addEventListener("click", onClick);
+    return btn;
+  };
 
-    const nameSpan = document.createElement("span");
-    nameSpan.textContent = category;
-    const countSpan = document.createElement("span");
-    countSpan.className = "nav-count";
-    countSpan.textContent = String(counts.get(category));
+  fragment.appendChild(
+    makePill("全部", s.allTools.length, active === "", () => host.setFilters({ category: "" }))
+  );
 
-    btn.append(nameSpan, countSpan);
-    btn.addEventListener("click", () => {
-      state.filters.category = state.filters.category === category ? "" : category;
-      refreshFilteredOnly();
-    });
-
-    li.appendChild(btn);
-    fragment.appendChild(li);
+  for (const cat of s.categories) {
+    const name = cat && typeof cat === "object" ? cat.name : cat;
+    const count = cat && typeof cat === "object" ? cat.count : "";
+    const isActive = active !== "" && normalizeKey(name) === active;
+    fragment.appendChild(
+      makePill(name || UNCATEGORIZED, count, isActive, () =>
+        host.setFilters({ category: isActive ? "" : name })
+      )
+    );
   }
 
   els.categoryList.replaceChildren(fragment);
 }
 
-function renderTags() {
-  const tagSet = new Set();
-  for (const tool of state.allTools) {
-    if (Array.isArray(tool.tags)) {
-      for (const tag of tool.tags) {
-        if (tag) tagSet.add(tag);
-      }
-    }
-  }
+function toggleTagFilter(tag, activeTag) {
+  host.setFilters({ tag: normalizeKey(tag) === activeTag ? "" : tag });
+}
 
-  const sortedTags = Array.from(tagSet).sort((a, b) => a.localeCompare(b));
+function renderTags(s) {
+  const activeTag = normalizeKey(s.filters.tag);
+  const tags = Array.isArray(s.tags) ? s.tags : [];
   const fragment = document.createDocumentFragment();
 
-  if (sortedTags.length === 0) {
-    const empty = document.createElement("span");
-    empty.className = "list-empty";
-    empty.textContent = "暂无标签";
-    fragment.appendChild(empty);
-  } else {
-    for (const tag of sortedTags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tag-chip" + (state.filters.tag === tag ? " active" : "");
-      btn.textContent = `#${tag}`;
-      btn.addEventListener("click", () => {
-        state.filters.tag = state.filters.tag === tag ? "" : tag;
-        refreshFilteredOnly();
-      });
-      fragment.appendChild(btn);
-    }
+  let visible = tags;
+  let hiddenCount = 0;
+  if (!ui.tagsExpanded && tags.length > MAX_COLLAPSED_TAGS) {
+    visible = tags.slice(0, MAX_COLLAPSED_TAGS);
+    const activeFull = tags.find((t) => normalizeKey(t) === activeTag);
+    if (activeFull && !visible.includes(activeFull)) visible.push(activeFull);
+    hiddenCount = tags.length - visible.length;
+  }
+
+  for (const tag of visible) {
+    const isActive = activeTag !== "" && normalizeKey(tag) === activeTag;
+    const btn = makeButton("tag-chip" + (isActive ? " active" : ""), `#${tag}`, () =>
+      toggleTagFilter(tag, activeTag)
+    );
+    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    fragment.appendChild(btn);
+  }
+
+  if (tags.length > MAX_COLLAPSED_TAGS) {
+    const label = ui.tagsExpanded ? "收起" : `+${hiddenCount} 更多`;
+    const more = makeButton("tag-chip tag-chip-more", label, () => {
+      ui.tagsExpanded = !ui.tagsExpanded;
+      renderTags(host.getState());
+    });
+    more.setAttribute("aria-expanded", ui.tagsExpanded ? "true" : "false");
+    fragment.appendChild(more);
   }
 
   els.tagList.replaceChildren(fragment);
-  els.clearFiltersBtn.hidden = !hasActiveFilters();
 }
 
-function renderToolList() {
-  els.toolsCount.textContent = String(state.filteredTools.length);
+function openTool(id) {
+  host.selectTool(id, { updateHash: true, forceReload: false });
+}
+
+function renderGrid(s) {
   const fragment = document.createDocumentFragment();
-
-  if (state.filteredTools.length === 0) {
-    const li = document.createElement("li");
-    li.className = "list-empty";
-    li.textContent = state.allTools.length === 0 ? "暂无已发布工具" : "没有匹配的工具";
-    fragment.appendChild(li);
-  } else {
-    for (const tool of state.filteredTools) {
-      const li = document.createElement("li");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tool-item-btn" + (state.selectedId === tool.id ? " active" : "");
-      btn.title = tool.description || tool.name;
-
-      const main = document.createElement("div");
-      main.className = "tool-item-main";
-
-      const iconWrap = document.createElement("span");
-      iconWrap.className = "tool-icon";
-      renderIconInto(iconWrap, tool);
-
-      const textWrap = document.createElement("div");
-      textWrap.className = "tool-item-text";
-
-      const nameEl = document.createElement("span");
-      nameEl.className = "tool-item-name";
-      nameEl.textContent = tool.name;
-
-      const descEl = document.createElement("span");
-      descEl.className = "tool-item-desc";
-      descEl.textContent = tool.description || tool.id;
-
-      textWrap.append(nameEl, descEl);
-      main.append(iconWrap, textWrap);
-      btn.appendChild(main);
-
-      btn.addEventListener("click", () => {
-        selectTool(tool.id, { updateHash: true, forceReload: false });
-        closeMobileSidebar();
-      });
-
-      li.appendChild(btn);
-      fragment.appendChild(li);
-    }
-  }
-
-  els.toolList.replaceChildren(fragment);
-}
-
-function renderSidebar() {
-  renderCategories();
-  renderTags();
-  renderToolList();
-}
-
-function renderEmptyGrid() {
-  const fragment = document.createDocumentFragment();
-  const list = state.filteredTools;
+  const list = s.filteredTools;
 
   if (list.length === 0) {
     const box = document.createElement("div");
     box.className = "tool-card-empty";
-    box.textContent =
-      state.allTools.length === 0
-        ? "暂无已发布的工具。管理员可在后台上传并发布工具包。"
-        : "当前筛选条件下没有匹配的工具。";
+    if (s.loading) {
+      box.textContent = "正在加载工具列表...";
+    } else if (s.allTools.length === 0) {
+      box.textContent = "暂无已发布的工具。管理员可在后台收录工具包或单文件 HTML。";
+    } else {
+      box.textContent = "当前筛选条件下没有匹配的工具。";
+    }
     fragment.appendChild(box);
   } else {
     for (const tool of list) {
@@ -570,45 +212,27 @@ function renderEmptyGrid() {
       const head = document.createElement("div");
       head.className = "tool-card-head";
 
-      const titleWrap = document.createElement("div");
-      titleWrap.className = "tool-card-title-wrap";
-
       const iconWrap = document.createElement("span");
       iconWrap.className = "tool-icon";
-      renderIconInto(iconWrap, tool);
+      iconWrap.setAttribute("aria-hidden", "true");
+      window.ToolStowHost.renderIcon(iconWrap, tool);
 
       const nameEl = document.createElement("span");
       nameEl.className = "tool-card-name";
-      nameEl.textContent = tool.name;
+      nameEl.textContent = tool.name || tool.id;
 
-      titleWrap.append(iconWrap, nameEl);
-
-      const verEl = document.createElement("span");
-      verEl.className = "mono-badge";
-      verEl.textContent = tool.version ? `v${tool.version}` : "static";
-
-      head.append(titleWrap, verEl);
+      head.append(iconWrap, nameEl);
 
       const descEl = document.createElement("p");
       descEl.className = "tool-card-desc";
       descEl.textContent = tool.description || "点击打开此微工具";
 
-      const foot = document.createElement("div");
-      foot.className = "tool-card-foot";
-
       const catEl = document.createElement("span");
-      catEl.textContent = tool.category || "未分类";
+      catEl.className = "tool-card-cat";
+      catEl.textContent = tool.category || UNCATEGORIZED;
 
-      const idEl = document.createElement("code");
-      idEl.textContent = tool.id;
-
-      foot.append(catEl, idEl);
-
-      card.append(head, descEl, foot);
-      card.addEventListener("click", () => {
-        selectTool(tool.id, { updateHash: true, forceReload: false });
-      });
-
+      card.append(head, descEl, catEl);
+      card.addEventListener("click", () => openTool(tool.id));
       fragment.appendChild(card);
     }
   }
@@ -616,14 +240,14 @@ function renderEmptyGrid() {
   els.emptyGrid.replaceChildren(fragment);
 }
 
-function updateEmptyState() {
-  const title = state.site.siteTitle || DEFAULT_SITE_TITLE;
+function renderLandingHeader(s) {
+  const title = s.site.siteTitle || DEFAULT_SITE_TITLE;
   els.emptyTitle.textContent = title;
 
-  const total = state.filteredTools.length;
+  const total = s.filteredTools.length;
   els.emptyCount.textContent = `${total} ${total === 1 ? "tool" : "tools"}`;
 
-  const desc = state.site.siteDescription;
+  const desc = s.site.siteDescription;
   els.emptyDesc.replaceChildren();
   if (desc) {
     els.emptyDesc.appendChild(document.createTextNode(`${desc} · `));
@@ -634,197 +258,327 @@ function updateEmptyState() {
   kbd.textContent = "⌘K";
   els.emptyDesc.appendChild(kbd);
   els.emptyDesc.appendChild(document.createTextNode(" 快速搜索。"));
-
-  renderEmptyGrid();
 }
 
-function renderActiveToolHeader(tool) {
-  if (!tool) return;
-  renderIconInto(els.activeToolIcon, tool);
-  els.activeToolName.textContent = tool.name;
-  els.activeToolId.textContent = tool.id;
-  els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
-  els.activeToolVersion.hidden = !tool.version;
-  els.activeToolThemeBadge.hidden = !(tool.themeAware || state.activeIframeReady);
-  els.activeToolDesc.textContent = tool.description || "";
-  els.activeToolDesc.hidden = !tool.description;
+function renderDirectory(s) {
+  renderLandingHeader(s);
+  renderCategories(s);
+  renderTags(s);
+  renderGrid(s);
+  els.clearFiltersBtn.hidden = !host.hasActiveFilters();
 
-  if (isSafeToolUrl(tool.entryUrl)) {
-    els.standaloneLink.href = tool.entryUrl;
+  if (document.activeElement !== els.searchInput && els.searchInput.value !== s.filters.q) {
+    els.searchInput.value = s.filters.q;
+  }
+}
+
+/* ───────────── tool workspace ───────────── */
+
+function setInfoOpen(open, { restoreFocus = false } = {}) {
+  ui.infoOpen = open;
+  els.infoPopover.hidden = !open;
+  els.infoToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!open && restoreFocus) els.infoToggle.focus();
+}
+
+function renderQuickSwitcher(s) {
+  const signature = `${s.selectedId}|${s.allTools.map((t) => `${t.id}:${t.name}`).join(",")}`;
+  if (signature === ui.switcherSignature) return;
+  ui.switcherSignature = signature;
+
+  const fragment = document.createDocumentFragment();
+  for (const tool of s.allTools) {
+    const opt = document.createElement("option");
+    opt.value = tool.id;
+    opt.textContent = tool.name || tool.id;
+    fragment.appendChild(opt);
+  }
+  els.quickSwitcher.replaceChildren(fragment);
+  els.quickSwitcher.value = s.selectedId || "";
+}
+
+function renderInfoPopover(tool, s) {
+  els.activeToolId.textContent = tool.id;
+
+  els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
+  els.infoVersionRow.hidden = !tool.version;
+
+  els.infoThemeRow.hidden = !(tool.themeAware === true || s.activeIframeReady === true);
+
+  els.activeToolDesc.textContent = tool.description || "";
+
+  const activeTag = normalizeKey(s.filters.tag);
+  const fragment = document.createDocumentFragment();
+  if (Array.isArray(tool.tags)) {
+    for (const tag of tool.tags) {
+      if (!tag) continue;
+      fragment.appendChild(
+        makeButton("tag-chip" + (normalizeKey(tag) === activeTag ? " active" : ""), `#${tag}`, () => {
+          // Jump back to the directory filtered by this tag.
+          setInfoOpen(false);
+          host.setFilters({ tag });
+          host.clearSelection({ updateHash: true });
+        })
+      );
+    }
+  }
+  els.activeToolTags.replaceChildren(fragment);
+}
+
+function renderWorkspace(tool, s) {
+  window.ToolStowHost.renderIcon(els.activeToolIcon, tool);
+  els.activeToolName.textContent = tool.name || tool.id;
+  renderQuickSwitcher(s);
+  els.quickSwitcher.value = tool.id;
+  renderInfoPopover(tool, s);
+
+  const standaloneUrl = host.getStandaloneUrl(tool);
+  if (standaloneUrl) {
+    els.standaloneLink.href = standaloneUrl;
     els.standaloneLink.hidden = false;
   } else {
     els.standaloneLink.removeAttribute("href");
     els.standaloneLink.hidden = true;
   }
-
-  const tagFrag = document.createDocumentFragment();
-  if (Array.isArray(tool.tags)) {
-    for (const tag of tool.tags) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tag-chip" + (state.filters.tag === tag ? " active" : "");
-      btn.textContent = `#${tag}`;
-      btn.addEventListener("click", () => {
-        state.filters.tag = state.filters.tag === tag ? "" : tag;
-        refreshFilteredOnly();
-      });
-      tagFrag.appendChild(btn);
-    }
-  }
-  els.activeToolTags.replaceChildren(tagFrag);
 }
 
-function buildIframeUrl(entryUrl, cacheBust = false) {
-  const url = new URL(entryUrl, window.location.origin);
-  url.searchParams.set("theme", state.theme.mode);
-  url.searchParams.set("accent", state.theme.accent);
-  if (cacheBust) {
-    url.searchParams.set("_ts", String(Date.now()));
-  }
-  return `${url.pathname}${url.search}${url.hash}`;
+/* ───────────── command palette (active tool search) ───────────── */
+
+function filterPaletteTools(allTools, query) {
+  const q = normalizeKey(query);
+  if (!q) return allTools;
+  return allTools.filter((tool) => {
+    if (!tool || typeof tool !== "object") return false;
+    const tags = Array.isArray(tool.tags) ? tool.tags : [];
+    return (
+      normalizeKey(tool.name).includes(q) ||
+      normalizeKey(tool.description).includes(q) ||
+      normalizeKey(tool.id).includes(q) ||
+      normalizeKey(tool.category).includes(q) ||
+      tags.some((t) => normalizeKey(t).includes(q))
+    );
+  });
 }
 
-function mountToolIframe(tool, cacheBust = false) {
-  if (!isSafeToolUrl(tool.entryUrl)) {
-    showStatus(`工具入口路径无效：${tool.id}`, "error");
-    return;
-  }
-
-  state.activeIframeReady = false;
-  els.activeToolThemeBadge.hidden = !tool.themeAware;
-
-  const iframe = document.createElement("iframe");
-  iframe.className = "tool-iframe";
-  iframe.title = tool.name;
-  iframe.setAttribute("sandbox", sanitizeSandboxTokens(tool.sandbox).join(" "));
-  iframe.setAttribute("referrerpolicy", "no-referrer");
-
-  iframe.addEventListener("load", () => {
-    if (state.activeIframe === iframe) {
-      postThemeToActiveIframe();
-    }
+function updatePaletteActiveRow() {
+  const options = els.cmdPaletteList.querySelectorAll(".cmd-palette-item");
+  let activeOption = null;
+  options.forEach((opt, index) => {
+    const isActive = index === ui.paletteActiveIndex;
+    opt.classList.toggle("is-active", isActive);
+    opt.setAttribute("aria-selected", isActive ? "true" : "false");
+    if (isActive) activeOption = opt;
   });
 
-  iframe.src = buildIframeUrl(tool.entryUrl, cacheBust);
-
-  state.activeIframe = iframe;
-  els.iframeHost.replaceChildren(iframe);
+  if (activeOption) {
+    els.cmdPaletteInput.setAttribute("aria-activedescendant", activeOption.id);
+    activeOption.scrollIntoView({ block: "nearest" });
+  } else {
+    els.cmdPaletteInput.removeAttribute("aria-activedescendant");
+  }
 }
 
-function selectTool(id, { updateHash = true, forceReload = false } = {}) {
-  const tool =
-    state.allTools.find((t) => t.id === id) ||
-    state.filteredTools.find((t) => t.id === id);
+function selectPaletteTool(tool) {
+  if (!tool) return;
+  const currentId = host.getState().selectedId;
+  if (tool.id === currentId) {
+    closePalette({ restoreFocus: true });
+    return;
+  }
+  closePalette({ restoreFocus: false });
+  openTool(tool.id);
+}
 
-  if (!tool) {
-    showStatus(`未找到工具：${id}`, "error");
-    clearSelection(false);
+function renderPaletteList(s) {
+  const results = filterPaletteTools(s.allTools, ui.paletteQuery);
+  ui.paletteResults = results;
+
+  if (results.length === 0) {
+    ui.paletteActiveIndex = -1;
+    const empty = document.createElement("div");
+    empty.className = "cmd-palette-empty";
+    empty.textContent = s.allTools.length === 0 ? "暂无可用工具。" : "没有匹配的工具。";
+    els.cmdPaletteList.replaceChildren(empty);
+    els.cmdPaletteInput.removeAttribute("aria-activedescendant");
     return;
   }
 
-  const sameTool = state.selectedId === tool.id;
-  state.selectedId = tool.id;
+  if (ui.paletteActiveIndex < 0 || ui.paletteActiveIndex >= results.length) {
+    ui.paletteActiveIndex = 0;
+  }
 
-  if (updateHash) {
-    const expectedHash = `#tool=${encodeURIComponent(tool.id)}`;
-    if (window.location.hash !== expectedHash) {
-      window.location.hash = expectedHash;
+  const fragment = document.createDocumentFragment();
+  results.forEach((tool, index) => {
+    const isCurrent = tool.id === s.selectedId;
+    const isActive = index === ui.paletteActiveIndex;
+
+    const item = document.createElement("button");
+    item.type = "button";
+    item.id = `cmd-palette-opt-${index}`;
+    item.className = "cmd-palette-item";
+    if (isCurrent) item.classList.add("is-current");
+    if (isActive) item.classList.add("is-active");
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", isActive ? "true" : "false");
+
+    const iconWrap = document.createElement("span");
+    iconWrap.className = "tool-icon cmd-palette-icon";
+    iconWrap.setAttribute("aria-hidden", "true");
+    window.ToolStowHost.renderIcon(iconWrap, tool);
+
+    const body = document.createElement("span");
+    body.className = "cmd-palette-item-body";
+
+    const titleRow = document.createElement("span");
+    titleRow.className = "cmd-palette-item-title-row";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "cmd-palette-item-name";
+    nameEl.textContent = tool.name || tool.id;
+    titleRow.appendChild(nameEl);
+
+    if (isCurrent) {
+      const currentBadge = document.createElement("span");
+      currentBadge.className = "mono-badge mono-badge-accent cmd-palette-current-badge";
+      currentBadge.textContent = "当前";
+      titleRow.appendChild(currentBadge);
     }
+
+    const metaEl = document.createElement("span");
+    metaEl.className = "cmd-palette-item-meta";
+    const categoryText = tool.category || UNCATEGORIZED;
+    metaEl.textContent = tool.description ? `${categoryText} · ${tool.description}` : categoryText;
+
+    body.append(titleRow, metaEl);
+
+    const idEl = document.createElement("code");
+    idEl.className = "cmd-palette-item-id";
+    idEl.textContent = tool.id;
+
+    item.append(iconWrap, body, idEl);
+    item.addEventListener("mouseenter", () => {
+      if (ui.paletteActiveIndex !== index) {
+        ui.paletteActiveIndex = index;
+        updatePaletteActiveRow();
+      }
+    });
+    item.addEventListener("click", () => selectPaletteTool(tool));
+
+    fragment.appendChild(item);
+  });
+
+  els.cmdPaletteList.replaceChildren(fragment);
+  updatePaletteActiveRow();
+}
+
+function openPalette() {
+  const s = host.getState();
+  if (!s.selectedTool) return;
+
+  if (ui.paletteOpen) {
+    els.cmdPaletteInput.focus();
+    els.cmdPaletteInput.select();
+    return;
   }
 
-  els.emptyState.hidden = true;
-  els.toolView.hidden = false;
-  updateDocumentTitle(tool);
-  renderActiveToolHeader(tool);
-  renderToolList();
+  setInfoOpen(false);
+  ui.paletteReturnFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  ui.paletteOpen = true;
+  ui.paletteQuery = "";
+  ui.paletteActiveIndex = 0;
 
-  if (!sameTool || forceReload || !state.activeIframe) {
-    mountToolIframe(tool, forceReload);
+  els.cmdPaletteInput.value = "";
+  els.cmdPalette.hidden = false;
+  els.cmdPaletteTrigger.setAttribute("aria-expanded", "true");
+  renderPaletteList(s);
+  els.cmdPaletteInput.focus();
+}
+
+function closePalette({ restoreFocus = true } = {}) {
+  if (!ui.paletteOpen) return;
+  ui.paletteOpen = false;
+  els.cmdPalette.hidden = true;
+  els.cmdPaletteTrigger.setAttribute("aria-expanded", "false");
+
+  const target = ui.paletteReturnFocus;
+  ui.paletteReturnFocus = null;
+  if (
+    restoreFocus &&
+    target &&
+    target !== document.body &&
+    document.contains(target) &&
+    typeof target.focus === "function"
+  ) {
+    target.focus({ preventScroll: true });
+  } else if (restoreFocus && document.activeElement === els.cmdPaletteInput) {
+    els.cmdPaletteInput.blur();
   }
 }
 
-function clearSelection(updateHash = true) {
-  state.selectedId = null;
-  state.activeIframe = null;
-  state.activeIframeReady = false;
-  els.iframeHost.replaceChildren();
-  els.toolView.hidden = true;
-  els.emptyState.hidden = false;
-  updateDocumentTitle(null);
-  updateEmptyState();
-  renderToolList();
+/* ───────────── master render ───────────── */
 
-  if (updateHash && window.location.hash) {
-    history.replaceState(null, "", window.location.pathname + window.location.search);
+function render(s) {
+  const siteTitle = s.site.siteTitle || DEFAULT_SITE_TITLE;
+  els.brandTitle.textContent = siteTitle;
+  els.adminLink.hidden = s.site.isAdmin !== true;
+
+  const modeLabel = s.theme.mode === "dark" ? "亮色" : "暗色";
+  els.themeToggle.textContent = modeLabel;
+  els.toolThemeToggle.textContent = modeLabel;
+
+  syncStateError(s.error);
+
+  const tool = s.selectedTool || null;
+  if (tool) {
+    if (ui.lastSelectedId !== tool.id) setInfoOpen(false);
+    ui.lastSelectedId = tool.id;
+    els.directoryView.hidden = true;
+    els.toolView.hidden = false;
+    renderWorkspace(tool, s);
+    if (ui.paletteOpen) renderPaletteList(s);
+  } else {
+    if (ui.lastSelectedId !== null) {
+      ui.lastSelectedId = null;
+      ui.switcherSignature = "";
+    }
+    setInfoOpen(false);
+    closePalette({ restoreFocus: false });
+    els.toolView.hidden = true;
+    els.directoryView.hidden = false;
+    renderDirectory(s);
   }
 }
 
-function parseToolIdFromHash() {
-  const hash = window.location.hash || "";
-  const match = hash.match(/^#tool=(.+)$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
+/* ───────────── events ───────────── */
 
-function openMobileSidebar() {
-  els.sidebar.classList.add("open");
-  els.sidebarBackdrop.hidden = false;
-  els.sidebarToggle.setAttribute("aria-expanded", "true");
-}
-
-function closeMobileSidebar() {
-  els.sidebar.classList.remove("open");
-  els.sidebarBackdrop.hidden = true;
-  els.sidebarToggle.setAttribute("aria-expanded", "false");
+function focusSearch() {
+  els.searchInput.focus();
+  els.searchInput.select();
 }
 
 function bindEvents() {
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
-    clearSelection(true);
-    closeMobileSidebar();
+    host.clearSelection({ updateHash: true });
   });
 
-  els.sidebarToggle.addEventListener("click", () => {
-    if (els.sidebar.classList.contains("open")) {
-      closeMobileSidebar();
-    } else {
-      openMobileSidebar();
-    }
+  els.backBtn.addEventListener("click", () => {
+    host.clearSelection({ updateHash: true });
   });
 
-  els.sidebarBackdrop.addEventListener("click", closeMobileSidebar);
-
-  els.mobileBackBtn.addEventListener("click", () => {
-    clearSelection(true);
-    openMobileSidebar();
-  });
-
-  els.themeToggle.addEventListener("click", () => {
-    setThemeMode(state.theme.mode === "dark" ? "light" : "dark");
-  });
+  els.themeToggle.addEventListener("click", () => host.toggleThemeMode());
+  els.toolThemeToggle.addEventListener("click", () => host.toggleThemeMode());
 
   els.searchInput.addEventListener("input", (e) => {
-    state.filters.q = e.target.value;
-    if (window.innerWidth <= 768 && state.selectedId && !els.sidebar.classList.contains("open")) {
-      openMobileSidebar();
-    }
-    if (state.searchTimer) window.clearTimeout(state.searchTimer);
-    state.searchTimer = window.setTimeout(() => {
-      refreshFilteredOnly();
-    }, 150);
+    host.setFilters({ q: e.target.value });
   });
 
   els.searchInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (els.searchInput.value) {
         els.searchInput.value = "";
-        state.filters.q = "";
-        refreshFilteredOnly();
+        host.setFilters({ q: "" });
       } else {
         els.searchInput.blur();
       }
@@ -834,63 +588,134 @@ function bindEvents() {
   window.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
-      els.searchInput.focus();
-      els.searchInput.select();
+      if (host.getState().selectedTool) {
+        if (ui.paletteOpen) {
+          closePalette({ restoreFocus: true });
+        } else {
+          openPalette();
+        }
+      } else {
+        focusSearch();
+      }
+      return;
+    }
+    if (e.key === "Escape") {
+      if (ui.paletteOpen) {
+        e.preventDefault();
+        closePalette({ restoreFocus: true });
+        return;
+      }
+      if (ui.infoOpen) {
+        setInfoOpen(false, { restoreFocus: true });
+      }
+    }
+  });
+
+  els.cmdPaletteTrigger.addEventListener("click", () => {
+    if (ui.paletteOpen) {
+      closePalette({ restoreFocus: true });
+    } else {
+      openPalette();
+    }
+  });
+
+  els.cmdPaletteBackdrop.addEventListener("click", () => {
+    closePalette({ restoreFocus: true });
+  });
+
+  els.cmdPaletteInput.addEventListener("input", (e) => {
+    ui.paletteQuery = e.target.value;
+    ui.paletteActiveIndex = 0;
+    renderPaletteList(host.getState());
+  });
+
+  els.cmdPalette.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closePalette({ restoreFocus: true });
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (ui.paletteResults.length > 0) {
+        ui.paletteActiveIndex = (ui.paletteActiveIndex + 1) % ui.paletteResults.length;
+        updatePaletteActiveRow();
+      }
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (ui.paletteResults.length > 0) {
+        ui.paletteActiveIndex =
+          (ui.paletteActiveIndex - 1 + ui.paletteResults.length) % ui.paletteResults.length;
+        updatePaletteActiveRow();
+      }
+      return;
+    }
+    if (e.key === "Enter" && document.activeElement === els.cmdPaletteInput) {
+      e.preventDefault();
+      const chosen = ui.paletteResults[ui.paletteActiveIndex];
+      if (chosen) selectPaletteTool(chosen);
+      return;
+    }
+    if (e.key === "Tab") {
+      const focusables = [
+        els.cmdPaletteInput,
+        ...Array.from(els.cmdPaletteList.querySelectorAll(".cmd-palette-item")),
+      ];
+      if (focusables.length === 0) return;
+      const idx = focusables.indexOf(document.activeElement);
+      const nextIdx = e.shiftKey
+        ? (idx <= 0 ? focusables.length - 1 : idx - 1)
+        : (idx + 1) % focusables.length;
+      e.preventDefault();
+      focusables[nextIdx].focus();
     }
   });
 
   els.refreshListBtn.addEventListener("click", () => {
-    refreshAllAndFiltered(true);
+    host.refresh({ keepSelection: true });
   });
 
   els.clearFiltersBtn.addEventListener("click", () => {
-    state.filters.q = "";
-    state.filters.category = "";
-    state.filters.tag = "";
     els.searchInput.value = "";
-    refreshFilteredOnly();
+    host.clearFilters();
   });
 
-  els.reloadToolBtn.addEventListener("click", () => {
-    const tool = getSelectedTool();
-    if (tool) mountToolIframe(tool, true);
+  els.quickSwitcher.addEventListener("change", () => {
+    if (els.quickSwitcher.value) openTool(els.quickSwitcher.value);
   });
 
-  // Handshake from child tool iframe (works with or without manifest themeAware: true)
-  window.addEventListener("message", (event) => {
-    if (!state.activeIframe || event.source !== state.activeIframe.contentWindow) return;
-    if (event.data && event.data.type === "toolstow:ready") {
-      state.activeIframeReady = true;
-      els.activeToolThemeBadge.hidden = false;
-      postThemeToActiveIframe();
-    }
+  els.infoToggle.addEventListener("click", () => setInfoOpen(!ui.infoOpen));
+
+  document.addEventListener("click", (e) => {
+    if (!ui.infoOpen) return;
+    const target = e.target;
+    if (els.infoPopover.contains(target) || els.infoToggle.contains(target)) return;
+    setInfoOpen(false);
   });
 
-  // Hash navigation (#tool=<id>)
-  window.addEventListener("hashchange", () => {
-    const id = parseToolIdFromHash();
-    if (id) {
-      if (id !== state.selectedId) {
-        selectTool(id, { updateHash: false, forceReload: false });
-      }
-    } else if (state.selectedId) {
-      clearSelection(false);
-    }
-  });
+  els.reloadToolBtn.addEventListener("click", () => host.reloadTool());
 }
 
 async function bootstrap() {
-  initTheme();
-  bindEvents();
-
-  await Promise.all([fetchSiteMe(), refreshAllAndFiltered(false)]);
-
-  const initialId = parseToolIdFromHash();
-  if (initialId) {
-    selectTool(initialId, { updateHash: false, forceReload: false });
-  } else {
-    updateEmptyState();
+  if (!window.ToolStowHost || typeof window.ToolStowHost.create !== "function") {
+    showStatus("无法加载 ToolStow Host SDK (/ui/v1/host.js)", "error", 0);
+    return;
   }
+
+  host = window.ToolStowHost.create({
+    iframeHost: els.iframeHost,
+    defaultMode: "auto",
+    onError: (message) => showStatus(message || "无法连接到 ToolStow 服务", "error", 6000),
+  });
+
+  bindEvents();
+  host.subscribe(render);
+  await host.bootstrap();
+  render(host.getState());
 }
 
 bootstrap();

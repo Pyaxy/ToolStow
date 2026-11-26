@@ -58,6 +58,17 @@ STORAGE_RE = re.compile(
 TRY_RE = re.compile(r"\btry\s*\{")
 ALLOW_SAME_ORIGIN_RE = re.compile(r"\ballow-same-origin\b", re.IGNORECASE)
 
+CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+CSS_RULE_RE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+WB_SLOT_SELECTOR_RE = re.compile(
+    r"\.ts-(?:workbench|wb-toolbar|wb-nav|wb-aside|wb-main)\b"
+)
+WB_LAYOUT_OVERRIDE_RE = re.compile(
+    r"\b(?:grid-template-(?:areas|columns|rows)|grid-(?:area|column|row)(?:-(?:start|end))?|order)\s*:|"
+    r"\bposition\s*:\s*(?:fixed|absolute)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class ValidationResult:
@@ -97,17 +108,20 @@ class ValidationResult:
 
 
 class _HtmlInspector(HTMLParser):
-    """Extracts <link>, <script>, and inline <script> blocks from an HTML document."""
+    """Extracts <link>, <script>, inline <script>, and inline <style> blocks from an HTML document."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.stylesheets: List[Dict[str, Optional[str]]] = []
         self.external_scripts: List[Dict[str, Optional[str]]] = []
         self.inline_scripts: List[Tuple[str, str]] = []  # (type_attr, source)
+        self.inline_styles: List[str] = []
         self._in_script = False
         self._script_type = ""
         self._script_has_src = False
         self._script_chunks: List[str] = []
+        self._in_style = False
+        self._style_chunks: List[str] = []
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         tag_l = tag.lower()
@@ -124,13 +138,19 @@ class _HtmlInspector(HTMLParser):
             self._script_chunks = []
             if self._script_has_src:
                 self.external_scripts.append(attr_map)
+        elif tag_l == "style":
+            self._in_style = True
+            self._style_chunks = []
 
     def handle_data(self, data: str) -> None:
         if self._in_script and not self._script_has_src:
             self._script_chunks.append(data)
+        elif self._in_style:
+            self._style_chunks.append(data)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() == "script" and self._in_script:
+        tag_l = tag.lower()
+        if tag_l == "script" and self._in_script:
             if not self._script_has_src:
                 src_text = "".join(self._script_chunks)
                 if src_text.strip():
@@ -139,6 +159,12 @@ class _HtmlInspector(HTMLParser):
             self._script_type = ""
             self._script_has_src = False
             self._script_chunks = []
+        elif tag_l == "style" and self._in_style:
+            style_text = "".join(self._style_chunks)
+            if style_text.strip():
+                self.inline_styles.append(style_text)
+            self._in_style = False
+            self._style_chunks = []
 
 
 def is_ignored_name(name: str) -> bool:
@@ -660,6 +686,18 @@ def validate_tool_dir(
                     result.warnings.append(
                         f"{entry_rel}: external script '{src}' breaks offline/self-contained guarantee"
                     )
+
+            # Inline <style> blocks: warn if tool hardcodes layout positioning on workbench slots
+            for idx, style_src in enumerate(inspector.inline_styles, start=1):
+                stripped_css = CSS_COMMENT_RE.sub("", style_src)
+                for sel_match in CSS_RULE_RE.finditer(stripped_css):
+                    selector = " ".join(sel_match.group(1).split())
+                    body = sel_match.group(2)
+                    if WB_SLOT_SELECTOR_RE.search(selector) and WB_LAYOUT_OVERRIDE_RE.search(body):
+                        result.warnings.append(
+                            f"{entry_rel}#style[{idx}]: layout positioning rule on '{selector}' "
+                            "(let themes control .ts-workbench and .ts-wb-* slot placement via ui.css)"
+                        )
 
             # Inline <script> blocks
             for idx, (script_type, script_src) in enumerate(inspector.inline_scripts, start=1):

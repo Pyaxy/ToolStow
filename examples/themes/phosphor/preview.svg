@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img" aria-label="Phosphor CRT NOC Theme Preview">
+  <defs>
+    <pattern id="crt-scanlines" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="2" fill="none"/>
+      <rect y="2" width="4" height="2" fill="#000000" fill-opacity="0.28"/>
+    </pattern>
+    <radialGradient id="crt-vignette" cx="50%" cy="50%" r="72%">
+      <stop offset="60%" stop-color="#050805" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.65"/>
+    </radialGradient>
+  </defs>
+
+  <!-- CRT Screen Base -->
+  <rect width="960" height="540" fill="#050805"/>
+  <rect x="6" y="6" width="948" height="528" fill="none" stroke="#163820" stroke-width="2"/>
+
+  <!-- Topbar -->
+  <rect x="6" y="6" width="948" height="52" fill="#09100a"/>
+  <line x1="6" y1="58" x2="954" y2="58" stroke="#235c34" stroke-width="1.5"/>
+  <rect x="22" y="23" width="10" height="18" fill="#33ff66"/>
+  <text x="40" y="37" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="16" font-weight="700" letter-spacing="1">TOOLSTOW</text>
+  <text x="148" y="37" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13">// NOC CRT</text>
+
+  <!-- Search Input -->
+  <rect x="260" y="16" width="310" height="32" fill="#050805" stroke="#235c34" stroke-width="1"/>
+  <text x="272" y="36" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">grep&gt;</text>
+  <text x="318" y="36" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">filter process / tag / id...</text>
+  <rect x="530" y="22" width="30" height="20" fill="#09100a" stroke="#163820"/>
+  <text x="535" y="36" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">⌘K</text>
+
+  <!-- P1 / P3 / P4 Phosphor Switch -->
+  <rect x="668" y="16" width="84" height="32" fill="#33ff66" stroke="#33ff66"/>
+  <text x="680" y="36" fill="#040805" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">P1 GREEN</text>
+  <rect x="756" y="16" width="84" height="32" fill="#050805" stroke="#163820"/>
+  <text x="768" y="36" fill="#ffb000" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">P3 AMBER</text>
+  <rect x="844" y="16" width="76" height="32" fill="#050805" stroke="#163820"/>
+  <text x="858" y="36" fill="#38bdf8" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">P4 ICE</text>
+
+  <!-- htop Meter Panel -->
+  <rect x="24" y="76" width="912" height="106" fill="#09100a" stroke="#235c34" stroke-width="1.5"/>
+  <text x="40" y="98" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">SYS::TELEMETRY [PHOSPHOR-P1]</text>
+  <text x="760" y="98" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">UPTIME 99.98% // READY</text>
+  <line x1="40" y1="108" x2="920" y2="108" stroke="#163820" stroke-width="1"/>
+
+  <!-- htop Bar 1: TOOLS -->
+  <text x="40" y="132" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">MOUNT</text>
+  <text x="92" y="132" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">[</text>
+  <rect x="104" y="121" width="230" height="12" fill="#163820"/>
+  <rect x="104" y="121" width="184" height="12" fill="#33ff66"/>
+  <text x="342" y="132" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">] 08/08</text>
+
+  <!-- htop Bar 2: SYNC -->
+  <text x="440" y="132" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">SYNC</text>
+  <text x="486" y="132" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">[</text>
+  <rect x="498" y="121" width="220" height="12" fill="#163820"/>
+  <rect x="498" y="121" width="165" height="12" fill="#33ff66"/>
+  <text x="726" y="132" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">] LIVE</text>
+
+  <!-- Category Tabs inside htop panel -->
+  <rect x="40" y="148" width="90" height="24" fill="#33ff66"/>
+  <text x="52" y="164" fill="#040805" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">ALL [8]</text>
+  <rect x="138" y="148" width="110" height="24" fill="#050805" stroke="#163820"/>
+  <text x="150" y="164" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">DEVOPS [4]</text>
+  <rect x="256" y="148" width="110" height="24" fill="#050805" stroke="#163820"/>
+  <text x="268" y="164" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">DESIGN [2]</text>
+  <rect x="374" y="148" width="110" height="24" fill="#050805" stroke="#163820"/>
+  <text x="386" y="164" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">UTILS  [2]</text>
+
+  <!-- htop Process Table -->
+  <rect x="24" y="198" width="912" height="290" fill="#09100a" stroke="#235c34" stroke-width="1.5"/>
+  <!-- Table Header (reversed phosphor) -->
+  <rect x="24" y="198" width="912" height="30" fill="#163820"/>
+  <text x="40" y="217" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">PID</text>
+  <text x="130" y="217" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">PROCESS / DESCRIPTION</text>
+  <text x="510" y="217" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">GROUP</text>
+  <text x="640" y="217" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">VER</text>
+  <text x="730" y="217" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">SYNC</text>
+  <text x="840" y="217" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">EXEC</text>
+
+  <!-- Row 1 (Selected / Highlighted) -->
+  <rect x="25" y="229" width="910" height="52" fill="#0e1a10"/>
+  <rect x="25" y="229" width="4" height="52" fill="#33ff66"/>
+  <text x="40" y="252" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12" font-weight="700">01</text>
+  <text x="130" y="250" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13" font-weight="700">docker-cheatsheet</text>
+  <text x="130" y="269" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">Container CLI command matrix &amp; instant copy</text>
+  <text x="510" y="255" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">DevOps</text>
+  <text x="640" y="255" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">v1.0.0</text>
+  <rect x="730" y="242" width="48" height="20" fill="#050805" stroke="#33ff66"/>
+  <text x="738" y="256" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">LIVE</text>
+  <rect x="836" y="240" width="66" height="24" fill="#33ff66"/>
+  <text x="847" y="256" fill="#040805" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" font-weight="700">[RUN]</text>
+  <line x1="25" y1="281" x2="935" y2="281" stroke="#163820"/>
+
+  <!-- Row 2 -->
+  <text x="40" y="305" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">02</text>
+  <text x="130" y="303" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13" font-weight="700">dynamic-favicon</text>
+  <text x="130" y="322" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">Real-time SVG badge &amp; icon generator</text>
+  <text x="510" y="308" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">Design</text>
+  <text x="640" y="308" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">v1.2.0</text>
+  <rect x="730" y="295" width="48" height="20" fill="#050805" stroke="#33ff66"/>
+  <text x="738" y="309" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">LIVE</text>
+  <rect x="836" y="293" width="66" height="24" fill="#050805" stroke="#235c34"/>
+  <text x="847" y="309" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">[RUN]</text>
+  <line x1="25" y1="334" x2="935" y2="334" stroke="#163820"/>
+
+  <!-- Row 3 -->
+  <text x="40" y="358" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">03</text>
+  <text x="130" y="356" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13" font-weight="700">cron-inspector</text>
+  <text x="130" y="375" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">Schedule expression parser &amp; next ticks</text>
+  <text x="510" y="361" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">DevOps</text>
+  <text x="640" y="361" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">v0.9.4</text>
+  <rect x="730" y="348" width="48" height="20" fill="#050805" stroke="#163820"/>
+  <text x="738" y="362" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10">NONE</text>
+  <rect x="836" y="346" width="66" height="24" fill="#050805" stroke="#235c34"/>
+  <text x="847" y="362" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">[RUN]</text>
+  <line x1="25" y1="387" x2="935" y2="387" stroke="#163820"/>
+
+  <!-- Row 4 -->
+  <text x="40" y="411" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">04</text>
+  <text x="130" y="409" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13" font-weight="700">json-struct-diff</text>
+  <text x="130" y="428" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">Deterministic payload tree comparator</text>
+  <text x="510" y="414" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">Utils</text>
+  <text x="640" y="414" fill="#b8ffcb" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="12">v1.1.0</text>
+  <rect x="730" y="401" width="48" height="20" fill="#050805" stroke="#33ff66"/>
+  <text x="738" y="415" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="10" font-weight="700">LIVE</text>
+  <rect x="836" y="399" width="66" height="24" fill="#050805" stroke="#235c34"/>
+  <text x="847" y="415" fill="#33ff66" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">[RUN]</text>
+  <line x1="25" y1="440" x2="935" y2="440" stroke="#163820"/>
+
+  <!-- Bottom CRT Status Bar -->
+  <rect x="6" y="502" width="948" height="32" fill="#09100a"/>
+  <line x1="6" y1="502" x2="954" y2="502" stroke="#235c34" stroke-width="1"/>
+  <rect x="24" y="514" width="8" height="8" fill="#33ff66"/>
+  <text x="40" y="522" fill="#7fe69a" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">NOC:ONLINE  |  TOOLS:08/08  |  CRT:P1-GREEN</text>
+  <text x="730" y="522" fill="#4a8c5c" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11">⌘K SEARCH · ESC CLEAR</text>
+
+  <!-- CRT Scanlines & Vignette Overlay -->
+  <rect width="960" height="540" fill="url(#crt-scanlines)"/>
+  <rect width="960" height="540" fill="url(#crt-vignette)"/>
+</svg>

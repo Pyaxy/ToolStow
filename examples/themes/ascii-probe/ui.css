@@ -56,6 +56,12 @@
   --ts-code-ink: #a7f3d0;
 }
 
+html,
+body {
+  min-height: 100dvh;
+  background: var(--ts-canvas);
+}
+
 /* TUI sub-panel & control polish for all ToolStow plugins */
 .ts-card {
   border-radius: 2px;
@@ -109,4 +115,95 @@
 .ts-tab:focus-visible {
   outline: 1px solid var(--ts-accent);
   outline-offset: 1px;
+}
+
+/* ==========================================================================
+   Semantic Workbench Layout Rearrangement (Terminal Rail + Bottom Grep Bar)
+   ========================================================================== */
+
+.ts-workbench .ts-collection {
+  --ts-collection-min: 100%;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 761px) {
+  .ts-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-workbench > .ts-standalone-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .ts-workbench:has(> .ts-wb-nav) {
+    grid-template-columns: 190px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .ts-workbench:has(> .ts-wb-nav):has(> .ts-wb-aside) {
+    grid-template-columns: 190px minmax(260px, 320px) minmax(0, 1fr);
+  }
+
+  .ts-workbench > .ts-wb-nav {
+    grid-column: 1;
+    grid-row: 2;
+    width: 190px;
+    flex-direction: column;
+    align-items: stretch;
+    position: sticky;
+    top: var(--ts-space-4);
+    align-self: start;
+  }
+
+  .ts-workbench > .ts-wb-nav .ts-tabs {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    padding: 4px;
+    gap: 2px;
+  }
+
+  .ts-workbench > .ts-wb-nav .ts-tab {
+    justify-content: flex-start;
+    width: 100%;
+    text-align: left;
+  }
+
+  .ts-workbench:has(> .ts-wb-nav):not(:has(> .ts-wb-aside)) > .ts-wb-main {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .ts-workbench:has(> .ts-wb-nav):has(> .ts-wb-aside) > .ts-wb-aside {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .ts-workbench:has(> .ts-wb-nav):has(> .ts-wb-aside) > .ts-wb-main {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .ts-workbench:not(:has(> .ts-wb-nav)):not(:has(> .ts-wb-aside)) > .ts-wb-main {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .ts-workbench:not(:has(> .ts-wb-nav)):has(> .ts-wb-aside) > .ts-wb-aside,
+  .ts-workbench:not(:has(> .ts-wb-nav)):has(> .ts-wb-aside) > .ts-wb-main {
+    grid-row: 2;
+  }
+
+  .ts-workbench > .ts-wb-toolbar {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    padding: var(--ts-space-2) var(--ts-space-3);
+    background: var(--ts-surface);
+    border: 1px solid var(--ts-border);
+    border-top: 2px solid var(--ts-accent);
+  }
 }

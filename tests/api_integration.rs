@@ -473,7 +473,7 @@ async fn read_only_fail_closed_mode_and_draft_visibility() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let js = String::from_utf8(read_body_bytes(resp).await).unwrap();
-    assert!(js.contains("/api/me"));
+    assert!(js.contains("/api/me") || js.contains("ToolStowHost"));
 
     // With include_drafts = true, drafts ARE exposed publicly
     let dev_env = build_test_env(None, None, 50, true, false);
@@ -3138,4 +3138,798 @@ async fn healthz_returns_ok_and_cannot_be_shadowed_by_custom_theme() {
             "version": env!("CARGO_PKG_VERSION"),
         })
     );
+}
+
+#[tokio::test]
+async fn ui_host_js_is_locked_on_get_and_head_and_cannot_be_shadowed_by_custom_theme() {
+    let env = build_test_env(Some(ADMIN_KEY), None, 50, false, false);
+
+    // 1. GET /ui/v1/host.js -> 200, text/javascript; charset=utf-8, nosniff, no-cache
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/host.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(
+        resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    let embedded_bytes = read_body_bytes(resp).await;
+    assert!(!embedded_bytes.is_empty());
+
+    // 2. HEAD /ui/v1/host.js -> 200, same security/caching headers, empty body
+    let head_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/ui/v1/host.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(head_resp.status(), StatusCode::OK);
+    assert_eq!(
+        head_resp.headers()[CONTENT_TYPE].to_str().unwrap(),
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(
+        head_resp.headers()[X_CONTENT_TYPE_OPTIONS].to_str().unwrap(),
+        "nosniff"
+    );
+    assert_eq!(
+        head_resp.headers()[CACHE_CONTROL].to_str().unwrap(),
+        "no-cache"
+    );
+    assert!(read_body_bytes(head_resp).await.is_empty());
+
+    // 3. Legacy data/theme/ui/v1/host.js cannot shadow /ui/v1/host.js
+    fs::create_dir_all(env.theme_dir.join("ui/v1")).unwrap();
+    fs::write(
+        env.theme_dir.join("index.html"),
+        "<!doctype html><h1>Legacy Custom</h1>",
+    )
+    .unwrap();
+    fs::write(
+        env.theme_dir.join("ui/v1/host.js"),
+        "// shadowed by legacy theme",
+    )
+    .unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/host.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_bytes(resp).await;
+    assert_eq!(body, embedded_bytes);
+    assert_ne!(body, b"// shadowed by legacy theme");
+
+    // 4. Active uploaded full-shell theme cannot shadow /ui/v1/host.js either
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+    let shadow_zip = make_zip(&[
+        (
+            "theme.json",
+            br#"{"short":"shadow-host","name":"Shadow Host","version":"1.0.0"}"#,
+        ),
+        ("index.html", b"<!doctype html><h1>Shadow</h1>"),
+        ("ui/v1/host.js", b"// shadowed by uploaded theme"),
+    ]);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(admin_theme_upload_request(
+            "/api/admin/themes/upload",
+            &shadow_zip,
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/admin/themes/active")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "short": "shadow-host" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/ui/v1/host.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_bytes(resp).await, embedded_bytes);
+}
+
+#[tokio::test]
+async fn single_html_tool_ingestion_auth_csrf_injection_conflict_and_serving() {
+    // 1. Fail-closed when neither admin_key nor api_key is configured -> 404
+    let closed_env = build_test_env(None, None, 50, false, false);
+    let resp = closed_env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "id": "blocked-tool",
+                        "name": "Blocked",
+                        "html": "<h1>No</h1>"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // 2. Dual-key environment
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 1, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    let sample_payload = json!({
+        "id": "quick-calc",
+        "name": "Quick Calc",
+        "html": "<!doctype html><html><head><title>Calc</title></head><body><h1>Calc v1</h1></body></html>",
+        "description": "Fast single-file calculator",
+        "category": "Math",
+        "tags": ["calc", "math"],
+        "icon": "🧮",
+        "draft": false,
+        "injectSdk": true
+    });
+
+    // Unauthenticated -> 401
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Wrong Bearer token -> 401
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(AUTHORIZATION, "Bearer wrong-api-key")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Admin cookie missing X-ToolStow-Client -> 403
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Admin cookie with Origin: null -> 403
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "null")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Admin cookie with Sec-Fetch-Site: cross-site -> 403
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header("sec-fetch-site", "cross-site")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 3. Validation errors: invalid id, empty name, empty html -> 422; oversized -> 413
+    for invalid_body in [
+        json!({ "id": "Bad_ID", "name": "Ok", "html": "<h1>ok</h1>" }),
+        json!({ "id": "../escape", "name": "Ok", "html": "<h1>ok</h1>" }),
+        json!({ "id": "valid-id", "name": "   ", "html": "<h1>ok</h1>" }),
+        json!({ "id": "valid-id", "name": "Ok", "html": "  \n\t " }),
+    ] {
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/admin/tools/import/html")
+                    .header(HOST, "127.0.0.1:8080")
+                    .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(invalid_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "expected 422 for payload {invalid_body}"
+        );
+    }
+
+    // Oversized HTML (> 1 MiB limit configured above) -> 413
+    let oversized_html = "a".repeat(1024 * 1024 + 128);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "id": "too-big",
+                        "name": "Too Big",
+                        "html": oversized_html
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    // 4. Bearer API key creates new HTML tool with SDK injection -> 201 Created
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = read_body_json(resp).await;
+    assert_eq!(created["id"], "quick-calc");
+    assert_eq!(created["name"], "Quick Calc");
+    assert_eq!(created["description"], "Fast single-file calculator");
+    assert_eq!(created["category"], "Math");
+    assert_eq!(created["tags"], json!(["calc", "math"]));
+    assert_eq!(created["icon"], "🧮");
+    assert_eq!(created["entry"], "index.html");
+    assert_eq!(created["entryUrl"], "/t/quick-calc/index.html");
+    assert_eq!(created["runtime"], "static");
+    assert_eq!(created["themeAware"], true);
+    assert_eq!(created["draft"], false);
+
+    // Immediately listed in public GET /api/tools
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/tools")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let public_tools = read_body_json(resp).await;
+    let arr = public_tools.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["id"], "quick-calc");
+    assert_eq!(arr[0]["themeAware"], true);
+
+    // Served at /t/quick-calc/index.html with CSP sandbox (never allow-same-origin) and injected SDK
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/quick-calc/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let csp = resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.starts_with("sandbox "));
+    assert!(!csp.contains("allow-same-origin"));
+    let served_html = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(served_html.contains(r#"<link rel="stylesheet" href="/ui/v1/toolstow.css">"#));
+    assert!(served_html.contains(r#"<script src="/ui/v1/theme.js"></script>"#));
+    assert!(served_html.find("/ui/v1/theme.js").unwrap() < served_html.find("</head>").unwrap());
+
+    // 5. Admin Cookie + CSRF with omitted overwrite (defaults to false) and explicit ?overwrite=false -> 409 TOOL_EXISTS
+    let v2_payload = json!({
+        "id": "quick-calc",
+        "name": "Quick Calc v2",
+        "html": "<!doctype html><html><head><title>Calc v2</title></head><body><h1>Calc v2</h1></body></html>",
+        "description": "Updated calculator",
+        "injectSdk": false
+    });
+    for conflict_uri in [
+        "/api/admin/tools/import/html",
+        "/api/admin/tools/import/html?overwrite=false",
+    ] {
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(conflict_uri)
+                    .header(HOST, "127.0.0.1:8080")
+                    .header(ORIGIN, "http://127.0.0.1:8080")
+                    .header("x-toolstow-client", "1")
+                    .header(COOKIE, &cookie)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(v2_payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let conflict = read_body_json(resp).await;
+        assert_eq!(conflict["code"], "TOOL_EXISTS");
+        assert_eq!(conflict["existing"]["id"], "quick-calc");
+        assert_eq!(conflict["existing"]["name"], "Quick Calc");
+        assert_eq!(conflict["incoming"]["id"], "quick-calc");
+        assert_eq!(conflict["incoming"]["name"], "Quick Calc v2");
+    }
+
+    // 6. Admin Cookie + CSRF with ?overwrite=true -> 200 OK and updates disk + registry
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(v2_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = read_body_json(resp).await;
+    assert_eq!(updated["name"], "Quick Calc v2");
+    assert_eq!(updated["themeAware"], false);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/quick-calc/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let served_v2 = String::from_utf8(read_body_bytes(resp).await).unwrap();
+    assert!(served_v2.contains("<h1>Calc v2</h1>"));
+    assert!(!served_v2.contains("/ui/v1/theme.js"));
+
+    // 7. Draft single-HTML tool via Admin Cookie -> hidden from /api/tools & anonymous /t/, visible to admin
+    let draft_payload = json!({
+        "id": "draft-note",
+        "name": "Draft Note",
+        "html": "<!doctype html><head><script src=\"/ui/v1/theme.js\"></script></head><body>Secret Note</body>",
+        "draft": true,
+        "injectSdk": false
+    });
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(draft_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let draft_tool = read_body_json(resp).await;
+    assert_eq!(draft_tool["draft"], true);
+    assert_eq!(draft_tool["themeAware"], true);
+
+    // Public /api/tools still only has quick-calc
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/tools")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let public_arr = read_body_json(resp).await;
+    assert_eq!(public_arr.as_array().unwrap().len(), 1);
+    assert_eq!(public_arr[0]["id"], "quick-calc");
+
+    // Anonymous /t/draft-note/index.html -> 404
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/draft-note/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Admin cookie /t/draft-note/index.html -> 200 with CSP sandbox (never allow-same-origin)
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/draft-note/index.html")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let csp = resp.headers()[CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.starts_with("sandbox "));
+    assert!(!csp.contains("allow-same-origin"));
+    assert!(
+        String::from_utf8(read_body_bytes(resp).await)
+            .unwrap()
+            .contains("Secret Note")
+    );
+}
+
+#[tokio::test]
+async fn single_html_import_safe_create_default_preserves_existing_multifile_zip_tool() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 5, false, false);
+
+    // 1. Install a multi-file .zip tool with extra assets
+    let zip_bytes = make_zip(&[
+        (
+            "manifest.json",
+            br#"{
+                "id": "multi-zip-tool",
+                "name": "Original Zip Tool",
+                "description": "Multi-file zip package"
+            }"#,
+        ),
+        ("index.html", b"<!doctype html><html><body>Original Zip HTML</body></html>"),
+        ("assets/extra.txt", b"precious-asset-payload"),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&zip_bytes, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let extra_asset_path = env.tools_dir.join("multi-zip-tool/assets/extra.txt");
+    let index_html_path = env.tools_dir.join("multi-zip-tool/index.html");
+    assert_eq!(
+        fs::read_to_string(&extra_asset_path).unwrap(),
+        "precious-asset-payload"
+    );
+    assert!(
+        fs::read_to_string(&index_html_path)
+            .unwrap()
+            .contains("Original Zip HTML")
+    );
+
+    // 2. Importing single HTML with the same ID and omitted `overwrite` -> 409 TOOL_EXISTS
+    let replacement_payload = json!({
+        "id": "multi-zip-tool",
+        "name": "Single HTML Replacement",
+        "html": "<!doctype html><html><body>Replaced Single HTML</body></html>",
+        "injectSdk": false
+    });
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(replacement_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let conflict = read_body_json(resp).await;
+    assert_eq!(conflict["code"], "TOOL_EXISTS");
+    assert_eq!(conflict["existing"]["id"], "multi-zip-tool");
+    assert_eq!(conflict["existing"]["name"], "Original Zip Tool");
+    assert_eq!(conflict["incoming"]["id"], "multi-zip-tool");
+    assert_eq!(conflict["incoming"]["name"], "Single HTML Replacement");
+
+    // Existing multi-file tool directory and extra assets must remain completely untouched
+    assert_eq!(
+        fs::read_to_string(&extra_asset_path).unwrap(),
+        "precious-asset-payload"
+    );
+    assert!(
+        fs::read_to_string(&index_html_path)
+            .unwrap()
+            .contains("Original Zip HTML")
+    );
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/multi-zip-tool/assets/extra.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_bytes(resp).await, b"precious-asset-payload");
+
+    // 3. Explicit `?overwrite=true` -> 200 OK and replaces the existing tool
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(HOST, "127.0.0.1:8080")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(replacement_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let updated = read_body_json(resp).await;
+    assert_eq!(updated["id"], "multi-zip-tool");
+    assert_eq!(updated["name"], "Single HTML Replacement");
+
+    assert!(!extra_asset_path.exists());
+    assert!(
+        fs::read_to_string(&index_html_path)
+            .unwrap()
+            .contains("Replaced Single HTML")
+    );
+}
+
+#[tokio::test]
+async fn single_html_import_tool_id_html_has_no_route_collision() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 5, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    // 1. Create tool with id = "html" via POST /api/admin/tools/import/html -> 201 Created
+    let payload = json!({
+        "id": "html",
+        "name": "HTML Inspector",
+        "html": "<!doctype html><html><head><title>HTML Tool</title></head><body><h1>HTML ID Works</h1></body></html>",
+        "draft": false,
+        "injectSdk": true
+    });
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = read_body_json(resp).await;
+    assert_eq!(created["id"], "html");
+    assert_eq!(created["entryUrl"], "/t/html/index.html");
+
+    // 2. Serve tool at /t/html/index.html -> 200 OK
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/html/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        String::from_utf8(read_body_bytes(resp).await)
+            .unwrap()
+            .contains("<h1>HTML ID Works</h1>")
+    );
+
+    // 3. Toggle draft via PATCH /api/admin/tools/html -> 200 OK (no 405 collision)
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/admin/tools/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "draft": true }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let patched = read_body_json(resp).await;
+    assert_eq!(patched["id"], "html");
+    assert_eq!(patched["draft"], true);
+
+    // 4. Delete via DELETE /api/admin/tools/html -> 204 No Content (no 405 collision)
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/admin/tools/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Tool is removed and no longer served
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/html/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

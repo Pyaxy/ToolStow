@@ -692,10 +692,12 @@ a {
   background: var(--ts-canvas);
 }
 
-.ops-iframe {
+.ops-iframe,
+.ops-iframe-host > iframe {
   width: 100%;
   height: 100%;
   border: 0;
+  display: block;
   background: var(--ts-canvas);
 }
 
@@ -723,5 +725,26 @@ a {
 
   .ops-tool-cell-desc {
     max-width: 180px;
+  }
+}
+
+@media (max-width: 560px) {
+  .ops-topbar {
+    height: auto;
+    min-height: var(--ops-topbar-h);
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    gap: 6px 8px;
+  }
+
+  .ops-search-wrap {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+
+  .ops-topbar-actions {
+    margin-left: auto;
   }
 }

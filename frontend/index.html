@@ -9,129 +9,152 @@
 </head>
 <body>
   <div class="app-shell">
-    <header class="topbar">
-      <div class="topbar-left">
-        <button
-          id="sidebar-toggle"
-          class="btn icon-btn mobile-only"
-          type="button"
-          aria-label="切换导航栏"
-          aria-expanded="false"
-          aria-controls="sidebar"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-          </svg>
-        </button>
+    <div id="status-banner" class="status-banner" role="status" aria-live="polite" hidden></div>
 
+    <!-- Directory View (home): one topbar + one tool grid -->
+    <div id="directory-view" class="directory-view">
+      <header class="topbar">
         <a href="#" id="brand-link" class="brand" aria-label="返回工具箱首页">
           <span class="brand-mark" aria-hidden="true"></span>
           <span id="brand-title">ToolStow</span>
         </a>
-      </div>
 
-      <div class="search-wrap">
-        <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-        </svg>
-        <input
-          id="search-input"
-          type="search"
-          placeholder="搜索工具名称、描述、标签或 ID..."
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="搜索工具"
-        >
-        <kbd class="search-kbd" aria-hidden="true">⌘K</kbd>
-      </div>
+        <div class="search-wrap">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <input
+            id="search-input"
+            type="search"
+            placeholder="搜索工具名称、描述、标签或 ID..."
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="搜索工具"
+          >
+          <kbd class="search-kbd" aria-hidden="true">⌘K</kbd>
+        </div>
 
-      <div class="topbar-actions">
-        <button id="theme-toggle" class="btn btn-sm" type="button" aria-label="切换明暗模式">暗色</button>
+        <div class="topbar-actions">
+          <button id="theme-toggle" class="btn btn-sm" type="button" aria-label="切换明暗模式">暗色</button>
+          <a id="admin-link" class="btn btn-primary btn-sm" href="/admin" hidden>管理 / 设置</a>
+        </div>
+      </header>
 
-        <a id="admin-link" class="btn btn-primary btn-sm" href="/admin" hidden>管理 / 设置</a>
-      </div>
-    </header>
-
-    <div id="status-banner" class="status-banner" role="status" aria-live="polite" hidden></div>
-
-    <div class="workspace">
-      <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
-
-      <aside id="sidebar" class="sidebar" aria-label="工具导航">
-        <section class="sidebar-section">
-          <div class="section-header">
-            <h2>分类</h2>
-            <button id="refresh-list-btn" class="btn-ghost" type="button" title="重新加载列表">刷新</button>
-          </div>
-          <ul id="category-list" class="nav-list"></ul>
-        </section>
-
-        <section class="sidebar-section">
-          <div class="section-header">
-            <h2>标签</h2>
-            <button id="clear-filters-btn" class="btn-ghost" type="button" hidden>重置</button>
-          </div>
-          <div id="tag-list" class="tag-list"></div>
-        </section>
-
-        <section class="sidebar-section tools-section">
-          <div class="section-header">
-            <h2>工具列表</h2>
-            <span id="tools-count" class="mono-badge">0</span>
-          </div>
-          <ul id="tool-list" class="tool-list"></ul>
-        </section>
-      </aside>
-
-      <main class="main-pane">
-        <section id="empty-state" class="empty-state">
-          <div class="empty-hero">
-            <div class="empty-hero-top">
+      <main id="empty-state" class="empty-state">
+        <div class="landing">
+          <div class="landing-head">
+            <div class="landing-title-row">
               <h1 id="empty-title">ToolStow</h1>
               <span id="empty-count" class="mono-badge">0 tools</span>
             </div>
-            <p id="empty-desc" class="empty-desc">
-              从左侧列表选择一个工具，或按 <kbd class="inline-kbd">⌘K</kbd> 快速检索。
-            </p>
+            <p id="empty-desc" class="empty-desc">选择任意工具即可运行，或按 <kbd class="inline-kbd">⌘K</kbd> 快速搜索。</p>
           </div>
+
+          <div class="filter-strip" aria-label="筛选工具">
+            <div id="category-list" class="pill-list" role="group" aria-label="分类"></div>
+            <div class="filter-actions">
+              <button id="clear-filters-btn" class="btn-ghost" type="button" hidden>重置筛选</button>
+              <button id="refresh-list-btn" class="btn-ghost" type="button" title="重新加载列表">刷新</button>
+            </div>
+          </div>
+          <div id="tag-list" class="tag-list" role="group" aria-label="标签"></div>
+
           <div id="empty-grid" class="tool-grid" aria-label="可用工具"></div>
-        </section>
-
-        <section id="tool-view" class="tool-view" hidden>
-          <div class="tool-toolbar">
-            <div class="tool-meta">
-              <button
-                id="mobile-back-btn"
-                class="btn btn-sm mobile-only"
-                type="button"
-                aria-label="返回工具列表"
-              >← 列表</button>
-              <span id="active-tool-icon" class="tool-icon tool-icon-lg"></span>
-              <div class="tool-meta-text">
-                <div class="tool-title-row">
-                  <h1 id="active-tool-name"></h1>
-                  <span id="active-tool-id" class="mono-badge"></span>
-                  <span id="active-tool-version" class="mono-badge"></span>
-                  <span id="active-tool-theme-badge" class="mono-badge mono-badge-accent" hidden>theme-sync</span>
-                </div>
-                <p id="active-tool-desc" class="tool-meta-desc"></p>
-              </div>
-            </div>
-
-            <div class="tool-actions">
-              <button id="reload-tool-btn" class="btn btn-sm" type="button">刷新</button>
-              <a id="standalone-link" class="btn btn-sm" href="#" target="_blank" rel="noopener noreferrer">独立打开 ↗</a>
-            </div>
-          </div>
-
-          <div id="active-tool-tags" class="active-tags"></div>
-          <div id="iframe-host" class="iframe-host"></div>
-        </section>
+        </div>
       </main>
+    </div>
+
+    <!-- Active Tool Workspace: ONE 46px bar + full-height iframe -->
+    <section id="tool-view" class="tool-view" hidden>
+      <header class="workspace-bar">
+        <div class="wb-left">
+          <button id="back-btn" class="btn btn-sm wb-back" type="button" aria-label="返回工具目录">← 目录</button>
+          <select id="quick-switcher" class="quick-switcher" aria-label="快速切换工具"></select>
+          <span id="active-tool-icon" class="tool-icon wb-icon" aria-hidden="true"></span>
+          <h1 id="active-tool-name" class="wb-name"></h1>
+        </div>
+
+        <div class="wb-right">
+          <button
+            id="cmd-palette-trigger"
+            class="btn btn-sm wb-search-btn"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="cmd-palette"
+            aria-label="快速搜索工具"
+            title="快速搜索工具 (⌘K)"
+          ><svg class="wb-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/><path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span class="btn-label">搜索</span><kbd class="wb-kbd" aria-hidden="true">⌘K</kbd></button>
+          <button
+            id="info-toggle"
+            class="btn btn-sm"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="info-popover"
+            aria-label="工具详情"
+          ><span aria-hidden="true">ⓘ</span><span class="btn-label"> 详情</span></button>
+          <button id="reload-tool-btn" class="btn btn-sm" type="button" aria-label="刷新工具"><span class="btn-glyph" aria-hidden="true">↻</span><span class="btn-label">刷新</span></button>
+          <a id="standalone-link" class="btn btn-sm" href="#" target="_blank" rel="noopener noreferrer" aria-label="独立打开"><span class="btn-label">独立打开 </span><span aria-hidden="true">↗</span></a>
+          <button id="tool-theme-toggle" class="btn btn-sm" type="button" aria-label="切换明暗模式">暗色</button>
+        </div>
+
+        <div id="info-popover" class="info-popover" role="dialog" aria-label="工具详情" hidden>
+          <dl class="info-list">
+            <div class="info-row">
+              <dt>ID</dt>
+              <dd><code id="active-tool-id"></code></dd>
+            </div>
+            <div id="info-version-row" class="info-row">
+              <dt>版本</dt>
+              <dd><code id="active-tool-version"></code></dd>
+            </div>
+            <div id="info-theme-row" class="info-row" hidden>
+              <dt>主题</dt>
+              <dd><span id="active-tool-theme-badge" class="mono-badge mono-badge-accent">theme-sync</span></dd>
+            </div>
+          </dl>
+          <p id="active-tool-desc" class="info-desc"></p>
+          <div id="active-tool-tags" class="tag-list" role="group" aria-label="工具标签"></div>
+        </div>
+      </header>
+
+      <div id="iframe-host" class="iframe-host"></div>
+    </section>
+
+    <!-- Command Palette / Quick Search overlay (preserves active tool iframe) -->
+    <div id="cmd-palette" class="cmd-palette" role="dialog" aria-modal="true" aria-label="快速搜索工具" hidden>
+      <div id="cmd-palette-backdrop" class="cmd-palette-backdrop"></div>
+      <div class="cmd-palette-panel">
+        <div class="cmd-palette-head">
+          <svg class="cmd-palette-search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M10.8 10.8L13.75 13.75" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <input
+            id="cmd-palette-input"
+            type="search"
+            placeholder="快速切换或搜索工具（名称、描述、标签、ID）..."
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="快速搜索工具"
+            aria-controls="cmd-palette-list"
+            aria-autocomplete="list"
+          >
+          <kbd class="cmd-palette-esc" aria-hidden="true">ESC</kbd>
+        </div>
+        <div id="cmd-palette-list" class="cmd-palette-list" role="listbox" aria-label="匹配工具"></div>
+        <div class="cmd-palette-foot" aria-hidden="true">
+          <span><kbd class="inline-kbd">↑</kbd> <kbd class="inline-kbd">↓</kbd> 选择</span>
+          <span><kbd class="inline-kbd">Enter</kbd> 打开</span>
+          <span><kbd class="inline-kbd">Esc</kbd> 关闭</span>
+        </div>
+      </div>
     </div>
   </div>
 
+  <script src="/ui/v1/host.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
