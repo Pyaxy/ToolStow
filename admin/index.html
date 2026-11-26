@@ -331,9 +331,9 @@
               <li class="api-item">
                 <div class="api-sig">
                   <span class="http-method">POST</span>
-                  <code class="api-path">/api/admin/tools/html</code>
+                  <code class="api-path">/api/admin/tools/import/html</code>
                 </div>
-                <span class="api-desc">JSON <code>{"id","name","html","description","category","icon","draft","injectSdk"}</code> 收录单文件 HTML 工具（<code>?overwrite=true</code> 覆盖）</span>
+                <span class="api-desc">JSON <code>{"id","name","html","description","category","icon","draft","injectSdk"}</code> 收录单文件 HTML 工具（默认 <code>overwrite=false</code>，重名返回 <code>409 TOOL_EXISTS</code>；<code>?overwrite=true</code> 覆盖替换）</span>
               </li>
               <li class="api-item">
                 <div class="api-sig">

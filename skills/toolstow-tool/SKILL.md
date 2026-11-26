@@ -73,7 +73,7 @@ python3 skills/toolstow-tool/scripts/pack.py ./my-tool -o ./my-tool.zip
 ToolStow accepts:
 1. **Flat ZIP** (`manifest.json` at archive root, produced by `pack.py`).
 2. **Single-root-folder ZIP** (`my-tool/manifest.json`, with `__MACOSX/` and `.DS_Store` automatically ignored).
-3. **Single-file `.html` / `.htm` drag-and-drop or Paste HTML in `/admin`** (and `POST /api/admin/tools/html`): Drop any standalone `.html` file directly into `/admin` -> **工具管理 -> 收录工具** (or click **粘贴 HTML**). ToolStow automatically extracts `<title>` and `<meta name="description">`, generates a valid `id` slug and `manifest.json`, previews the tool in a live sandboxed iframe, and optionally injects `<link rel="stylesheet" href="/ui/v1/toolstow.css">` + `<script src="/ui/v1/theme.js"></script>` before saving.
+3. **Single-file `.html` / `.htm` drag-and-drop or Paste HTML in `/admin`** (and `POST /api/admin/tools/import/html`, defaulting to `overwrite=false` / `409 TOOL_EXISTS` unless `?overwrite=true` is passed): Drop any standalone `.html` file directly into `/admin` -> **工具管理 -> 收录工具** (or click **粘贴 HTML**). ToolStow automatically extracts `<title>` and `<meta name="description">`, generates a valid `id` slug and `manifest.json`, previews the tool in a live sandboxed iframe, and optionally injects `<link rel="stylesheet" href="/ui/v1/toolstow.css">` + `<script src="/ui/v1/theme.js"></script>` before saving.
 
 ### Packaging Limits & Security Rules
 

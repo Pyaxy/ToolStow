@@ -1289,12 +1289,12 @@ function initCurlExample() {
     '  -F "file=@my-tool.zip" \\',
     `  ${origin}/api/admin/tools/upload`,
     "",
-    "# 收录单文件 HTML 工具",
+    "# 收录单文件 HTML 工具（默认 overwrite=false；覆盖加 ?overwrite=true）",
     "curl -X POST \\",
     '  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \\',
     '  -H "Content-Type: application/json" \\',
     `  -d '{"id":"hello","name":"Hello","html":"<h1>Hello</h1>","draft":true}' \\`,
-    `  ${origin}/api/admin/tools/html`,
+    `  ${origin}/api/admin/tools/import/html`,
   ].join("\n");
 }
 
@@ -1608,8 +1608,8 @@ async function submitHtmlIngest(overwrite = false) {
 
   try {
     const endpoint = overwrite
-      ? "/api/admin/tools/html?overwrite=true"
-      : "/api/admin/tools/html?overwrite=false";
+      ? "/api/admin/tools/import/html?overwrite=true"
+      : "/api/admin/tools/import/html?overwrite=false";
     const res = await apiRequest(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
