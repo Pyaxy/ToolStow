@@ -47,7 +47,7 @@ Use this skill whenever generating, validating, packaging, or publishing a self-
 - **Opaque-origin safe**: Every tool runs inside a dual sandbox (`<iframe sandbox="...">` + `Content-Security-Policy: sandbox ...`) with an opaque origin (`Origin: null`). Never assume same-origin browser storage is available.
 - **Shared UI SDK (`/ui/v1/`)**: Every native ToolStow plugin MUST load `/ui/v1/toolstow.css` and `/ui/v1/theme.js` in `<head>` to inherit the host's design system, automatic Light/Dark & accent sync, zero-FOUC first paint, and any active theme's `ui.css` site-wide reskin automatically.
 - **No duplicate top headers inside iframes**: The ToolStow shell already renders the active tool's icon, title, and description in its top bar. Start directly with functional controls; wrap any standalone header in `.ts-standalone-only`.
-- **Draft-friendly publishing**: Tools support a Hugo-style `"draft": true` flag so AI agents can publish work-in-progress tools for admin preview before making them public.
+- **3-state visibility (`public` / `private` / `draft`)**: Tools declare `"visibility": "public" | "private" | "draft"` (default `"public"`). Use `"private"` for finished personal-only tools shown on `/` only to an authenticated Admin Session (served via session-bound `/tp/{grant}/{id}/...` capability URLs inside sandboxed iframes), and `"draft"` for work-in-progress previews managed in `/admin` (legacy `"draft": true` remains compatible).
 
 ---
 
@@ -73,7 +73,7 @@ python3 skills/toolstow-tool/scripts/pack.py ./my-tool -o ./my-tool.zip
 ToolStow accepts:
 1. **Flat ZIP** (`manifest.json` at archive root, produced by `pack.py`).
 2. **Single-root-folder ZIP** (`my-tool/manifest.json`, with `__MACOSX/` and `.DS_Store` automatically ignored).
-3. **Single-file `.html` / `.htm` drag-and-drop or Paste HTML in `/admin`** (and `POST /api/admin/tools/import/html`, defaulting to `overwrite=false` / `409 TOOL_EXISTS` unless `?overwrite=true` is passed): Drop any standalone `.html` file directly into `/admin` -> **工具管理 -> 收录工具** (or click **粘贴 HTML**). ToolStow automatically extracts `<title>` and `<meta name="description">`, generates a valid `id` slug and `manifest.json`, previews the tool in a live sandboxed iframe, and optionally injects `<link rel="stylesheet" href="/ui/v1/toolstow.css">` + `<script src="/ui/v1/theme.js"></script>` before saving.
+3. **Single-file `.html` / `.htm` drag-and-drop or Paste HTML in `/admin`** (and `POST /api/admin/tools/import/html`, defaulting to `overwrite=false` / `409 TOOL_EXISTS` unless `?overwrite=true` is passed, with optional `"visibility": "public" | "private" | "draft"` or legacy `"draft"`): Drop any standalone `.html` file directly into `/admin` -> **工具管理 -> 收录工具** (or click **粘贴 HTML**). ToolStow automatically extracts `<title>` and `<meta name="description">`, generates a valid `id` slug and `manifest.json`, previews the tool in a live sandboxed iframe, and optionally injects `<link rel="stylesheet" href="/ui/v1/toolstow.css">` + `<script src="/ui/v1/theme.js"></script>` before saving.
 
 > **External JS tip (multi-file tools)**: For packaged directory tools with substantial script logic, large datasets, or embedded HTML/`<script>` text snippets, prefer keeping JavaScript in `assets/<name>.js` (e.g. `assets/app.js`) loaded via `<script src="assets/app.js"></script>` rather than a huge inline `<script>` block — `validate.py` checks all `.js`/`.mjs` files automatically and external files avoid inline `</script>` parser edge cases. *(If the user explicitly asks for a single-file `.html` tool, ignore this recommendation and keep everything inline in a single `.html` file.)*
 
@@ -110,7 +110,7 @@ Full example:
   "icon": "🎨",
   "entry": "index.html",
   "runtime": "static",
-  "draft": false,
+  "visibility": "public",
   "themeAware": true,
   "sandbox": ["allow-scripts", "allow-downloads", "allow-forms"]
 }
@@ -129,7 +129,8 @@ Full example:
 | `icon` | `string` | No | `"🛠️"` | Emoji string, or a safe relative image path inside the tool directory (e.g. `"assets/icon.svg"`). Must exist if path-like. |
 | `entry` | `string` | No | `"index.html"` | Safe relative path to an existing regular HTML file (no leading `/`, `..`, `\`, or URL scheme). |
 | `runtime` | `"static"` | No | `"static"` | Only `"static"` is currently supported. Declaring `"script"` is rejected. |
-| `draft` | `boolean` | No | `false` | Hugo-style visibility flag. When `true`, the tool is hidden from public `GET /api/tools` and returns `404` on `/t/{id}/*` for anonymous visitors; visible only to an authenticated Admin session or when the host runs with `--include-drafts`. |
+| `visibility` | `"public" \| "private" \| "draft"` | No | `"public"` | 3-state visibility: **`"public"`** is visible to everyone on `/` and `/t/{id}/*`; **`"private"`** is hidden from anonymous visitors (`GET /api/tools` omits it, `/t/{id}/*` returns `404`), shown to an authenticated Admin Session on `/` and `/admin` (never exposed by `--include-drafts`), and served with session-bound capability URLs `/tp/{grant}/{id}/...` so relative assets load inside `Origin: null` sandboxes; **`"draft"`** is a WIP preview hidden from anonymous visitors and hidden from `/` by default even when logged in as admin (managed/previewed in `/admin` in a new tab, or shown on `/` only when `--include-drafts` is enabled). Non-public responses carry `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and `CSP: sandbox ...`. |
+| `draft` | `boolean` | No | *(derived)* | Legacy backward-compatible alias (`true` maps to `visibility: "draft"`, `false` / omitted maps to `"public"`). Providing both `visibility` and `draft` with conflicting semantics (e.g. `visibility: "private", draft: true` or `visibility: "draft", draft: false`) is rejected with `422`. Prefer `visibility` in new manifests; API responses include both `visibility` and derived `draft: boolean`. |
 | `themeAware` | `boolean` | No | `false` | Set `true` for plugins using `/ui/v1/theme.js` (the host also syncs automatically once `toolstow:ready` is received). |
 | `sandbox` | `string[]` | No | `["allow-scripts", "allow-downloads", "allow-forms"]` | Requested iframe sandbox tokens, filtered by the host allowlist. For pure calculation tools without file export, prefer least-privilege `["allow-scripts", "allow-forms"]` (`window.ToolStow.copy()` requires no extra sandbox token). |
 
@@ -345,7 +346,7 @@ Provided automatically by `/ui/v1/theme.js` (zero `innerHTML`, zero `localStorag
 | `copy` | `await window.ToolStow.copy(text, fallbackEl?)` | 3-tier sandbox-safe copy (`navigator.clipboard.writeText` -> temp `<textarea>` + `execCommand("copy")` -> optional DOM Range selection on `fallbackEl`). Returns `Promise<boolean>`. |
 | `toast` | `window.ToolStow.toast(msg, durationMs?)` | Displays a monochrome `.ts-toast` notification using `textContent` (default `1800` ms). |
 
-> **Local Preview Note**: Because `/ui/v1/toolstow.css` and `/ui/v1/theme.js` are served by the ToolStow host, opening `index.html` directly via `file://` will not load the SDK or inject `window.ToolStow`. To preview locally, copy your tool folder into a running ToolStow instance's `data/tools/<id>/` (hot-reloads automatically) and open `http://127.0.0.1:8080/#tool=<id>` or `/t/<id>/index.html`.
+> **Local Preview Note**: Because `/ui/v1/toolstow.css` and `/ui/v1/theme.js` are served by the ToolStow host, opening `index.html` directly via `file://` will not load the SDK or inject `window.ToolStow`. To preview locally, copy your tool folder into a running ToolStow instance's `data/tools/<id>/` (hot-reloads automatically) and open `http://127.0.0.1:8080/#tool=<id>` or `/t/<id>/index.html` (for `private` or `draft` tools, sign into `/admin` so the host issues session-bound `/tp/{grant}/<id>/...` capability URLs, or pass `--include-drafts` for `draft` previews).
 
 ---
 
@@ -374,29 +375,37 @@ python3 skills/toolstow-tool/scripts/publish.py ./my-tool --overwrite
 python3 skills/toolstow-tool/scripts/publish.py ./my-tool --env-file ./.env
 ```
 
-### Raw `curl` Reference (List / Draft Toggle / Delete)
+### Raw `curl` Reference (List / Visibility Toggle / Delete)
 
 ```bash
-# List all installed tools (including drafts)
+# List all installed tools (supports ?visibility=public|private|draft and legacy ?draft=true|false)
 curl -sS -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
   "$TOOLSTOW_URL/api/admin/tools"
 
-# Hide tool as draft
+# Mark tool as work-in-progress draft
 curl -i -X PATCH "$TOOLSTOW_URL/api/admin/tools/my-tool" \
   -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"draft": true}'
+  -d '{"visibility": "draft"}'
+
+# Mark tool as personal private (visible on / only to authenticated Admin Session)
+curl -i -X PATCH "$TOOLSTOW_URL/api/admin/tools/my-tool" \
+  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility": "private"}'
 
 # Publish tool publicly
 curl -i -X PATCH "$TOOLSTOW_URL/api/admin/tools/my-tool" \
   -H "Authorization: Bearer $TOOLSTOW_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"draft": false}'
+  -d '{"visibility": "public"}'
 
 # Delete a tool (returns 204 No Content)
 curl -i -X DELETE "$TOOLSTOW_URL/api/admin/tools/my-tool" \
   -H "Authorization: Bearer $TOOLSTOW_API_KEY"
 ```
+
+*(Backward compatibility: `PATCH /api/admin/tools/{id}` still accepts `{"draft": true | false}`, rejects conflicting `visibility` + `draft` pairs with `422`, and normalizes `manifest.json` on disk to `"visibility"` while removing legacy `"draft"`.)*
 
 ---
 
@@ -405,7 +414,7 @@ curl -i -X DELETE "$TOOLSTOW_URL/api/admin/tools/my-tool" \
 Before delivering or publishing a generated tool:
 
 - [ ] Run `python3 skills/toolstow-tool/scripts/validate.py <tool_dir>` with **0 errors**.
-- [ ] `manifest.json` has valid `id`, `name`, `runtime: "static"`, `themeAware: true`, and appropriate `"draft"` flag.
+- [ ] `manifest.json` has valid `id`, `name`, `runtime: "static"`, `themeAware: true`, and appropriate `"visibility"` (`"public" | "private" | "draft"`, avoiding conflicting legacy `"draft"` values).
 - [ ] Entry HTML loads `<link rel="stylesheet" href="/ui/v1/toolstow.css">` and `<script src="/ui/v1/theme.js"></script>` in `<head>` with no external CDN URLs.
 - [ ] UI chrome reuses `.ts-*` classes and `var(--ts-*)` tokens, with no duplicate top `<h1>` inside iframe (standalone headers wrapped in `.ts-standalone-only`).
 - [ ] Zero unguarded `localStorage` / `sessionStorage` / `document.cookie`, zero `innerHTML` / `outerHTML` / `insertAdjacentHTML` / `document.write`, zero `allow-same-origin`.

@@ -30,45 +30,49 @@
 1. **统一 `--data-dir` 数据目录与多主题热插拔管理**
    - 统一通过 `--data-dir`（默认 `./data`，环境变量 `TOOLSTOW_DATA_DIR`）组织所有运行时持久化状态，依然**零数据库**：
      - `data/tools/`：存放已安装微工具及同盘暂存目录 `.staging/`（可由 `--tools-dir` / `TOOLSTOW_TOOLS_DIR` 单独覆盖）。
-     - `data/themes/`：多主题包目录（可由 `--themes-dir` / `TOOLSTOW_THEMES_DIR` 单独覆盖），每个子目录 `data/themes/<short>/` 包含 `theme.json` 及可选的 `index.html`（或 `dist/index.html`）、`ui.css`、`preview.svg`；支持在 `/admin` 面板上传 `.zip`（含 `409 THEME_EXISTS` 覆盖确认）、预览、一键切换或删除。同时保留 `data/theme/`（`--theme-dir` / `TOOLSTOW_THEME_DIR`）用于 `activeTheme = "default"` 时的单目录向后兼容。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 路由始终由后端强制锁定，外置主题无法覆盖或劫持。
+     - `data/themes/`：多主题包目录（可由 `--themes-dir` / `TOOLSTOW_THEMES_DIR` 单独覆盖），每个子目录 `data/themes/<short>/` 包含 `theme.json` 及可选的 `index.html`（或 `dist/index.html`）、`ui.css`、`preview.svg`；支持在 `/admin` 面板上传 `.zip`（含 `409 THEME_EXISTS` 覆盖确认）、预览、一键切换或删除。同时保留 `data/theme/`（`--theme-dir` / `TOOLSTOW_THEME_DIR`）用于 `activeTheme = "default"` 时的单目录向后兼容。`/admin*`、`/api/*`、`/t/*`、`/tp/*`、`/ui/*` 路由始终由后端强制锁定，外置主题无法覆盖或劫持。
      - `data/settings.json`：持久化站点标题（`siteTitle`）、站点副标题描述（`siteDescription`）、默认强调色（`defaultAccent`）与当前启用主题（`activeTheme`，默认 `"default"`），文件缺失或损坏时自动回退至安全默认值。
 2. **目录自动扫描与热更新**
    - 启动时扫描工具目录（不存在则自动创建）下所有非隐藏子目录，解析合法的 `manifest.json` 构建内存索引。
    - 通过 `notify` 监听文件系统事件（新增、修改、删除工具目录或 `manifest.json`），防抖后热刷新内存索引，无需重启宿主。
    - 容错隔离：单个工具目录缺失入口或 `manifest.json` 校验失败时，仅记录结构化警告日志并跳过该工具，绝不阻塞或中断整个服务。
-3. **Hugo 风格草稿可见性（`draft: true / false`）**
-   - `manifest.json` 支持可选字段 `"draft": false`（默认 `false` 即已发布）。
-   - 标记为 `"draft": true` 的工具对匿名公网访客完全不可见：自动从公开 `GET /api/tools` 过滤，直接访问 `/t/{id}/*` 时返回 `404 Not Found`（不泄露草稿工具是否存在）。
-   - 仅当访问者持有**已登录的 Admin Session Cookie**（用于在管理台预览未发布工具），或本地开发调试显式开启 `--include-drafts` / `TOOLSTOW_INCLUDE_DRAFTS=true` 时可见。
+3. **三态工具可见性（`visibility: "public" | "private" | "draft"`）与兼容草稿标记**
+   - `manifest.json` 支持可选字段 `"visibility": "public" | "private" | "draft"`（默认 `"public"`）：
+     - **`public`（默认）**：公开工具，所有人均可在 `/`（`GET /api/tools`）与 `/t/{id}/*` 访问。
+     - **`private`**：已完成的个人私有工具。对匿名公网访客完全不可见（`GET /api/tools` 自动过滤，直连 `/t/{id}/*` 返回 `404 Not Found` 不泄露存在性）；当管理员持有有效 Admin Session 登录时，在 `/`（`GET /api/tools` 返回 `public` + `private`）与 `/admin` 均可见，并可通过 `/t/{id}/*` 或会话绑定的 `/tp/{grant}/{id}/*` 运行；**`--include-drafts` 不会暴露 `private` 工具**。
+     - **`draft`**：开发中的草稿预览工具。对匿名访客不可见，且即使已登录管理员，默认也不在 `/` 展示（统一在 `/admin` 中管理并在新标签页预览；仅当本地开发显式开启 `--include-drafts` / `TOOLSTOW_INCLUDE_DRAFTS=true` 时才出现在 `/`）。
+   - **向后兼容**：保留旧版 `"draft": true / false` 语义映射（`"draft": true` 等价于 `"visibility": "draft"`，`"draft": false` 或省略等价于 `"visibility": "public"`）。若同时提供 `visibility` 与 `draft` 且语义冲突（如 `visibility: "private", draft: true` 或 `visibility: "draft", draft: false`），统一返回 `422 Unprocessable Entity`。所有 API 响应均同时返回 `visibility` 与派生字段 `draft: boolean`（`visibility === "draft"`）；通过 `PATCH /api/admin/tools/{id}` 修改可见性时（兼容 `{ "draft": true | false }`），会原子写入 `"visibility"` 并移除旧版 `"draft"` 字段。
+   - **降级提示**：若将二进制降级回 `<= v0.3.5`，旧版本无法识别磁盘 `manifest.json` 中的 `"visibility": "private"` 字段（未写 `"draft": true` 的工具会被旧版当作公开工具处理），降级前请先将私有工具移除或改为 `"draft": true`。
 4. **双密钥 fail-closed 鉴权体系（人类 Session 与机器 API 分离）**
    - 全部密钥通过 `.env` 文件或系统环境变量注入；**未设置对应密钥时默认 fail-closed（关闭该鉴权通道）**，确保裸跑公网时不会暴露无保护的写入或管理入口。
    - **`TOOLSTOW_ADMIN_KEY`（人类管理员单密钥）**：
      - 访问 `/admin` 提供单密钥登录卡片（无用户名输入，参考 CPA `management.html` 极简交互）。
      - `POST /api/admin/login` 使用常量时间比较校验密钥，并执行单客户端/单 IP 失败限流（5 分钟内失败 5 次触发 `429 Too Many Requests`）。
-     - 登录成功后在服务端内存签发 256-bit 随机十六进制 Session Token，通过 `toolstow_admin_session` Cookie 下发（`HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`，在 HTTPS 或 `TOOLSTOW_COOKIE_SECURE=true` 时附加 `Secure`；24 小时 TTL）。
-     - 拥有完整管理权限：上传/覆盖 `.zip` 工具包、切换工具 `draft` 状态、预览草稿工具、删除工具、管理多主题（上传/切换/删除 `data/themes/`），以及读写站点设置（`GET/PUT /api/admin/settings`）。
+     - 登录成功后在服务端内存签发 256-bit 随机十六进制 Session Token，通过 `toolstow_admin_session` Cookie 下发（`HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`，在 HTTPS 或 `TOOLSTOW_COOKIE_SECURE=true` 时附加 `Secure`；24 小时 TTL）。同时按需为非公开工具签发会话绑定、按工具隔离的只读能力令牌（`/tp/{grant}/{id}/...`），在登出或会话过期时立即吊销。
+     - 拥有完整管理权限：上传/覆盖 `.zip` 工具包、单文件 HTML 收录、切换工具三态可见性（`public` / `private` / `draft`）、在 `/` 直接使用私有工具及在 `/admin` 预览草稿工具、删除工具、管理多主题（上传/切换/删除 `data/themes/`），以及读写站点设置（`GET/PUT /api/admin/settings`）。
    - **`TOOLSTOW_API_KEY`（机器 / AI / `curl` / 未来 MCP 专用密钥）**：
-     - 通过标准请求头 `Authorization: Bearer <token>` 认证，仅授权操作 `/api/admin/tools*`（列出全部含草稿工具、上传/覆盖 `.zip`、切换 `draft`、删除工具）。
+     - 通过标准请求头 `Authorization: Bearer <token>` 认证，仅授权操作 `/api/admin/tools*`（列出全部含私有/草稿工具、上传/覆盖 `.zip`、导入单文件 HTML、切换 `visibility` / `draft`、删除工具）。
      - **职责严格隔离**：`TOOLSTOW_API_KEY` **不能**登录 `/admin`、**不能**换取浏览器 Session、**不能**读取或修改站点设置（`/api/admin/settings`），也**不能**访问多主题管理接口（`/api/admin/themes*`）；反之 `TOOLSTOW_ADMIN_KEY` 也不能作为 Bearer Token 使用。
 5. **极简黑白公共只读前端与内嵌管理面板**
-   - **公共前端（`/`）**：采用参考 `monitor-probe/monitor` 的极简黑白（Monochrome B&W）美学，**100% 只读**，不包含任何上传或删除操作。支持分类侧边栏（移动端抽屉）、标签筛选、`Cmd+K` / `Ctrl+K` 全局搜索、URL Hash 状态联动、明暗模式切换与强调色 `postMessage` 联动。
-   - 公共前端启动时请求 `GET /api/me`（返回 `siteTitle`、`siteDescription`、`defaultAccent`、`isAdmin`、`adminEnabled`、`activeTheme`、`themeSource`），动态渲染站点标题与默认强调色，且**仅当 `isAdmin === true` 时**在顶栏渲染简洁的「管理 / 设置」链接指向 `/admin`；匿名访客界面保持绝对纯净。
-   - **内嵌管理面板（`/admin`）**：独立编译进单二进制，与公共前端共享同一极简黑白设计语言，包含单密钥登录、拖拽/选择上传 `.zip`、工具列表管理（全部/已发布/草稿筛选、切换草稿/发布、新标签页预览、删除确认）、**多主题管理卡片**（上传 `.zip` 主题包与 `409` 覆盖确认、预览卡片、一键启用切换、删除回退）、站点设置表单以及 AI API 速查卡片。
-6. **静态资源托管与双重沙箱隔离**
+   - **公共前端（`/`）**：采用参考 `monitor-probe/monitor` 的极简黑白（Monochrome B&W）美学，**100% 只读**，不包含任何登录表单、上传、删除或可见性变更操作。支持分类侧边栏（移动端抽屉）、标签筛选、`Cmd+K` / `Ctrl+K` 全局搜索、URL Hash 状态联动、明暗模式切换与强调色 `postMessage` 联动；管理员登录后在 `/` 自动看到 `public` + `private` 工具（非公开工具附带克制的 `私有`/`草稿` 角标，`public` 保持纯净无角标）。
+   - 公共前端启动时请求 `GET /api/me`（返回 `siteTitle`、`siteDescription`、`defaultAccent`、`isAdmin`、`adminEnabled`、`activeTheme`、`themeSource`），动态渲染站点标题与默认强调色。内置默认主题与仓库示例主题遵循极简公网风格，**仅当 `isAdmin === true` 时**在顶栏渲染「管理 / 设置」链接指向 `/admin`；第三方自定义主题也可自由选择在 `adminEnabled === true && !isAdmin` 时展示一个指向 `/admin` 的轻量登录入口链接（严禁在 `/` 内嵌登录表单或写操作控件）。
+   - **内嵌管理面板（`/admin`）**：独立编译进单二进制，与公共前端共享同一极简黑白设计语言，包含单密钥登录、拖拽/选择上传 `.zip` 与单文件 HTML 收录（支持选择 `public` / `private` / `draft`）、工具列表管理（全部/公开/私有/草稿 4 态统计与筛选、下拉切换三态可见性、新标签页预览、删除确认）、**多主题管理卡片**（上传 `.zip` 主题包与 `409` 覆盖确认、预览卡片、一键启用切换、删除回退）、站点设置表单以及 AI API 速查卡片。
+6. **静态资源托管、双重沙箱隔离与能力 URL（`/tp/{grant}/{id}/*`）**
    - 通过 `/t/{id}/{*path}` 托管已注册工具静态资源，修改磁盘文件后刷新即生效。
    - 前端外壳通过 `<iframe sandbox="...">` 加载子工具，且后端同步下发 `Content-Security-Policy: sandbox ...` 响应头，保证壳内与直链访问均处于不透明源（Opaque Origin）隔离环境。
+   - 为已登录管理员的非公开工具签发会话绑定、按工具隔离的只读能力 URL `/tp/{grant}/{id}/...` 作为 `entryUrl` / `iconUrl`，使多文件工具的相对子资源（`./assets/*.js`、`./style.css`、`fetch(...)`）无需放宽 `SameSite=Strict` 或添加 `allow-same-origin` 即可在 `Origin: null` 沙箱 iframe 与新标签页中稳定加载；登出或会话过期立即失效。
 7. **配套 AI 生产规范与示例工具**
-   - 提供 `docs/ai-tool-skill.md` 作为 Agent Skill / Prompt 规范，涵盖目录结构、`manifest.json`（含 `draft` 字段）、沙箱约束、主题联动模板以及基于 `Authorization: Bearer $TOOLSTOW_API_KEY` 的发布与草稿切换命令。
+   - 提供 `skills/toolstow-tool/` 与 `skills/toolstow-theme/` 作为 Agent Skill 规范与零依赖校验/打包/发布脚本，涵盖目录结构、`manifest.json`（含三态 `visibility` 与兼容 `draft` 字段）、沙箱约束、主题联动模板以及基于 `Authorization: Bearer $TOOLSTOW_API_KEY` 的发布与可见性切换命令。
    - 仓库附带开箱即用的示例工具（`docker-cheatsheet`、`dynamic-favicon`）与配置模板 `.env.example`。
 
 ### 2.2 Phase 2 · AI 原生 MCP 发布流（后续阶段）
 
 基于官方 Rust MCP SDK（[rmcp](https://github.com/modelcontextprotocol/rust-sdk)），直接复用同一套工具注册表、归档落盘模块与 `TOOLSTOW_API_KEY` 权限边界，暴露 MCP 工具供本地或远程 AI 客户端无缝调用：
 
-- `list_tools`：查询已有工具列表（含 `draft` 状态）与功能描述，避免 AI 重复造轮子。
+- `list_tools`：查询已有工具列表（含 `visibility` / `draft` 状态）与功能描述，避免 AI 重复造轮子。
 - `get_tool_spec`：返回 `manifest.json` 协议规范与 `postMessage` 主题同步模板，供 AI 生成前按需读取。
-- `publish_tool`：提交工具文件树或 `.zip` 完成校验发布/覆盖更新并即时生效（可先以 `draft: true` 发布预览）。
-- `set_tool_draft`：切换指定工具的草稿/发布状态。
+- `publish_tool`：提交工具文件树或 `.zip` 完成校验发布/覆盖更新并即时生效（可指定 `visibility: "public" | "private" | "draft"`）。
+- `set_tool_visibility`（兼容 `set_tool_draft`）：切换指定工具的三态可见性（`public` / `private` / `draft`）。
 - `delete_tool`：删除指定工具。
 
 ### 2.3 Phase 3 · 轻后端扩展（远期预留，当前不实现）
@@ -138,7 +142,7 @@ data/
   "icon": "🎨",
   "entry": "index.html",
   "runtime": "static",
-  "draft": false,
+  "visibility": "public",
   "themeAware": true,
   "sandbox": ["allow-scripts", "allow-downloads", "allow-forms"]
 }
@@ -155,7 +159,8 @@ data/
 | `icon` | `string` | 否 | `"🛠️"` | Emoji 字符，或工具目录内的安全相对图片路径（如 `"assets/icon.svg"`） |
 | `entry` | `string` | 否 | `"index.html"` | 入口 HTML 的安全相对路径，禁止 `/` 开头、`..`、`\` 或协议头，且目标普通文件必须存在 |
 | `runtime` | `"static" \| "script"` | 否 | `"static"` | 运行模式；当前仅支持 `"static"`，声明为 `"script"` 时拒绝加载并给出明确提示 |
-| `draft` | `boolean` | 否 | `false` | Hugo 风格草稿标记；`true` 时对匿名公开列表隐藏且 `/t/{id}/*` 返回 `404`，仅已登录 Admin Session 或本地 `--include-drafts` 可见 |
+| `visibility` | `"public" \| "private" \| "draft"` | 否 | `"public"` | 三态可见性：`public` 对所有人公开；`private` 对匿名隐藏（`GET /api/tools` 省略、`/t/{id}/*` 返回 `404`），仅已登录 Admin Session 在 `/` 与 `/admin` 可见并可运行（不受 `--include-drafts` 影响）；`draft` 为开发中草稿，对匿名隐藏且默认不在 `/` 显示，仅在 `/admin` 管理预览或本地开启 `--include-drafts` 时出现在 `/` |
+| `draft` | `boolean` | 否 | *(派生)* | 向后兼容的旧版草稿标记（`true` 映射为 `visibility: "draft"`，`false` / 省略映射为 `"public"`）；与 `visibility` 语义冲突时返回 `422`。API 响应同时返回 `visibility` 与派生字段 `draft` |
 | `themeAware` | `boolean` | 否 | `false` | 是否订阅主站的明暗模式与强调色 `postMessage` 同步消息 |
 | `sandbox` | `string[]` | 否 | `["allow-scripts", "allow-downloads", "allow-forms"]` | 申请的 `iframe sandbox` 权限列表，由宿主按安全白名单过滤后生效 |
 
@@ -207,13 +212,14 @@ data/
 
 | 方法与路径 | 鉴权要求 | 说明 |
 | :--- | :--- | :--- |
-| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳（`Cache-Control: no-store`，含缺失时的 `404`）：优先解析 `activeTheme` 对应 `data/themes/<short>/` 的 `web_root`（`dist/` 或根目录 `index.html`）；若当前主题为纯皮肤包（无 `index.html`）则返回内嵌前端；当 `activeTheme="default"` 时兼容旧版 `data/theme/` 或回退内嵌前端。`/admin*`、`/api/*`、`/t/*`、`/ui/*` 始终由后端锁定 |
+| `GET /`（及公共静态资源） | 无 | 返回公共只读前端外壳（`Cache-Control: no-store`，含缺失时的 `404`）：优先解析 `activeTheme` 对应 `data/themes/<short>/` 的 `web_root`（`dist/` 或根目录 `index.html`）；若当前主题为纯皮肤包（无 `index.html`）则返回内嵌前端；当 `activeTheme="default"` 时兼容旧版 `data/theme/` 或回退内嵌前端。`/admin*`、`/api/*`、`/t/*`、`/tp/*`、`/ui/*` 始终由后端锁定 |
 | `GET /ui/v1/toolstow.css`（及 `HEAD`） | 无 | 返回内嵌共享基础样式（`text/css; charset=utf-8`，`Cache-Control: no-store`，`X-Content-Type-Options: nosniff`）；按当前 `activeTheme` 自动追加该主题 `ui.css`（或 `"default"` 时兼容旧版 `data/theme/ui.css`），符号链接逃逸返回 `403` |
 | `GET /ui/v1/theme.js`（及 `HEAD`） | 无 | 返回内嵌共享主题桥接与辅助脚本（`text/javascript; charset=utf-8`，`Cache-Control: no-cache`，`X-Content-Type-Options: nosniff`） |
 | `GET /ui/{*path}` | 无 | 严格锁定前缀兜底：未知共享资产路径一律返回 `404 Not Found` JSON，永不回退至外置主题目录 |
-| `GET /api/me` | 无（读取当前 Cookie 状态） | 返回 `{ siteTitle, siteDescription, defaultAccent, isAdmin, adminEnabled, activeTheme, themeSource }`；`themeSource` 为 `"custom"` 或 `"embedded"`；公共前端仅当 `isAdmin === true` 时显示「管理 / 设置」入口 |
-| `GET /api/tools` | 无 | 返回公开已发布工具（`draft: false`）的元数据 JSON 数组（按分类与名称稳定排序），支持 `?q=关键词&category=分类&tag=标签`；每项包含归一化清单字段（含 `draft`）及 `entryUrl`（如 `"/t/dynamic-favicon/index.html"`）。仅当本地显式开启 `--include-drafts` 时包含草稿 |
-| `GET /t/{id}/{*path}` | 公开工具无需鉴权；草稿工具需 Admin Session 或 `--include-drafts` | 托管已注册工具 `{id}` 目录下的静态文件（访问 `/t/{id}` 或 `/t/{id}/` 重定向至 `/t/{id}/{entry}`）。若目标工具为 `draft: true` 且访客无权限，返回 `404` |
+| `GET /api/me` | 无（读取当前 Cookie 状态） | 返回 `{ siteTitle, siteDescription, defaultAccent, isAdmin, adminEnabled, activeTheme, themeSource }`（`Cache-Control: no-store`、`Vary: Cookie`）；`themeSource` 为 `"custom"` 或 `"embedded"`；默认主题仅当 `isAdmin === true` 时显示「管理 / 设置」入口，自定义主题可自由决定是否在 `adminEnabled && !isAdmin` 时提供指向 `/admin` 的登录链接 |
+| `GET /api/tools` | 无（读取当前 Cookie 状态） | 返回工具元数据 JSON 数组（按分类与名称稳定排序），支持 `?q=关键词&category=分类&tag=标签`；固定返回 `Cache-Control: private, no-store` 与 `Vary: Cookie`。匿名访客仅获得 `public` 工具；已登录 Admin Session 获得 `public` + `private` 工具（默认不含 `draft`），且非公开工具的 `entryUrl`/`iconUrl` 自动签发为会话绑定的 `/tp/{grant}/{id}/...` 能力 URL；仅当显式开启 `--include-drafts` 时额外包含 `draft` 工具（不影响 `private`）。每项同时包含 `visibility` 与派生字段 `draft` |
+| `GET /t/{id}/{*path}` | `public` 无需鉴权；`private` 仅限 Admin Session；`draft` 需 Admin Session 或 `--include-drafts` | 托管已注册工具 `{id}` 目录下的静态文件（访问 `/t/{id}` 或 `/t/{id}/` 重定向至 `/t/{id}/{entry}`）。无权访问的非公开工具一律返回 `404`（不泄露存在性）；非公开响应附带 `Cache-Control: private, no-store`、`Vary: Cookie`、`Referrer-Policy: no-referrer` 与 `CSP: sandbox ...` |
+| `GET /tp/{grant}/{id}/{*path}` | 会话绑定单工具只读能力令牌（`grant`） | 后端锁定路由（访问 `/tp/{grant}/{id}` 或 `/tp/{grant}/{id}/` 重定向至入口）。校验 64 位十六进制 `grant` 与 `{id}` 绑定关系及所属 Admin Session 有效性（无效/跨工具/登出后立即返回 `404`），使多文件非公开工具在 `Origin: null` 沙箱 iframe 与新标签页中无缝加载相对子资源（`./assets/*.js`、`./style.css`、`fetch(...)`）而无需放宽 `SameSite=Strict` 或 `sandbox`；响应头固定附带 `Cache-Control: private, no-store`、`Referrer-Policy: no-referrer`、`X-Content-Type-Options: nosniff` 与 `CSP: sandbox ...` |
 
 #### 管理台与会话认证路由
 
@@ -222,15 +228,16 @@ data/
 | `GET /admin`（及 `/admin/*`） | 无（页面内校验会话；需配置 `TOOLSTOW_ADMIN_KEY`） | 当配置 `TOOLSTOW_ADMIN_KEY` 时返回编译期内嵌的极简黑白单密钥管理后台静态资源（始终由后端锁定）；未配置 `TOOLSTOW_ADMIN_KEY` 时 fail-closed 返回 `404` |
 | `GET /api/admin/session` | 无（读取当前 Cookie 状态） | 返回 `{ authenticated, adminEnabled }`，供 `/admin` 判断渲染登录卡片或控制台 |
 | `POST /api/admin/login` | `TOOLSTOW_ADMIN_KEY` | 提交 JSON `{ "key": "..." }`；未配置 `TOOLSTOW_ADMIN_KEY` 返回 `404`，密钥错误返回 `401`，单 IP 5 分钟内失败 5 次返回 `429`；成功在内存创建 256-bit Session 并下发 `Set-Cookie: toolstow_admin_session=...; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`（HTTPS 或 `TOOLSTOW_COOKIE_SECURE=true` 时附加 `Secure`） |
-| `POST /api/admin/logout` | 无（携带 Cookie 则销毁） | 销毁当前内存 Session 并清除 `toolstow_admin_session` Cookie |
+| `POST /api/admin/logout` | 无（携带 Cookie 则销毁） | 销毁当前内存 Session、立即吊销该会话关联的全部 `/tp/{grant}/...` 工具能力令牌，并清除 `toolstow_admin_session` Cookie |
 
 #### 管理写操作 API（工具管理 & 站点设置）
 
 | 方法与路径 | 允许凭证 | 说明 |
 | :--- | :--- | :--- |
-| `GET /api/admin/tools` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 返回全部工具（含 `draft: true` 草稿），支持 `?q=&category=&tag=` |
+| `GET /api/admin/tools` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 返回全部工具（含 `public` / `private` / `draft`），支持 `?q=&category=&tag=&visibility=public\|private\|draft` 及兼容参数 `?draft=true\|false`（冲突返回 `400`）；Admin Session 请求时非公开工具自动携带 `/tp/{grant}/{id}/...` 预览地址；返回 `Cache-Control: private, no-store` 与 `Vary: Cookie` |
 | `POST /api/admin/tools/upload` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | `multipart/form-data`（字段 `file`）上传 `.zip` 工具包；校验通过后原子写入/覆盖 `tools/{id}/` 并刷新内存索引（新建 `201`，覆盖更新 `200`）；校验失败返回结构化错误 JSON（`400` / `413` / `422`） |
-| `PATCH /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 提交 JSON `{ "draft": true \| false }`，原子写回 `tools/{id}/manifest.json` 并立即同步内存索引，返回更新后的工具元数据 JSON（不存在返回 `404`） |
+| `POST /api/admin/tools/import/html` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 导入单文件 HTML（支持可选 `"visibility": "public" \| "private" \| "draft"` 与兼容 `"draft"` 字段，默认 `"public"`，默认 `?overwrite=false` 冲突返回 `409 TOOL_EXISTS`），生成 `manifest.json` 原子落盘 |
+| `PATCH /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 提交 JSON `{ "visibility": "public" \| "private" \| "draft" }`（兼容旧版 `{ "draft": true \| false }`，冲突返回 `422`），原子写回 `tools/{id}/manifest.json`（更新 `"visibility"` 并移除旧版 `"draft"`）并立即同步内存索引，返回更新后的工具元数据 JSON（不存在返回 `404`） |
 | `DELETE /api/admin/tools/{id}` | Admin Session **或** `Bearer TOOLSTOW_API_KEY` | 删除指定工具目录并同步移除内存索引，成功返回 `204 No Content`，不存在返回 `404` |
 | `GET /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 读取当前站点设置 `{ siteTitle, siteDescription, defaultAccent, activeTheme }` |
 | `PUT /api/admin/settings` | **仅 Admin Session**（`TOOLSTOW_API_KEY` 拒绝） | 更新站点设置（支持全量或部分字段），校验通过后原子写入 `<data-dir>/settings.json` 并刷新内存状态：`siteTitle` 非空最长 80 字符、`siteDescription` 最长 240 字符、`defaultAccent` 为合法 `#rgb` / `#rrggbb` 十六进制色值 |
@@ -256,17 +263,17 @@ data/
 3. **沙箱白名单与直链同级隔离**
    - 宿主后端对 `manifest.sandbox` 实施严格白名单过滤，仅允许：`allow-scripts`、`allow-downloads`、`allow-forms`、`allow-modals`、`allow-popups`、`allow-popups-to-escape-sandbox`。
    - **绝对禁止 `allow-same-origin` 与 `allow-top-navigation*`**：未知或高危权限项一律在后端剥离并记录警告，防止子工具读取主站 Cookie / `localStorage` 或篡改顶层窗口。
-   - `/t/{id}/{*path}` 仅对内存索引中已合法注册且当前访问者可见的 `{id}` 开放访问（阻断探测 `.staging`、未通过校验目录与匿名探测 `draft: true` 草稿），并返回 `Content-Security-Policy: sandbox <白名单权限>;`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: no-cache`。
+   - `/t/{id}/{*path}` 与 `/tp/{grant}/{id}/{*path}` 仅对内存索引中已合法注册且当前访问者有权限的 `{id}` 开放访问（阻断探测 `.staging`、未通过校验目录与匿名探测 `private` / `draft` 工具）。公开工具返回 `Content-Security-Policy: sandbox <白名单权限>;`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: no-cache`；非公开工具额外返回 `Cache-Control: private, no-store`、`Referrer-Policy: no-referrer`（`/t/{id}/*` 同时返回 `Vary: Cookie`）。`/tp/{grant}/{id}/*` 令牌严格绑定 `(session_token, tool_id)`，仅授予该单工具只读访问，登出或会话过期立即吊销。
    - 公共前端与管理后台渲染所有动态字段（工具名称、描述、标签、站点标题、错误提示等）一律使用纯文本绑定（`textContent`）或受控 DOM 属性，严禁拼接未转义 `innerHTML`。
 4. **写接口防沙箱跨源伪造（CSRF 防护）**
    - 尽管沙箱子工具处于不透明源（`Origin: null`），浏览器仍允许其发起无需预检的表单或 `POST` 请求。
-   - 所有状态变更接口（`/api/admin/login`、`/api/admin/logout`、`/api/admin/tools/upload`、`PATCH/DELETE /api/admin/tools/{id}`、`PUT /api/admin/settings`、`POST /api/admin/themes/upload`、`PUT /api/admin/themes/active`、`DELETE /api/admin/themes/{short}`）必须校验来源：拒绝 `Origin: null` 或跨源 `Sec-Fetch-Site: cross-site` 请求；浏览器端管理后台统一附带 `X-ToolStow-Client: 1` 请求头触发 CORS 预检；无 `Origin` 头的 `curl` / Agent CLI 请求在携带有效 Bearer API Key 时正常放行。
+   - 所有状态变更接口（`/api/admin/login`、`/api/admin/logout`、`/api/admin/tools/upload`、`/api/admin/tools/import/html`、`PATCH/DELETE /api/admin/tools/{id}`、`PUT /api/admin/settings`、`POST /api/admin/themes/upload`、`PUT /api/admin/themes/active`、`DELETE /api/admin/themes/{short}`）必须校验来源：拒绝 `Origin: null` 或跨源 `Sec-Fetch-Site: cross-site` 请求；浏览器端管理后台统一附带 `X-ToolStow-Client: 1` 请求头触发 CORS 预检；无 `Origin` 头的 `curl` / Agent CLI 请求在携带有效 Bearer API Key 时正常放行。
 5. **双密钥 fail-closed、防爆破与外置主题路由锁定**
    - `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY` 未配置时分别关闭对应登录/API 通道（fail-closed）；两者均使用常量时间比较函数 `constant_time_eq` 校验，抵御时序侧信道攻击。
    - 对失败的 Admin 登录与 Bearer 校验实施单客户端/单 IP 滑动窗口限流：**5 分钟内失败 5 次即返回 `429 Too Many Requests`**；登录成功后清除该客户端失败计数。
    - 若配置的密钥长度不足 16 字符，启动时记录 `WARN` 级提示日志，**任何日志中绝不打印密钥明文或 Session Token**。
    - 严禁通过 URL Query 参数传递任何密钥；`TOOLSTOW_API_KEY` 仅接受 `Authorization: Bearer` 头且不可访问 `/admin` 登录、站点设置接口与 `/api/admin/themes*` 多主题管理接口。
-   - 外置主题目录（`<data-dir>/themes/<short>/` 与向后兼容的 `<data-dir>/theme/`）仅用于匹配公共前端静态资源及可选的 `ui.css` 级联覆盖（均强制执行规范路径 Containment 校验，符号链接逃逸返回 `403`）；`/admin*`、`/api/*`、`/t/*`、`/ui/*` 路由始终由后端最高优先级锁定，避免自定义主题误配或污染核心控制面与共享 SDK。
+   - 外置主题目录（`<data-dir>/themes/<short>/` 与向后兼容的 `<data-dir>/theme/`）仅用于匹配公共前端静态资源及可选的 `ui.css` 级联覆盖（均强制执行规范路径 Containment 校验，符号链接逃逸返回 `403`）；`/admin*`、`/api/*`、`/t/*`、`/tp/*`、`/ui/*` 路由始终由后端最高优先级锁定，避免自定义主题误配或污染核心控制面与共享 SDK。
 
 ---
 
@@ -300,7 +307,7 @@ data/
 | `--themes-dir` | `TOOLSTOW_THEMES_DIR` | `<data-dir>/themes` | 多主题包目录独立覆盖路径 |
 | `--theme-dir` | `TOOLSTOW_THEME_DIR` | `<data-dir>/theme` | 向后兼容单主题覆盖目录路径 |
 | `--max-upload-mb` | `TOOLSTOW_MAX_UPLOAD_MB` | `50` | 单次 `.zip` 上传体积上限（MB） |
-| `--include-drafts` | `TOOLSTOW_INCLUDE_DRAFTS` | `false` | 本地调试时在公开视图直接显示 `draft: true` 草稿工具 |
+| `--include-drafts` | `TOOLSTOW_INCLUDE_DRAFTS` | `false` | 本地调试时在 `/` 额外显示 `visibility: "draft"` 草稿工具（**不会**暴露 `visibility: "private"` 私有工具） |
 | `--cookie-secure` | `TOOLSTOW_COOKIE_SECURE` | `false` | 强制为 Admin Session Cookie 附加 `Secure` 属性（HTTPS 反代推荐开启） |
 | — | `TOOLSTOW_ADMIN_KEY` | 未设置（关闭） | 人类 `/admin` 单密钥登录密钥（仅通过环境变量 / `.env` 注入） |
 | — | `TOOLSTOW_API_KEY` | 未设置（关闭） | 机器 / AI `Authorization: Bearer` 密钥（仅管理 `/api/admin/tools*`） |
@@ -395,7 +402,7 @@ toolstow/
 | **纯 VPS 零数据库启动** | `cargo build --release` 生成单一可执行文件，空目录启动自动创建 `./data/tools`，加载 `.env`（若存在），打开公共前端即见极简黑白界面 |
 | **Fail-Closed 默认安全** | 未配置 `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY` 时：`GET /admin`（及 `/admin/*`）、`/api/admin/login`、`/api/admin/tools*` 与 `/api/admin/settings` 均 fail-closed 返回 `404`，公共前端不显示管理入口 |
 | **双密钥职责隔离与防爆破** | `TOOLSTOW_ADMIN_KEY` 可登录 `/admin` 换取 `HttpOnly; SameSite=Strict` Cookie 并管理工具与站点设置，但作为 Bearer Token 被拒绝；`TOOLSTOW_API_KEY` 可经 `Authorization: Bearer` 读写 `/api/admin/tools*`，但无法登录 `/admin` 或访问 `/api/admin/settings`；连续 5 次错误凭证后第 6 次触发 `429` |
-| **Hugo 风格草稿可见性** | `draft: true` 工具在公开 `GET /api/tools` 中隐藏且匿名访问 `/t/{id}/*` 返回 `404`；登录 `/admin` 后可在列表看到、通过「预览」打开并通过 `PATCH /api/admin/tools/{id}` 一键发布上线；本地启动加 `--include-drafts` 时公开视图直接可见 |
-| **外置静态主题热覆盖与路由锁定** | 在 `data/theme/` 放置自定义 `index.html` 后无需重编 Rust，访问 `/` 立即生效且 `/api/me` 返回 `themeSource: "custom"`；放置 `data/theme/ui.css` 后 `GET /ui/v1/toolstow.css` 自动追加该覆盖样式以统一换肤主站与插件（符号链接逃逸返回 `403`）；访问 `/admin`、`/api/tools`、`/t/{id}/*`、`/ui/v1/*` 仍由后端强制接管不被覆盖 |
-| **公共只读前端与条件管理入口** | 公共前端完全只读无上传/删除按钮；未登录时无任何管理入口；登录 `/admin` 后返回 `/` 顶栏展示「管理 / 设置」链接；站点标题/描述/默认强调色修改后实时反映到 `/api/me` 与公共页 |
-| **AI 生产闭环与沙箱安全边界** | 按 `docs/ai-tool-skill.md` 使用 `Authorization: Bearer $TOOLSTOW_API_KEY` 完成上传、覆写、草稿切换与删除；坏包/越界/符号链接/超限包被拒绝且无残留；子工具双重沙箱剥离 `allow-same-origin`，沙箱内伪造写请求被拦截 |
+| **三态可见性与能力 URL** | `private` 与 `draft` 工具在匿名 `GET /api/tools` 中隐藏且匿名访问 `/t/{id}/*` 返回 `404`；登录 `/admin` 后，`/` 返回 `public` + `private`（不含 `draft`）并为非公开工具签发 `/tp/{grant}/{id}/...` 能力 URL，多文件相对子资源在沙箱 iframe 与新标签页内正常加载，登出后能力 URL 立即返回 `404`；`PATCH /api/admin/tools/{id}` 支持 `visibility` 三态切换并兼容旧版 `draft`；本地加 `--include-drafts` 时仅额外展示 `draft` 而绝不暴露 `private` |
+| **外置静态主题热覆盖与路由锁定** | 在 `data/theme/` 放置自定义 `index.html` 后无需重编 Rust，访问 `/` 立即生效且 `/api/me` 返回 `themeSource: "custom"`；放置 `data/theme/ui.css` 后 `GET /ui/v1/toolstow.css` 自动追加该覆盖样式以统一换肤主站与插件（符号链接逃逸返回 `403`）；访问 `/admin`、`/api/tools`、`/t/{id}/*`、`/tp/{grant}/{id}/*`、`/ui/v1/*` 仍由后端强制接管不被覆盖 |
+| **公共只读前端与条件管理入口** | 公共前端完全只读无登录表单或上传/删除/可见性变更按钮；默认主题未登录时隐藏管理入口，登录 `/admin` 后返回 `/` 顶栏展示「管理 / 设置」链接（自定义主题可自由选择在 `adminEnabled && !isAdmin` 时显示指向 `/admin` 的登录链接）；站点标题/描述/默认强调色修改后实时反映到 `/api/me` 与公共页 |
+| **AI 生产闭环与沙箱安全边界** | 按 `skills/toolstow-tool/SKILL.md` 使用 `Authorization: Bearer $TOOLSTOW_API_KEY` 完成上传、覆写、可见性切换与删除；坏包/越界/符号链接/超限包被拒绝且无残留；子工具双重沙箱剥离 `allow-same-origin`，沙箱内伪造写请求被拦截 |

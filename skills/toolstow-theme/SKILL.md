@@ -12,7 +12,7 @@ Use this skill whenever designing, implementing, live-testing, validating, or pa
 ToolStow's single Rust binary **only consumes built static artifacts** — it never compiles theme source code (TypeScript, SCSS, Vite, Tailwind) at runtime. Built-in and third-party themes follow the exact same runtime contract:
 
 - **Total visual ownership**: Colors, accent, typography, radii, light/dark palettes, textures, and control appearance are owned **100% by the theme** (ToolStow has no global accent picker).
-- **Strict route isolation**: `/api/*`, `/admin*`, `/t/*`, and `/ui/*` are locked on the backend and can **never** be shadowed by a theme.
+- **Strict route isolation**: `/api/*`, `/admin*`, `/t/*`, `/tp/*`, and `/ui/*` are locked on the backend and can **never** be shadowed by a theme.
 - **No server restart on theme edits or switches**: ToolStow resolves the active theme from `<data-dir>/themes/<short>/` dynamically and serves theme-dependent assets with `Cache-Control: no-store`.
 - **Two theme modes under one manifest**:
 
@@ -154,6 +154,7 @@ export default defineConfig({
       "/api": { target, changeOrigin: true },
       "/ui": { target, changeOrigin: true },
       "/t": { target, changeOrigin: true },
+      "/tp": { target, changeOrigin: true },
       "/admin": { target, changeOrigin: true },
     },
   },
@@ -331,18 +332,19 @@ body {
 
 | Endpoint | Method | Auth | Purpose |
 | :--- | :--- | :--- | :--- |
-| `/api/me` | `GET` | Public (reads optional session cookie) | Site title/description, admin visibility flag (`isAdmin`), active theme info. |
-| `/api/tools` | `GET` | Public | Published tool catalog with optional `q`, `category`, `tag` filters. |
-| `/t/{id}/{*path}` | `GET` | Public (published tools) | Sandboxed static tool assets (`CSP: sandbox ...;`, `nosniff`, `no-cache`). |
+| `/api/me` | `GET` | Public (reads optional session cookie) | Site title/description, admin flags (`isAdmin`, `adminEnabled`), active theme info (`Cache-Control: no-store`, `Vary: Cookie`). |
+| `/api/tools` | `GET` | Public (reads optional session cookie) | Tool catalog with optional `q`, `category`, `tag` filters: `public` for anonymous visitors, `public` + `private` for authenticated Admin sessions (and `draft` only when `--include-drafts` is enabled). Returns `Cache-Control: private, no-store`, `Vary: Cookie`. |
+| `/t/{id}/{*path}` | `GET` | Public (`public` tools) / Admin Session (`private`, `draft`) | Sandboxed static tool assets (`CSP: sandbox ...;`, `nosniff`; non-public adds `Cache-Control: private, no-store`, `Vary: Cookie`, `Referrer-Policy: no-referrer`). |
+| `/tp/{grant}/{id}/{*path}` | `GET` | Session-bound per-tool capability grant | Read-only capability URL issued to authenticated Admin sessions as `entryUrl`/`iconUrl` for non-public tools, allowing multi-file relative sub-resources (`./assets/*.js`, `./style.css`, `fetch(...)`) inside `Origin: null` sandboxed iframes and standalone tabs without weakening `SameSite=Strict` or adding `allow-same-origin`. Revoked immediately on logout / session expiry (`Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `CSP: sandbox ...;`). |
 | `/ui/v1/toolstow.css` | `GET`/`HEAD` | Public | Base design tokens + `.ts-workbench` slots + active theme's `ui.css`. |
 | `/ui/v1/theme.js` | `GET`/`HEAD` | Public | Plugin-side theme bridge (`toolstow:ready` / `toolstow:theme`). |
 | `/ui/v1/host.js` | `GET`/`HEAD` | Public | Headless Host SDK (`window.ToolStowHost`) implementing Contract A for full custom shells. |
 | `/ui/v1/theme-assets/{*path}` | `GET`/`HEAD` | Public | Active theme static assets with `Access-Control-Allow-Origin: *`. |
-| `/admin*` & `/api/admin/*` | Locked | Admin Session ONLY (tools also accept API key) | Never called by public shells — only link to `/admin` when `me.isAdmin === true`. |
+| `/admin*` & `/api/admin/*` | Locked | Admin Session ONLY (tools also accept API key) | Never call `/api/admin/*` from public shells; linking to `/admin` follows the login-entry policy in Section 6.1. |
 
 ### 6.1 `GET /api/me`
 
-Always fetch with `{ credentials: "same-origin", cache: "no-store" }` (backend returns `Cache-Control: no-store`):
+Always fetch with `{ credentials: "same-origin", cache: "no-store" }` (backend returns `Cache-Control: no-store` and `Vary: Cookie`):
 
 ```json
 {
@@ -359,16 +361,23 @@ Always fetch with `{ credentials: "same-origin", cache: "no-store" }` (backend r
 | :--- | :--- | :--- |
 | `siteTitle` | `string` | Site heading (1–80 chars, default `"ToolStow"`). Render in header and sync to `document.title` (`"<tool.name> · <siteTitle>"` when a tool is open). |
 | `siteDescription` | `string` | Subtitle / tagline (0–240 chars, may be empty `""`). Handle empty string gracefully. |
-| `isAdmin` | `boolean` | **Mandatory gating**: Show a link to `/admin` (e.g. `管理 / 设置`) **if and ONLY if `isAdmin === true`**. Default the link to `hidden` in HTML (`[hidden] { display: none !important; }` is provided by `toolstow.css`) so anonymous visitors never see it. |
-| `adminEnabled` | `boolean` | `true` when `TOOLSTOW_ADMIN_KEY` is configured. Do NOT use `adminEnabled` to show `/admin` — gate strictly on `isAdmin === true`. |
+| `isAdmin` | `boolean` | `true` when the visitor holds a valid Admin Session cookie. When `isAdmin === true`, show a link to `/admin` (e.g. `管理 / 设置`). Always distinguish logged-in `isAdmin === true` state from logged-out state (`validate.py` checks that custom shells reference `isAdmin`). |
+| `adminEnabled` | `boolean` | `true` when `TOOLSTOW_ADMIN_KEY` is configured on the host. Never render any `/admin` or login link when `adminEnabled === false`. |
 | `activeTheme` | `string` | Active theme `short` (or `"default"`). |
 | `themeSource` | `"custom" \| "embedded"` | `"custom"` when served from disk; `"embedded"` for built-in default. |
 
-> **Strict Read-Only Public Shell Rule**: Never render upload, delete, draft-toggle, or settings forms on `/`. All mutations belong exclusively in `/admin`.
+#### Theme Login-Entry Freedom (`site.adminEnabled && !site.isAdmin`)
+
+Theme authors are **free to choose** whether to expose a login link/button pointing to `/admin` when `site.adminEnabled === true && !site.isAdmin`:
+
+- **Minimal / pure-public style** *(used by the built-in default theme & all bundled example themes)*: Keep the logged-out interface completely free of admin chrome (`adminLink.hidden = !site.isAdmin`). Only show `管理 / 设置` after the owner signs in at `/admin` (`site.isAdmin === true`).
+- **Convenience style** *(optional for custom themes)*: Render a subtle login link pointing to `/admin` (e.g. `登录` / `Sign in`) when `site.adminEnabled === true && !site.isAdmin`, switching it to `管理 / 设置` when `site.isAdmin === true` (and hiding it completely when `site.adminEnabled === false`). This lets site owners log in directly from `/` to unlock their `private` tools without manually typing `/admin`.
+
+> **Strict Read-Only Public Shell Rule**: Regardless of which login-entry style a theme chooses, **never** embed login forms, password inputs, upload forms, delete buttons, or visibility-mutating controls directly on `/`. Only render a plain navigation link (`<a href="/admin">`) to `/admin`; all authentication and mutations belong exclusively in `/admin`.
 
 ### 6.2 `GET /api/tools`
 
-Fetch with `{ credentials: "same-origin", cache: "no-store" }`.
+Fetch with `{ credentials: "same-origin", cache: "no-store" }` (backend returns `Cache-Control: private, no-store` and `Vary: Cookie`).
 
 - **Optional query parameters**:
   - `q`: case-insensitive substring match against `name`, `description`, `id`, or any entry in `tags`.
@@ -376,9 +385,13 @@ Fetch with `{ credentials: "same-origin", cache: "no-store" }`.
   - `tag`: exact case-insensitive match against any item in `tags` (trimmed).
   - You may either query the server on filter changes OR fetch `/api/tools` once with no params and filter client-side (fetching all tools once for category/tag counts + querying or filtering for the grid works smoothly either way).
 - **Deterministic server sort order**: `(category.toLowerCase(), name.toLowerCase(), id)`.
-- **Draft filtering**: Returns only published tools (`draft: false`) unless the server was started with `--include-drafts`.
+- **3-State Visibility Filtering (`visibility: "public" | "private" | "draft"`)**:
+  - **Anonymous visitors**: receive `public` tools only (plus `draft` if the host was started with `--include-drafts`; `private` is **never** exposed by `--include-drafts`).
+  - **Authenticated admins (`isAdmin === true`)**: receive `public` + `private` tools on `/` (`draft` tools remain hidden from `/` by default even for admins, and are managed/previewed in `/admin` unless `--include-drafts` is enabled).
+  - Each tool object includes both `"visibility": "public" | "private" | "draft"` and derived legacy `"draft": boolean` (`visibility === "draft"`).
+  - **Capability URLs for non-public tools**: For authenticated admin sessions, non-public (`private` / `draft`) tools receive session-bound, per-tool read-only capability URLs `/tp/{grant}/{id}/...` in `entryUrl` and `iconUrl` so multi-file tools (`./assets/*.js`, `./style.css`, `fetch(...)`) load cleanly inside `Origin: null` sandboxed iframes and standalone tabs. Always validate URLs with `ToolStowHost.isSafeToolUrl(url)` instead of hardcoding `.startsWith("/t/")`.
 
-Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false`, and **present** when `iconIsPath` is `true`):
+Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false`, and **present** when `iconIsPath` is `true`; the 3rd item illustrates a `private` tool returned only to an authenticated Admin Session):
 
 ```json
 [
@@ -396,6 +409,7 @@ Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false
     "runtime": "static",
     "themeAware": true,
     "sandbox": ["allow-scripts", "allow-forms"],
+    "visibility": "public",
     "draft": false
   },
   {
@@ -413,6 +427,24 @@ Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false
     "runtime": "static",
     "themeAware": true,
     "sandbox": ["allow-scripts", "allow-downloads"],
+    "visibility": "public",
+    "draft": false
+  },
+  {
+    "id": "ops-runbook",
+    "name": "私有运维手册",
+    "version": "1.0.0",
+    "description": "仅管理员登录后在首页可见的个人运维脚本速查",
+    "category": "运维",
+    "tags": ["ops", "private"],
+    "icon": "🔒",
+    "iconIsPath": false,
+    "entry": "index.html",
+    "entryUrl": "/tp/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/ops-runbook/index.html",
+    "runtime": "static",
+    "themeAware": true,
+    "sandbox": ["allow-scripts", "allow-forms"],
+    "visibility": "private",
     "draft": false
   }
 ]
@@ -421,11 +453,12 @@ Example response (note that `iconUrl` is **omitted** when `iconIsPath` is `false
 **Edge Cases Every Full Custom Shell MUST Handle**:
 1. **Empty tool list (`[]`)**: Show a friendly, clear empty state (distinct from "no search/filter matches", where a "清空筛选" button resets `q`, `category`, and `tag`).
 2. **Icons (`icon` / `iconIsPath` / `iconUrl`)**:
-   - Render `<img src="...">` ONLY when `tool.iconIsPath === true` AND `tool.iconUrl` passes `isSafeToolUrl(url)` (`typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//")`). Attach an `error` listener on `<img>` to fall back to a text glyph.
+   - Render `<img src="...">` ONLY when `tool.iconIsPath === true` AND `tool.iconUrl` passes `ToolStowHost.isSafeToolUrl(url)` (accepts `/t/...` and `/tp/<64-hex>/...` while rejecting `//` and control chars). Attach an `error` listener on `<img>` to fall back to a text glyph.
    - Otherwise render `tool.icon || "🛠️"` strictly via `textContent`.
-3. **Entry URL (`entryUrl`)**: Validate with `isSafeToolUrl(tool.entryUrl)` (`startsWith("/t/") && !startsWith("//")`) before mounting the iframe or using the URL in an optional standalone link.
-4. **Empty `sandbox: []`**: A tool may explicitly request `sandbox: []` (fully locked-down static page with zero JS). Preserve `[]` whenever `Array.isArray(tool.sandbox)` is true — only fall back to `["allow-scripts", "allow-downloads", "allow-forms"]` if `tool.sandbox` is missing/not an array!
-5. **Network/HTTP error**: Display a non-blocking status/error banner and allow retrying without crashing the page.
+3. **Entry URL (`entryUrl`)**: Validate with `ToolStowHost.isSafeToolUrl(tool.entryUrl)` (accepting both `/t/...` and `/tp/<64-hex>/...`, never hardcoding `.startsWith("/t/")`) before mounting the iframe or using the URL in an optional standalone link.
+4. **Visibility badges (`private` / `draft`)**: Resolve visibility via `ToolStowHost.normalizeVisibility(tool)` (fallback: `tool.visibility` if `"public" | "private" | "draft"`, else `tool.draft === true ? "draft" : "public"`). Keep `public` tools completely clean with **no badge**. When `visibility !== "public"`, render a subtle, style-matched badge (`私有` for `private`, `草稿` for `draft`, strictly via `textContent`) in directory cards/rows and the workspace header or details popover, without widening mobile headers or causing horizontal overflow.
+5. **Empty `sandbox: []`**: A tool may explicitly request `sandbox: []` (fully locked-down static page with zero JS). Preserve `[]` whenever `Array.isArray(tool.sandbox)` is true — only fall back to `["allow-scripts", "allow-downloads", "allow-forms"]` if `tool.sandbox` is missing/not an array!
+6. **Network/HTTP error**: Display a non-blocking status/error banner and allow retrying without crashing the page.
 
 ---
 
@@ -459,6 +492,8 @@ const host = window.ToolStowHost.create({
     // state.allTools, state.filteredTools, state.categories ([{name, count}]), state.tags
     // state.filters: { q, category, tag }
     // state.selectedId, state.selectedTool, state.theme: { mode, accent }, state.loading, state.error
+    // Minimal style: hide /admin unless logged in (optional convenience style may show a subtle
+    // login link to /admin when state.site.adminEnabled && !state.site.isAdmin).
     adminLink.hidden = !state.site.isAdmin;
     renderShell(state);
   },
@@ -468,7 +503,7 @@ await host.bootstrap();
 ```
 
 Key `ToolStowHost` static helpers & instance methods:
-- **Static helpers**: `ToolStowHost.renderIcon(containerEl, tool, fallbackGlyph)`, `ToolStowHost.resolveIconUrl(tool)`, `ToolStowHost.isSafeToolUrl(url)`, `ToolStowHost.sanitizeSandboxTokens(tokens)`, `ToolStowHost.normalizeHexColor(val)`, `ToolStowHost.readStorage(key)` / `writeStorage(key, val)`.
+- **Static helpers**: `ToolStowHost.renderIcon(containerEl, tool, fallbackGlyph)`, `ToolStowHost.resolveIconUrl(tool)`, `ToolStowHost.isSafeToolUrl(url)` (accepts both `/t/...` and `/tp/<64-hex>/...`), `ToolStowHost.normalizeVisibility(tool)` (returns `"public" | "private" | "draft"`), `ToolStowHost.sanitizeSandboxTokens(tokens)`, `ToolStowHost.normalizeHexColor(val)`, `ToolStowHost.readStorage(key)` / `writeStorage(key, val)`.
 - **Instance methods**: `host.bootstrap()`, `host.getState()`, `host.refresh()`, `host.setFilters({ q, category, tag })`, `host.clearFilters()`, `host.hasActiveFilters()`, `host.selectTool(id)`, `host.clearSelection()`, `host.mountTool(containerEl, toolOrId, { cacheBust })`, `host.reloadTool()`, `host.getStandaloneUrl(tool)`, `host.setThemeMode(mode)`, `host.toggleThemeMode()`, `host.syncTheme()` (sync the current `data-ts-skin` and computed tokens to the active iframe), `host.subscribe(fn)`.
 
 Themes can pass `onSearchShortcut` to `ToolStowHost.create()` to receive `Cmd/Ctrl+K` from the focused tool iframe. Tools using the shared `theme.js` forward this shortcut after their own document-level handlers. Keep a visible search trigger when offering this shortcut so tools with their own keyboard handling remain usable.
@@ -504,9 +539,13 @@ const SANDBOX_ALLOWLIST = new Set([
   "allow-popups-to-escape-sandbox",
 ]);
 const DEFAULT_SANDBOX = ["allow-scripts", "allow-downloads", "allow-forms"];
+const SAFE_TOOL_URL_RE = /^\/(?:t\/|tp\/[0-9a-f]{64}\/)/i;
 
+// Prefer ToolStowHost.isSafeToolUrl(url) when /ui/v1/host.js is loaded:
 function isSafeToolUrl(url) {
-  return typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//");
+  if (typeof url !== "string" || url.startsWith("//")) return false;
+  if (/[\u0000-\u001f\u007f]/.test(url)) return false;
+  return SAFE_TOOL_URL_RE.test(url);
 }
 
 function sanitizeSandboxTokens(rawTokens) {
@@ -679,8 +718,8 @@ Inspect the bundled examples in `examples/themes/` as working references:
 - [ ] `theme.json` has valid `short` (`^[a-z0-9]+(?:-[a-z0-9]+)*$`, not `"default"`, matching directory name) and non-empty `name`.
 - [ ] Contains `ui.css` (defining both `:root` + `color-scheme: light` and `:root[data-theme="dark"]` + `color-scheme: dark`, with hex `--ts-accent`) and/or `index.html` (`dist/index.html`).
 - [ ] Every `.svg` file (`preview.svg`, `assets/*.svg`, etc.) is valid XML with zero `<script>`, zero `on*` attributes, and zero `javascript:`.
-- [ ] Full custom shell loads `/ui/v1/toolstow.css` **first**, opens `#tool=<id>` deep links cleanly, provides a clear way to return to the theme's tool navigation entry (directory/list, map/town, etc.), keeps every provided navigation/control surface (search, map pins, modal triggers, quick switcher, etc.) keyboard-operable with visible `:focus-visible` outlines, shows `/admin` strictly when `me.isAdmin === true`, and renders zero upload/delete controls.
-- [ ] Full custom shell validates `entryUrl`/`iconUrl` (`startsWith("/t/") && !startsWith("//")`), filters `sandbox` through the 6-token allowlist while preserving `[]`, sends `?theme=&accent=` + `toolstow:theme` on `load`/`toolstow:ready`/toggle, and contains zero `innerHTML`, zero `allow-same-origin`, zero `allow-top-navigation*`, and zero inline `setProperty("--ts-accent", ...)`.
+- [ ] Full custom shell loads `/ui/v1/toolstow.css` **first**, opens `#tool=<id>` deep links cleanly, provides a clear way to return to the theme's tool navigation entry (directory/list, map/town, etc.), keeps every provided navigation/control surface (search, map pins, modal triggers, quick switcher, etc.) keyboard-operable with visible `:focus-visible` outlines, shows the admin/settings link when `me.isAdmin === true` (and optionally a subtle login link to `/admin` when `me.adminEnabled === true && !me.isAdmin`, hidden whenever `adminEnabled === false`), and renders zero inline login, upload, delete, or visibility-mutating controls.
+- [ ] Full custom shell validates `entryUrl`/`iconUrl` via `ToolStowHost.isSafeToolUrl(url)` (accepting both `/t/...` and `/tp/<64-hex>/...` while rejecting `//`), renders subtle `private` / `draft` badges only when `visibility !== "public"` (keeping `public` clean with no badge), filters `sandbox` through the 6-token allowlist while preserving `[]`, sends `?theme=&accent=` + `toolstow:theme` on `load`/`toolstow:ready`/toggle, and contains zero `innerHTML`, zero `allow-same-origin`, zero `allow-top-navigation*`, and zero inline `setProperty("--ts-accent", ...)`.
 - [ ] Packaged cleanly with `scripts/pack.py` (no `node_modules/`), uploaded via `/admin` -> **主题管理**, and verified on `/` in both Light and Dark modes alongside a plugin across desktop (`1280×600`), narrow mobile portrait (`320×568`, `393×641`, including logged-in `/admin` link), and landscape mobile (`844×390`, including `(max-height: 500px)` rules) viewports (full-height background, zero horizontal overflow on host and iframe, zero overlapping floating elements).
 - [ ] Under worst-case tool metadata (long Chinese title + ~80-char Chinese description + 9 tags + logged-in `/admin` link, tested both from catalog click and `#tool=<id>` deep-link), the visible `iframe` height inside the viewport is **`>= 45%` of viewport height** on `320×568` & `393×641` (recommended `>= 55%`) and **`>= 140 CSS px`** on `844×390` (recommended `>= 180px`), with `>= 85%` viewport width, a visible clickable back/return button, and an `Escape`-dismissible details popover if secondary metadata is collapsed.
 - [ ] Browser checks cover tag behavior, keyboard focus with drawers/popovers open and closed, and contrast inside a tool iframe. If the theme provides named palettes and a new-tab link, open a tool both ways and compare its colors after a palette switch. (Repo themes can also run `NODE_PATH=/tmp/pw/node_modules node scripts/verify_theme_mobile.cjs --binary target/debug/toolstow`.)

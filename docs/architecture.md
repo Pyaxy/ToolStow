@@ -22,9 +22,9 @@ ToolStow 将主题外观与工具内部结构解耦，核心资源统一由后�
 - **`/ui/v1/toolstow.css`**：基础极简设计令牌（`--ts-*`）与基础组件原语（`.ts-*`）。当启用了含 `ui.css` 的主题时，后端自动将其追加拼在基础样式之后级联生效，同时换肤主站与所有子工具。
 - **`.ts-workbench` 语义化插槽**：子工具通过标准类名（`.ts-wb-toolbar`、`.ts-wb-nav`、`.ts-wb-aside`、`.ts-wb-main`、`.ts-collection`）声明页面结构而无需关心当前主题，主题可在 `ui.css` 中自由重排菜单栏、工具栏与卡片流的位置（如左侧终端目录栏+底部命令条，或右侧手绘书签栏）。
 - **`/ui/v1/theme.js`**：防 FOUC（无闪烁）主题同步、嵌入态检测（`data-embed`）、`toolstow:ready` / `toolstow:theme` 握手，并向子工具暴露 `window.ToolStow`（`getTheme()`、`onThemeChange(fn)`、`copy()`、`toast()` 等）。
-- **`/ui/v1/host.js`（无头宿主 SDK，`window.ToolStowHost`）**：封装 `/api/me` 与 `/api/tools` 数据拉取、筛选过滤、Hash 深链接、`<iframe sandbox>` 挂载与主题同步逻辑，供自定义完整主题复用。
+- **`/ui/v1/host.js`（无头宿主 SDK，`window.ToolStowHost`）**：封装 `/api/me` 与 `/api/tools` 数据拉取、筛选过滤、Hash 深链接、`<iframe sandbox>` 挂载、URL 安全校验（`isSafeToolUrl` 同时校验 `/t/*` 与 `/tp/{grant}/*`）、可见性归一化（`normalizeVisibility`）与主题同步逻辑，供自定义完整主题复用。
 - **`/ui/v1/theme-assets/*`**：跨沙箱静态资产接口，附带 CORS（`Access-Control-Allow-Origin: *`）及 SVG/HTML 沙箱响应头，使主题自带字体与背景纹理可在公开首页 `/` 与 `Origin: null` 沙箱插件 iframe 内一致加载。
-- **受保护的后端路由边界**：`/admin*`、`/api/*`、`/t/*` 与 `/ui/*` 始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱隔离。
+- **受保护的后端路由边界**：`/admin*`、`/api/*`、`/t/*`、`/tp/*` 与 `/ui/*` 始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱隔离。
 
 ---
 
@@ -38,7 +38,14 @@ ToolStow 将主题外观与工具内部结构解耦，核心资源统一由后�
 - **ZIP 与单文件 HTML 收录防护**：
   - `.zip` 解包拦截路径穿越（Zip Slip）、符号链接、特殊文件，并校验证明体积与文件数量上限（防解压炸弹）；替换安装采用同盘原子替换；
   - 单文件 `.html` 通过 `/admin` 预览/收录或调用 `POST /api/admin/tools/import/html`（默认 `overwrite=false`，同 ID 返回 `409` 防误覆盖），支持自动向合法 `<head>` 边界注入 SDK 引用。
-- **草稿预览机制**：支持 Hugo 风格 `"draft": true` 草稿状态，未发布草稿仅管理员或显式启动 `--include-drafts` 时可见，待 `/admin` 确认无误后可一键公开。
+- **三态可见性与会话绑定能力 URL（`/tp/{grant}/{id}/*`）**：
+  - `manifest.json` 支持 `"visibility": "public" | "private" | "draft"`（默认 `"public"`，兼容旧版 `"draft": true / false`，语义冲突时拒绝返回 `422`；`PATCH /api/admin/tools/{id}` 写盘统一规范为 `"visibility"` 并移除旧版 `"draft"`）：
+    - `public`：对所有访客开放；
+    - `private`：个人私有工具，对匿名访客隐藏（`GET /api/tools` 省略、`/t/{id}/*` 返回 `404`），仅已登录 Admin Session 在 `/`（返回 `public` + `private`）与 `/admin` 可见，**不受 `--include-drafts` 影响**；
+    - `draft`：开发中预览工具，对匿名隐藏且默认不在 `/` 展示（仅在 `/admin` 管理与新标签页预览，或显式开启 `--include-drafts` 时出现在 `/`）。
+  - **多文件非公开工具能力 URL**：为已登录 Admin Session 返回的非公开工具自动将 `entryUrl` / `iconUrl` 签发为会话绑定、按工具隔离的只读路径 `/tp/{grant}/{id}/...`，使相对路径子资源（`./assets/*.js`、`./style.css`、`fetch(...)`）在 `Origin: null` 沙箱 iframe 与新标签页中稳定加载，无需削弱 `SameSite=Strict` 或添加 `allow-same-origin`；登出或会话过期时全部 `grant` 立即吊销。
+  - **缓存与防泄露响应头**：`GET /api/tools` 始终返回 `Cache-Control: private, no-store` 与 `Vary: Cookie`；非公开工具经 `/t/{id}/*` 或 `/tp/{grant}/{id}/*` 提供服务时附加 `Cache-Control: private, no-store`、`Referrer-Policy: no-referrer` 与 `Content-Security-Policy: sandbox ...`。
+  - *降级注意*：若回退到 `<= v0.3.5` 旧版二进制，旧版不识别 `manifest.json` 中的 `"visibility": "private"` 字段，降级前请先处理私有工具以免意外公开。
 
 ---
 
@@ -67,7 +74,7 @@ my-tool/
   "category": "开发",
   "icon": "🧩",
   "themeAware": true,
-  "draft": false
+  "visibility": "public"
 }
 ```
 

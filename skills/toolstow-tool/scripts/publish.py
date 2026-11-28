@@ -49,6 +49,18 @@ def load_dotenv(env_path: Path) -> Dict[str, str]:
     return values
 
 
+def resolve_tool_visibility(tool_obj: object) -> str:
+    if isinstance(tool_obj, dict):
+        raw_vis = tool_obj.get("visibility")
+        if isinstance(raw_vis, str):
+            vis = raw_vis.strip().lower()
+            if vis in ("public", "private", "draft"):
+                return vis
+        if tool_obj.get("draft") is True:
+            return "draft"
+    return "public"
+
+
 def encode_multipart_file(field_name: str, filename: str, payload: bytes) -> Tuple[bytes, str]:
     boundary = f"----ToolStowBoundary{uuid.uuid4().hex}"
     safe_name = filename.replace('"', "").replace("\r", "").replace("\n", "")
@@ -209,15 +221,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                 file=sys.stderr,
             )
             if existing:
+                existing_vis = resolve_tool_visibility(existing)
                 print(
                     f"  existing: {existing.get('name')} v{existing.get('version')} "
-                    f"(draft={existing.get('draft')})",
+                    f"(visibility={existing_vis})",
                     file=sys.stderr,
                 )
             if incoming:
+                incoming_vis = resolve_tool_visibility(incoming)
                 print(
                     f"  incoming: {incoming.get('name')} v{incoming.get('version')} "
-                    f"(draft={incoming.get('draft')})",
+                    f"(visibility={incoming_vis})",
                     file=sys.stderr,
                 )
             print("  Re-run with --overwrite to replace the existing tool.", file=sys.stderr)
@@ -254,11 +268,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     tool = data.get("tool") if isinstance(data, dict) and isinstance(data.get("tool"), dict) else data
     tool_id = tool.get("id", "unknown") if isinstance(tool, dict) else "unknown"
     version = tool.get("version", "") if isinstance(tool, dict) else ""
-    draft = tool.get("draft", False) if isinstance(tool, dict) else False
+    visibility = resolve_tool_visibility(tool)
     verb = "CREATED" if status_code == 201 else "UPDATED"
+    if visibility == "public":
+        target_note = f"-> {base_url}/#tool={tool_id}"
+    elif visibility == "private":
+        target_note = f"(admin-only on /) -> {base_url}/#tool={tool_id} (requires /admin session)"
+    else:
+        target_note = f"(preview in /admin) -> {base_url}/admin"
     print(
         f"{verb} (HTTP {status_code}): '{tool_id}' v{version} "
-        f"(draft={draft}) -> {base_url}/#tool={tool_id}"
+        f"(visibility={visibility}) {target_note}"
     )
     return 0
 
