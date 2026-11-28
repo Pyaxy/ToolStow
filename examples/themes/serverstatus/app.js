@@ -24,6 +24,7 @@ const els = {
   quickSwitcher: document.getElementById("quick-switcher"),
   activeToolIcon: document.getElementById("active-tool-icon"),
   activeToolName: document.getElementById("active-tool-name"),
+  activeToolVisBadge: document.getElementById("active-tool-vis-badge"),
   activeToolId: document.getElementById("active-tool-id"),
   activeToolVersion: document.getElementById("active-tool-version"),
   activeToolThemeBadge: document.getElementById("active-tool-theme-badge"),
@@ -32,6 +33,7 @@ const els = {
   toolDetailsToggle: document.getElementById("tool-details-toggle"),
   toolDetailsPanel: document.getElementById("tool-details-panel"),
   toolDetailsBackdrop: document.getElementById("tool-details-backdrop"),
+  detailsToolVisBadge: document.getElementById("details-tool-vis-badge"),
   detailsToolId: document.getElementById("details-tool-id"),
   detailsToolVersion: document.getElementById("details-tool-version"),
   detailsToolCategory: document.getElementById("details-tool-category"),
@@ -49,6 +51,48 @@ const els = {
 let statusTimer = null;
 let searchToolId = null;
 let lastActiveToolId = null;
+
+function toolVisibility(tool) {
+  if (window.ToolStowHost && typeof window.ToolStowHost.normalizeVisibility === "function") {
+    return window.ToolStowHost.normalizeVisibility(tool);
+  }
+  if (tool && (tool.visibility === "private" || tool.visibility === "draft" || tool.visibility === "public")) {
+    return tool.visibility;
+  }
+  return tool && tool.draft === true ? "draft" : "public";
+}
+
+function visibilityLabel(vis) {
+  if (vis === "private") return "私有";
+  if (vis === "draft") return "草稿";
+  return "";
+}
+
+function createVisibilityBadge(tool) {
+  const vis = toolVisibility(tool);
+  const label = visibilityLabel(vis);
+  if (!label) return null;
+  const badge = document.createElement("span");
+  badge.className = "ops-vis-badge";
+  badge.dataset.visibility = vis;
+  badge.textContent = label;
+  return badge;
+}
+
+function syncVisibilityBadge(el, tool) {
+  if (!el) return;
+  const vis = toolVisibility(tool);
+  const label = visibilityLabel(vis);
+  if (label) {
+    el.textContent = label;
+    el.dataset.visibility = vis;
+    el.hidden = false;
+  } else {
+    el.textContent = "";
+    delete el.dataset.visibility;
+    el.hidden = true;
+  }
+}
 
 function isToolDetailsOpen() {
   return Boolean(els.toolDetailsPanel && !els.toolDetailsPanel.hidden);
@@ -243,15 +287,24 @@ function renderTable(state) {
       const textWrap = document.createElement("div");
       textWrap.className = "ops-tool-cell-text";
 
+      const nameRow = document.createElement("div");
+      nameRow.className = "ops-tool-cell-head";
+
       const nameEl = document.createElement("span");
       nameEl.className = "ops-tool-cell-name";
       nameEl.textContent = tool.name;
+      nameRow.appendChild(nameEl);
+
+      const visBadge = createVisibilityBadge(tool);
+      if (visBadge) {
+        nameRow.appendChild(visBadge);
+      }
 
       const descEl = document.createElement("span");
       descEl.className = "ops-tool-cell-desc";
       descEl.textContent = tool.description || "点击打开此微工具";
 
-      textWrap.append(nameEl, descEl);
+      textWrap.append(nameRow, descEl);
       toolCell.append(dot, iconWrap, textWrap);
       tdTool.appendChild(toolCell);
 
@@ -405,6 +458,7 @@ function renderActiveToolHeader(tool, state) {
   if (!tool) return;
   window.ToolStowHost.renderIcon(els.activeToolIcon, tool, "🛠️");
   els.activeToolName.textContent = tool.name;
+  syncVisibilityBadge(els.activeToolVisBadge, tool);
   els.activeToolId.textContent = tool.id;
   els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
   els.activeToolVersion.hidden = !tool.version;
@@ -413,6 +467,7 @@ function renderActiveToolHeader(tool, state) {
   els.activeToolDesc.textContent = tool.description || "";
   els.activeToolDesc.hidden = !tool.description;
 
+  syncVisibilityBadge(els.detailsToolVisBadge, tool);
   if (els.detailsToolId) els.detailsToolId.textContent = tool.id;
   if (els.detailsToolVersion) {
     els.detailsToolVersion.textContent = tool.version ? `v${tool.version}` : "";

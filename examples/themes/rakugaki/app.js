@@ -23,6 +23,7 @@ const els = {
   quickSwitcher: document.getElementById("quick-switcher"),
   activeToolIcon: document.getElementById("active-tool-icon"),
   activeToolName: document.getElementById("active-tool-name"),
+  activeToolVisBadge: document.getElementById("active-tool-vis-badge"),
   activeToolId: document.getElementById("active-tool-id"),
   activeToolVersion: document.getElementById("active-tool-version"),
   activeToolThemeBadge: document.getElementById("active-tool-theme-badge"),
@@ -30,6 +31,7 @@ const els = {
   toolDetailsToggle: document.getElementById("tool-details-toggle"),
   toolDetailsPanel: document.getElementById("tool-details-panel"),
   detailsToolName: document.getElementById("details-tool-name"),
+  detailsToolVisBadge: document.getElementById("details-tool-vis-badge"),
   detailsToolId: document.getElementById("details-tool-id"),
   detailsToolVersion: document.getElementById("details-tool-version"),
   detailsToolThemeBadge: document.getElementById("details-tool-theme-badge"),
@@ -48,6 +50,48 @@ const els = {
 let statusTimer = null;
 let searchToolId = null;
 let lastSelectedToolId = null;
+
+function toolVisibility(tool) {
+  if (window.ToolStowHost && typeof window.ToolStowHost.normalizeVisibility === "function") {
+    return window.ToolStowHost.normalizeVisibility(tool);
+  }
+  if (tool && (tool.visibility === "private" || tool.visibility === "draft" || tool.visibility === "public")) {
+    return tool.visibility;
+  }
+  return tool && tool.draft === true ? "draft" : "public";
+}
+
+function visibilityLabel(vis) {
+  if (vis === "private") return "私有";
+  if (vis === "draft") return "草稿";
+  return "";
+}
+
+function createVisibilityBadge(tool) {
+  const vis = toolVisibility(tool);
+  const label = visibilityLabel(vis);
+  if (!label) return null;
+  const badge = document.createElement("span");
+  badge.className = "rk-vis-badge";
+  badge.dataset.visibility = vis;
+  badge.textContent = label;
+  return badge;
+}
+
+function syncVisibilityBadge(el, tool) {
+  if (!el) return;
+  const vis = toolVisibility(tool);
+  const label = visibilityLabel(vis);
+  if (label) {
+    el.textContent = label;
+    el.dataset.visibility = vis;
+    el.hidden = false;
+  } else {
+    el.textContent = "";
+    delete el.dataset.visibility;
+    el.hidden = true;
+  }
+}
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
   if (statusTimer) {
@@ -255,6 +299,10 @@ function renderToolWall(state) {
       titleEl.textContent = tool.name;
 
       titleWrap.append(iconWrap, titleEl);
+      const visBadge = createVisibilityBadge(tool);
+      if (visBadge) {
+        titleWrap.appendChild(visBadge);
+      }
 
       const verEl = document.createElement("span");
       verEl.className = "rk-mono-pill";
@@ -336,6 +384,7 @@ function renderActiveToolHeader(tool, state) {
   const themeReady = tool.themeAware === true || state.activeIframeReady;
 
   els.activeToolName.textContent = tool.name;
+  syncVisibilityBadge(els.activeToolVisBadge, tool);
   els.activeToolId.textContent = tool.id;
   els.activeToolVersion.textContent = versionText;
   els.activeToolVersion.hidden = !tool.version;
@@ -344,6 +393,7 @@ function renderActiveToolHeader(tool, state) {
   els.activeToolDesc.hidden = !tool.description;
 
   els.detailsToolName.textContent = tool.name;
+  syncVisibilityBadge(els.detailsToolVisBadge, tool);
   els.detailsToolId.textContent = tool.id;
   els.detailsToolVersion.textContent = versionText;
   els.detailsToolVersion.hidden = !tool.version;

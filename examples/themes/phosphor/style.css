@@ -559,12 +559,21 @@ button.ph-tag-pill:hover {
 .ph-tool-cell-text {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.ph-tool-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 
 .ph-tool-cell-name {
   font-weight: 700;
   color: var(--ts-ink);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -611,6 +620,52 @@ button.ph-tag-pill:hover {
   font-size: 10.5px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.ph-vis-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid var(--ts-border-strong);
+  background: var(--ts-canvas);
+  font-family: var(--ts-font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  white-space: nowrap;
+  flex-shrink: 0;
+  text-shadow: none;
+}
+
+.ph-vis-badge[hidden] {
+  display: none;
+}
+
+.ph-vis-badge[data-visibility="private"] {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  color: #bae6fd;
+}
+
+:root[data-ts-skin="ice"] .ph-vis-badge[data-visibility="private"] {
+  border-color: #c084fc;
+  background: rgba(192, 132, 252, 0.16);
+  color: #e9d5ff;
+}
+
+.ph-vis-badge[data-visibility="draft"] {
+  border-style: dashed;
+  border-color: #ffb000;
+  background: rgba(255, 176, 0, 0.14);
+  color: #fde68a;
+}
+
+:root[data-ts-skin="amber"] .ph-vis-badge[data-visibility="draft"] {
+  border-style: dashed;
+  border-color: #fb923c;
+  background: rgba(251, 146, 60, 0.16);
+  color: #fed7aa;
 }
 
 .ph-ver-cell {
@@ -956,6 +1011,7 @@ button.ph-tag-pill:hover {
     font-size: 12.5px;
   }
 
+  #active-tool-vis-badge,
   #active-tool-id,
   #active-tool-version,
   #active-tool-theme-badge,
