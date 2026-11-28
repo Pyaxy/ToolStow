@@ -308,6 +308,8 @@
     var bootstrapPromise = null;
     var refreshSeq = 0;
     var lastLoadCompletedAt = 0;
+    var resumeRefreshTimer = null;
+    var pendingResumeRefresh = false;
     var listenersBound = false;
 
     /* ---------- notifications ---------- */
@@ -890,6 +892,8 @@
 
     function loadData() {
       var seq = ++refreshSeq;
+      pendingResumeRefresh = false;
+      clearResumeRefreshTimer();
       state.loading = true;
       notify();
       return Promise.all([
@@ -906,6 +910,7 @@
         if (seq !== refreshSeq) return false; // A newer refresh superseded this one.
         var site = results[0];
         var toolsResult = results[1];
+        var prevWasAdmin = state.site.isAdmin === true;
         if (site) state.site = site;
         if (toolsResult.ok) {
           state.allTools = toolsResult.tools;
@@ -916,9 +921,28 @@
           var message =
             (toolsResult.err && toolsResult.err.message) || "无法连接到 ToolStow 服务";
           state.error = message;
+          var hasPrivateTools = state.allTools.some(function (tool) {
+            return normalizeVisibility(tool) === "private";
+          });
+          var activeIsPrivate = Boolean(
+            activeTool && normalizeVisibility(activeTool) === "private"
+          );
+          if (state.site.isAdmin !== true && (prevWasAdmin || hasPrivateTools || activeIsPrivate)) {
+            state.allTools = state.allTools.filter(function (tool) {
+              return normalizeVisibility(tool) !== "private";
+            });
+            applyFilters();
+          }
           reportError(message, toolsResult.err);
         }
         state.loading = false;
+        if (pendingResumeRefresh) {
+          if (listenersBound && isDocumentVisible() && shouldRevalidateOnResume()) {
+            scheduleTrailingResumeRefresh(50);
+          } else {
+            pendingResumeRefresh = false;
+          }
+        }
         return true;
       });
     }
@@ -958,9 +982,20 @@
             updateDocumentTitle(updatedTool);
             notify();
           }
-        } else if (!restoreToolFromHash()) {
-          updateDocumentTitle(getSelectedTool());
-          notify();
+        } else {
+          if (
+            state.activeIframe &&
+            activeTool &&
+            state.site.isAdmin !== true &&
+            normalizeVisibility(activeTool) === "private"
+          ) {
+            detachActiveIframe();
+            if (iframeHost) iframeHost.replaceChildren();
+          }
+          if (!restoreToolFromHash()) {
+            updateDocumentTitle(getSelectedTool());
+            notify();
+          }
         }
         return getState();
       });
@@ -1017,19 +1052,52 @@
       });
     }
 
+    function clearResumeRefreshTimer() {
+      if (resumeRefreshTimer !== null) {
+        try {
+          if (typeof global.clearTimeout === "function") {
+            global.clearTimeout(resumeRefreshTimer);
+          }
+        } catch (_) {
+          // Ignore timer clear errors.
+        }
+        resumeRefreshTimer = null;
+      }
+    }
+
+    function scheduleTrailingResumeRefresh(delayMs) {
+      if (!bootstrapPromise || !listenersBound) return;
+      if (resumeRefreshTimer !== null) return;
+      if (typeof global.setTimeout !== "function") return;
+      var wait = Math.max(25, Number(delayMs) || 25);
+      resumeRefreshTimer = global.setTimeout(function () {
+        resumeRefreshTimer = null;
+        if (!pendingResumeRefresh) return;
+        pendingResumeRefresh = false;
+        triggerResumeRefresh(true);
+      }, wait);
+    }
+
     function triggerResumeRefresh(force) {
-      if (!bootstrapPromise) return;
+      if (!bootstrapPromise || !listenersBound) return;
       if (!isDocumentVisible()) return;
       if (!shouldRevalidateOnResume()) return;
       if (!force) {
-        if (state.loading) return;
-        if (
-          lastLoadCompletedAt &&
-          Date.now() - lastLoadCompletedAt < RESUME_REFRESH_MIN_INTERVAL_MS
-        ) {
+        if (state.loading) {
+          pendingResumeRefresh = true;
           return;
         }
+        if (lastLoadCompletedAt) {
+          var elapsed = Date.now() - lastLoadCompletedAt;
+          if (elapsed >= 0 && elapsed < RESUME_REFRESH_MIN_INTERVAL_MS) {
+            pendingResumeRefresh = true;
+            scheduleTrailingResumeRefresh(RESUME_REFRESH_MIN_INTERVAL_MS - elapsed);
+            return;
+          }
+        }
       }
+      pendingResumeRefresh = false;
+      clearResumeRefreshTimer();
       refresh({ keepSelection: true });
     }
 
@@ -1062,6 +1130,8 @@
     }
 
     function destroy() {
+      pendingResumeRefresh = false;
+      clearResumeRefreshTimer();
       if (!listenersBound) return;
       listenersBound = false;
       global.removeEventListener("message", handleMessage);

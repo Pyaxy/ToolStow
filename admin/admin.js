@@ -1654,17 +1654,25 @@ function setHtmlSubmitting(submitting) {
 
 function updateHtmlIdHint() {
   const value = els.htmlId.value.trim();
-  const vis = els.htmlVisibility.value || "public";
+  const rawVis = els.htmlVisibility.value;
   let message = "仅限小写字母、数字与连字符，例如 my-tool";
   let kind = "info";
   if (value) {
     if (TOOL_ID_PATTERN.test(value)) {
-      if (vis === "private") {
+      if (rawVis === "private") {
         message = `✓ 格式有效 · 私有工具（仅管理员通过会话授权链接访问）`;
-      } else if (vis === "draft") {
+      } else if (rawVis === "draft") {
         message = `✓ 格式有效 · 草稿工具（暂不展示于公开目录）`;
-      } else {
+      } else if (rawVis === "public") {
         message = `✓ 格式有效 · 访问路径 /t/${value}/`;
+      } else {
+        const existing = state.tools.find((t) => t && t.id === value);
+        if (existing) {
+          const existingLabel = visibilityLabel(normalizeVisibility(existing));
+          message = `✓ 格式有效 · 同名工具已存在，覆盖时将保留原可见性（${existingLabel}）`;
+        } else {
+          message = `✓ 格式有效 · 新建默认公开（/t/${value}/），覆盖时保留原状态`;
+        }
       }
       kind = "success";
     } else {
@@ -1759,7 +1767,7 @@ function openHtmlDialog({ html = "", fileName = "", pasteMode = false } = {}) {
   els.htmlSource.value = html;
   els.htmlCategory.value = "";
   els.htmlIcon.value = DEFAULT_TOOL_ICON;
-  els.htmlVisibility.value = "public";
+  els.htmlVisibility.value = "";
   setHtmlError("");
   setHtmlSubmitting(false);
   populateCategoryOptions();
@@ -1788,17 +1796,16 @@ function resetHtmlSession() {
 
 function readHtmlPayload() {
   const session = state.html;
-  const visibility = VISIBILITY_OPTIONS.includes(els.htmlVisibility.value)
-    ? els.htmlVisibility.value
-    : "public";
   const payload = {
     id: els.htmlId.value.trim(),
     name: els.htmlName.value.trim(),
     html: session ? session.html : "",
     icon: els.htmlIcon.value.trim() || DEFAULT_TOOL_ICON,
-    visibility,
     injectSdk: els.htmlInjectSdk.checked,
   };
+  if (VISIBILITY_OPTIONS.includes(els.htmlVisibility.value)) {
+    payload.visibility = els.htmlVisibility.value;
+  }
   const description = els.htmlDesc.value.trim();
   const category = els.htmlCategory.value.trim();
   if (description) payload.description = description;
