@@ -59,6 +59,7 @@ pub struct ToolRegistry {
     tools_dir: PathBuf,
     entries: Arc<RwLock<HashMap<String, ToolEntry>>>,
     write_lock: Arc<tokio::sync::Mutex<()>>,
+    fs_lock: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl ToolRegistry {
@@ -68,6 +69,7 @@ impl ToolRegistry {
             tools_dir,
             entries: Arc::new(RwLock::new(HashMap::new())),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            fs_lock: Arc::new(tokio::sync::RwLock::new(())),
         }
     }
 
@@ -76,11 +78,41 @@ impl ToolRegistry {
         &self.tools_dir
     }
 
+    /// Executes `f` while holding an exclusive `fs_lock` write guard from synchronous code without
+    /// panicking when invoked on a Tokio runtime worker thread (e.g. startup in `main` or
+    /// `#[tokio::test]`).
+    fn with_fs_write_sync<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
+        if tokio::runtime::Handle::try_current().is_err() {
+            let _guard = self.fs_lock.blocking_write();
+            return f();
+        }
+        if let Ok(_guard) = self.fs_lock.try_write() {
+            return f();
+        }
+        thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _guard = self.fs_lock.blocking_write();
+                    f()
+                })
+                .join()
+                .expect("fs_lock acquisition thread panicked")
+        })
+    }
+
     /// Scans `tools_dir` for non-hidden tool subdirectories and rebuilds the in-memory index.
+    ///
+    /// Acquires an exclusive [`ToolRegistry::fs_lock`] write guard across both the disk scan and
+    /// the in-memory index swap so filesystem watcher reloads are strictly serialized with asset
+    /// reads and HTTP management mutations.
     ///
     /// Invalid or mismatched tool directories are logged with [`tracing::warn!`] and skipped
     /// so a single broken tool never blocks the rest of the registry.
     pub fn scan_all(&self) -> anyhow::Result<usize> {
+        self.with_fs_write_sync(|| self.scan_all_locked())
+    }
+
+    fn scan_all_locked(&self) -> anyhow::Result<usize> {
         fs::create_dir_all(&self.tools_dir).with_context(|| {
             format!(
                 "failed to ensure tools directory '{}'",
@@ -302,6 +334,15 @@ impl ToolRegistry {
     /// Returns the shared async mutex serializing disk mutations (upload / delete) on `tools_dir`.
     pub fn write_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
         Arc::clone(&self.write_lock)
+    }
+
+    /// Returns the shared async read-write lock binding visibility authorization and static asset
+    /// reads to the same published tool version across uploads, patches, deletes, and watcher scans.
+    ///
+    /// Lock ordering invariant: whenever both are acquired, `write_lock` MUST be acquired before
+    /// `fs_lock`, and `fs_lock` before the internal `entries` lock.
+    pub fn fs_lock(&self) -> Arc<tokio::sync::RwLock<()>> {
+        Arc::clone(&self.fs_lock)
     }
 
     /// Starts a debounced filesystem watcher on `tools_dir` that hot-reloads the registry.
@@ -819,5 +860,53 @@ mod tests {
             ids(registry.list_with_visibility(Some("tool"), Some("dev"), Some("util"), true, true)),
             vec!["draft-tool", "private-tool", "public-tool"]
         );
+    }
+
+    #[test]
+    fn scan_all_waits_for_active_fs_lock_readers_and_completes_cleanly() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+        let registry = Arc::new(ToolRegistry::new(tools_dir.clone()));
+
+        create_tool(
+            &tools_dir,
+            "sync-tool",
+            r#"{"id":"sync-tool","name":"Sync Tool","visibility":"public"}"#,
+            "<h1>v1</h1>",
+        );
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async {
+            // Acquire a shared read guard as an asset handler would.
+            let read_guard = registry.fs_lock().read_owned().await;
+
+            // Spawn scan_all on a separate OS thread (like the filesystem watcher).
+            let reg_for_scan = Arc::clone(&registry);
+            let (done_tx, done_rx) = mpsc::channel();
+            let scan_thread = thread::spawn(move || {
+                let count = reg_for_scan.scan_all().unwrap();
+                done_tx.send(count).unwrap();
+            });
+
+            // While the read guard is held, scan_all must not complete its exclusive swap.
+            assert!(
+                done_rx.recv_timeout(Duration::from_millis(80)).is_err(),
+                "scan_all should wait while an fs_lock reader is active"
+            );
+
+            // Releasing the read guard unblocks scan_all cleanly with no deadlock.
+            drop(read_guard);
+            let count = done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("scan_all should complete after read guard drops");
+            assert_eq!(count, 1);
+            scan_thread.join().unwrap();
+            assert!(registry.get("sync-tool").is_some());
+        });
     }
 }

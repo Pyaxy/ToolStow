@@ -335,6 +335,17 @@ pub fn load_and_validate_manifest(
     tool_dir: &Path,
     expected_dir_name: Option<&str>,
 ) -> Result<ToolEntry, AppError> {
+    load_and_validate_manifest_with_source(tool_dir, expected_dir_name).map(|(entry, _)| entry)
+}
+
+/// Loads, validates, and normalizes `manifest.json` inside `tool_dir`, also returning whether
+/// the raw manifest explicitly declared `visibility` or legacy `draft`.
+///
+/// The returned `bool` (`has_explicit_visibility`) is `true` iff `raw.visibility.is_some() || raw.draft.is_some()`.
+pub fn load_and_validate_manifest_with_source(
+    tool_dir: &Path,
+    expected_dir_name: Option<&str>,
+) -> Result<(ToolEntry, bool), AppError> {
     let manifest_path = tool_dir.join("manifest.json");
     let manifest_meta = fs::symlink_metadata(&manifest_path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -459,27 +470,31 @@ pub fn load_and_validate_manifest(
 
     let theme_aware = raw.theme_aware.unwrap_or(false);
     let sandbox = sanitize_sandbox(raw.sandbox.as_deref());
+    let has_explicit_visibility = raw.visibility.is_some() || raw.draft.is_some();
     let visibility = resolve_visibility(raw.visibility.as_deref(), raw.draft)?;
     let draft = visibility == Visibility::Draft;
 
-    Ok(ToolEntry {
-        id: raw.id,
-        name,
-        version,
-        description,
-        category,
-        tags,
-        icon,
-        icon_is_path,
-        icon_url,
-        entry,
-        entry_url,
-        runtime: runtime.to_string(),
-        theme_aware,
-        sandbox,
-        visibility,
-        draft,
-    })
+    Ok((
+        ToolEntry {
+            id: raw.id,
+            name,
+            version,
+            description,
+            category,
+            tags,
+            icon,
+            icon_is_path,
+            icon_url,
+            entry,
+            entry_url,
+            runtime: runtime.to_string(),
+            theme_aware,
+            sandbox,
+            visibility,
+            draft,
+        },
+        has_explicit_visibility,
+    ))
 }
 
 /// Converts a validated relative `Path` into a `/` separated string.
@@ -1023,6 +1038,58 @@ mod tests {
                 "UNPROCESSABLE_ENTITY",
                 "for {manifest_json}"
             );
+        }
+    }
+
+    #[test]
+    fn load_manifest_with_source_tracks_explicit_visibility_declaration() {
+        let cases = [
+            (r#"{"id":"t","name":"T"}"#, Visibility::Public, false),
+            (
+                r#"{"id":"t","name":"T","visibility":null,"draft":null}"#,
+                Visibility::Public,
+                false,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"public"}"#,
+                Visibility::Public,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"private"}"#,
+                Visibility::Private,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"draft"}"#,
+                Visibility::Draft,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","draft":false}"#,
+                Visibility::Public,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","draft":true}"#,
+                Visibility::Draft,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"draft","draft":true}"#,
+                Visibility::Draft,
+                true,
+            ),
+        ];
+
+        for (manifest_json, expected_vis, expected_explicit) in cases {
+            let dir = TempDir::new().unwrap();
+            write_file(dir.path(), "manifest.json", manifest_json);
+            write_file(dir.path(), "index.html", "<h1>ok</h1>");
+            let (entry, has_explicit) =
+                load_and_validate_manifest_with_source(dir.path(), Some("t")).unwrap();
+            assert_eq!(entry.visibility, expected_vis, "for {manifest_json}");
+            assert_eq!(has_explicit, expected_explicit, "for {manifest_json}");
         }
     }
 }

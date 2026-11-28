@@ -3161,6 +3161,7 @@ async fn healthz_returns_ok_and_cannot_be_shadowed_by_custom_theme() {
         json!({
             "status": "ok",
             "version": env!("CARGO_PKG_VERSION"),
+            "capabilities": ["tool-visibility"],
         })
     );
 }
@@ -5133,4 +5134,332 @@ async fn admin_visibility_filters_patch_and_single_html_or_zip_import_contracts(
     .unwrap();
     assert_eq!(migrated_disk["visibility"], "private");
     assert!(migrated_disk.get("draft").is_none());
+}
+
+#[tokio::test]
+async fn overwrite_without_visibility_preserves_private_and_draft_and_writes_compat_draft() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 50, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    // 1. Install a private ZIP tool via Bearer API key
+    let v1_priv_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"keep-vis-zip","name":"Keep Vis v1","version":"1.0.0","visibility":"private"}"#,
+        ),
+        ("index.html", b"<h1>v1 private</h1>"),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&v1_priv_zip, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 2. Upload v2 ZIP omitting both `visibility` and `draft` with ?overwrite=false -> 409 incoming reflects `private`
+    let v2_omitted_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"keep-vis-zip","name":"Keep Vis v2","version":"2.0.0"}"#,
+        ),
+        ("index.html", b"<h1>v2 updated</h1>"),
+    ]);
+    let mut conflict_req = admin_upload_request_base(&v2_omitted_zip);
+    *conflict_req.uri_mut() = "/api/admin/tools/upload?overwrite=false".parse().unwrap();
+    conflict_req
+        .headers_mut()
+        .insert(AUTHORIZATION, format!("Bearer {API_KEY}").parse().unwrap());
+    let conflict_resp = env.app.clone().oneshot(conflict_req).await.unwrap();
+    assert_eq!(conflict_resp.status(), StatusCode::CONFLICT);
+    let conflict_json = read_body_json(conflict_resp).await;
+    assert_eq!(conflict_json["existing"]["visibility"], "private");
+    assert_eq!(conflict_json["incoming"]["visibility"], "private");
+    assert_eq!(conflict_json["incoming"]["draft"], false);
+
+    // 3. Overwrite v2 ZIP (default overwrite=true) -> 200 OK, remains `private` in registry & on disk, still hidden from anonymous
+    let overwrite_resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&v2_omitted_zip, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(overwrite_resp.status(), StatusCode::OK);
+    let overwritten = read_body_json(overwrite_resp).await;
+    assert_eq!(overwritten["visibility"], "private");
+    assert_eq!(overwritten["draft"], false);
+    assert_eq!(overwritten["version"], "2.0.0");
+
+    let disk_priv: Value = serde_json::from_str(
+        &fs::read_to_string(env.tools_dir.join("keep-vis-zip/manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(disk_priv["visibility"], "private");
+    assert!(disk_priv.get("draft").is_none());
+
+    let anon_get = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/keep-vis-zip/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anon_get.status(), StatusCode::NOT_FOUND);
+
+    // 4. Patch to `draft` -> disk writes BOTH `"visibility": "draft"` AND `"draft": true`
+    let patch_draft_resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/admin/tools/keep-vis-zip")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "visibility": "draft" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch_draft_resp.status(), StatusCode::OK);
+    let disk_draft: Value = serde_json::from_str(
+        &fs::read_to_string(env.tools_dir.join("keep-vis-zip/manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(disk_draft["visibility"], "draft");
+    assert_eq!(disk_draft["draft"], true);
+
+    // Overwrite draft ZIP with omitted visibility -> still `draft` with `"draft": true` on disk
+    let overwrite_draft_resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&v2_omitted_zip, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(overwrite_draft_resp.status(), StatusCode::OK);
+    let overwritten_draft = read_body_json(overwrite_draft_resp).await;
+    assert_eq!(overwritten_draft["visibility"], "draft");
+    assert_eq!(overwritten_draft["draft"], true);
+    let disk_draft2: Value = serde_json::from_str(
+        &fs::read_to_string(env.tools_dir.join("keep-vis-zip/manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(disk_draft2["visibility"], "draft");
+    assert_eq!(disk_draft2["draft"], true);
+
+    // 5. Explicit `"visibility": "public"` in ZIP changes it back to public
+    let v3_public_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"keep-vis-zip","name":"Keep Vis v3","version":"3.0.0","visibility":"public"}"#,
+        ),
+        ("index.html", b"<h1>v3 public</h1>"),
+    ]);
+    let explicit_pub_resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&v3_public_zip, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(explicit_pub_resp.status(), StatusCode::OK);
+    let explicit_pub = read_body_json(explicit_pub_resp).await;
+    assert_eq!(explicit_pub["visibility"], "public");
+    assert_eq!(explicit_pub["draft"], false);
+
+    // 6. Single-HTML import: create private, overwrite omitting visibility/draft -> preserves private
+    let html_create = json!({
+        "id": "keep-vis-html",
+        "name": "Keep HTML v1",
+        "html": "<h1>HTML v1 private</h1>",
+        "visibility": "private",
+        "injectSdk": false
+    });
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(HOST, "127.0.0.1:8080")
+                .header(ORIGIN, "http://127.0.0.1:8080")
+                .header("x-toolstow-client", "1")
+                .header(COOKIE, &cookie)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_create.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let html_update_omitted = json!({
+        "id": "keep-vis-html",
+        "name": "Keep HTML v2",
+        "html": "<h1>HTML v2 updated</h1>",
+        "injectSdk": false
+    });
+    // 6a. 409 Conflict incoming inherits `private`
+    let html_conflict = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_update_omitted.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(html_conflict.status(), StatusCode::CONFLICT);
+    let html_conflict_json = read_body_json(html_conflict).await;
+    assert_eq!(html_conflict_json["existing"]["visibility"], "private");
+    assert_eq!(html_conflict_json["incoming"]["visibility"], "private");
+
+    // 6b. ?overwrite=true preserves `private`
+    let html_overwrite = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_update_omitted.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(html_overwrite.status(), StatusCode::OK);
+    let html_overwritten_json = read_body_json(html_overwrite).await;
+    assert_eq!(html_overwritten_json["visibility"], "private");
+    assert_eq!(html_overwritten_json["draft"], false);
+
+    // 6c. Patch to draft, then single-HTML overwrite omitting visibility -> preserves draft + `"draft": true`
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/admin/tools/keep-vis-html")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "visibility": "draft" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let html_overwrite_draft = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_update_omitted.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(html_overwrite_draft.status(), StatusCode::OK);
+    let html_draft_json = read_body_json(html_overwrite_draft).await;
+    assert_eq!(html_draft_json["visibility"], "draft");
+    assert_eq!(html_draft_json["draft"], true);
+    let html_disk_draft: Value = serde_json::from_str(
+        &fs::read_to_string(env.tools_dir.join("keep-vis-html/manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(html_disk_draft["visibility"], "draft");
+    assert_eq!(html_disk_draft["draft"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reads_during_visibility_overwrite_never_leak_private_body_or_deadlock() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 50, false, false);
+
+    let public_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"race-tool","name":"Race Tool","visibility":"public"}"#,
+        ),
+        ("index.html", b"PUBLIC-CONTENT-ONLY"),
+    ]);
+    let private_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"race-tool","name":"Race Tool","visibility":"private"}"#,
+        ),
+        ("index.html", b"TOP-SECRET-PRIVATE-PAYLOAD"),
+    ]);
+
+    // Seed initial public tool
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&public_zip, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut reader_handles = Vec::new();
+    for _ in 0..4 {
+        let app = env.app.clone();
+        let stop_flag = std::sync::Arc::clone(&stop);
+        reader_handles.push(tokio::spawn(async move {
+            while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                let resp = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri("/t/race-tool/index.html")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                match resp.status() {
+                    StatusCode::OK => {
+                        let body = read_body_bytes(resp).await;
+                        assert_eq!(
+                            body, b"PUBLIC-CONTENT-ONLY",
+                            "anonymous 200 OK must NEVER observe private file contents"
+                        );
+                    }
+                    StatusCode::NOT_FOUND => {}
+                    other => panic!("unexpected status during concurrent read: {other}"),
+                }
+            }
+        }));
+    }
+
+    // Repeatedly overwrite public <-> private while readers hammer `/t/race-tool/index.html`.
+    for i in 0..16 {
+        let zip = if i % 2 == 0 { &private_zip } else { &public_zip };
+        let resp = env
+            .app
+            .clone()
+            .oneshot(bearer_upload_request(zip, API_KEY))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for handle in reader_handles {
+        handle.await.unwrap();
+    }
 }

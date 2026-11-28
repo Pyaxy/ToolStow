@@ -101,6 +101,7 @@ struct AdminListToolsQuery {
 struct HealthResponse {
     status: &'static str,
     version: &'static str,
+    capabilities: &'static [&'static str],
 }
 
 /// JSON response payload for `GET /api/me`.
@@ -574,7 +575,47 @@ pub fn build_router(state: AppState) -> Router {
         // Decoupled public theme / embedded frontend fallback
         .fallback(serve_frontend_fallback)
         .with_state(state)
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |request: &axum::http::Request<_>| {
+                let redacted_uri = redact_uri_for_log(request.uri());
+                tracing::info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    uri = %redacted_uri,
+                    version = ?request.version()
+                )
+            },
+        ))
+}
+
+/// Redacts the capability grant segment from `/tp/{grant}/...` URIs before logging so
+/// session-bound read-only tool grants never leak into HTTP trace logs.
+pub(crate) fn redact_uri_for_log(uri: &Uri) -> String {
+    let path = uri.path();
+    let Some(rest) = path.strip_prefix("/tp/") else {
+        return uri.to_string();
+    };
+    if rest.is_empty() {
+        return uri.to_string();
+    }
+
+    let mut out = String::with_capacity(uri.to_string().len());
+    if let Some(scheme) = uri.scheme_str() {
+        out.push_str(scheme);
+        out.push_str("://");
+    }
+    if let Some(authority) = uri.authority() {
+        out.push_str(authority.as_str());
+    }
+    out.push_str("/tp/[REDACTED]");
+    if let Some(slash_idx) = rest.find('/') {
+        out.push_str(&rest[slash_idx..]);
+    }
+    if let Some(query) = uri.query() {
+        out.push('?');
+        out.push_str(query);
+    }
+    out
 }
 
 /// Resolves the currently active disk-installed theme off the async executor thread.
@@ -1150,13 +1191,15 @@ async fn read_optional_theme_ui_override(theme_dir: &Path) -> Result<Option<Vec<
     Ok(Some(bytes))
 }
 
-/// `GET /healthz`: returns server liveness and compiled crate version with `no-store` caching.
+/// `GET /healthz`: returns server liveness, compiled crate version, and advertised capabilities
+/// with `no-store` caching.
 async fn healthz() -> Response {
     no_store_json(
         StatusCode::OK,
         HealthResponse {
             status: "ok",
             version: env!("CARGO_PKG_VERSION"),
+            capabilities: &["tool-visibility"],
         },
     )
 }
@@ -1564,22 +1607,33 @@ async fn upload_tool(
     let zip_bytes = extract_uploaded_zip_bytes(multipart, max_upload_bytes, max_upload_mb).await?;
 
     let _write_guard = state.registry.write_lock().lock_owned().await;
-    let tools_dir = state.registry.tools_dir().to_path_buf();
+    let registry = Arc::clone(&state.registry);
+    let tools_dir = registry.tools_dir().to_path_buf();
     let limits = ArchiveLimits {
         max_zip_bytes: max_upload_bytes,
         ..ArchiveLimits::default()
     };
 
     let outcome = tokio::task::spawn_blocking(move || {
-        archive::install_zip_bytes_checked(&tools_dir, &zip_bytes, limits, allow_overwrite)
+        archive::install_zip_bytes_checked_with_commit(
+            &tools_dir,
+            &zip_bytes,
+            limits,
+            allow_overwrite,
+            |entry, install_fn| {
+                let fs_lock = registry.fs_lock();
+                let _fs_write = fs_lock.blocking_write();
+                let updated = install_fn()?;
+                registry.upsert(entry.clone());
+                Ok(updated)
+            },
+        )
     })
     .await
     .map_err(|err| AppError::internal(format!("archive install task failed: {err}")))??;
 
     match outcome {
         archive::InstallOutcome::Installed(result) => {
-            state.registry.upsert(result.entry.clone());
-
             let status = if result.updated {
                 StatusCode::OK
             } else {
@@ -1635,7 +1689,14 @@ async fn upload_single_html_tool(
         }
     })?;
 
-    let visibility = manifest::resolve_visibility(body.visibility.as_deref(), body.draft)?;
+    let visibility = if body.visibility.is_none() && body.draft.is_none() {
+        None
+    } else {
+        Some(manifest::resolve_visibility(
+            body.visibility.as_deref(),
+            body.draft,
+        )?)
+    };
 
     let input = SingleHtmlToolInput {
         id: body.id,
@@ -1650,22 +1711,33 @@ async fn upload_single_html_tool(
     };
 
     let _write_guard = state.registry.write_lock().lock_owned().await;
-    let tools_dir = state.registry.tools_dir().to_path_buf();
+    let registry = Arc::clone(&state.registry);
+    let tools_dir = registry.tools_dir().to_path_buf();
     let limits = ArchiveLimits {
         max_zip_bytes: max_upload_bytes,
         ..ArchiveLimits::default()
     };
 
     let outcome = tokio::task::spawn_blocking(move || {
-        archive::install_single_html_checked(&tools_dir, input, limits, allow_overwrite)
+        archive::install_single_html_checked_with_commit(
+            &tools_dir,
+            input,
+            limits,
+            allow_overwrite,
+            |entry, install_fn| {
+                let fs_lock = registry.fs_lock();
+                let _fs_write = fs_lock.blocking_write();
+                let updated = install_fn()?;
+                registry.upsert(entry.clone());
+                Ok(updated)
+            },
+        )
     })
     .await
     .map_err(|err| AppError::internal(format!("single-HTML install task failed: {err}")))??;
 
     match outcome {
         archive::InstallOutcome::Installed(result) => {
-            state.registry.upsert(result.entry.clone());
-
             let status = if result.updated {
                 StatusCode::OK
             } else {
@@ -1771,16 +1843,19 @@ async fn patch_tool(
     let visibility = manifest::resolve_visibility(body.visibility.as_deref(), body.draft)?;
 
     let _write_guard = state.registry.write_lock().lock_owned().await;
-    let tools_dir = state.registry.tools_dir().to_path_buf();
+    let registry = Arc::clone(&state.registry);
     let id_for_task = id.clone();
 
     let updated = tokio::task::spawn_blocking(move || {
-        archive::set_tool_visibility(&tools_dir, &id_for_task, visibility)
+        let fs_lock = registry.fs_lock();
+        let _fs_write = fs_lock.blocking_write();
+        let updated =
+            archive::set_tool_visibility(registry.tools_dir(), &id_for_task, visibility)?;
+        registry.upsert(updated.clone());
+        Ok::<ToolEntry, AppError>(updated)
     })
     .await
     .map_err(|err| AppError::internal(format!("update tool visibility task failed: {err}")))??;
-
-    state.registry.upsert(updated.clone());
 
     let mut resp_entry = updated;
     if auth.is_admin_session() {
@@ -1803,15 +1878,18 @@ async fn delete_tool(
     manifest::validate_id(&id)?;
 
     let _write_guard = state.registry.write_lock().lock_owned().await;
-    let tools_dir = state.registry.tools_dir().to_path_buf();
+    let registry = Arc::clone(&state.registry);
     let id_for_task = id.clone();
 
-    let removed_from_disk =
-        tokio::task::spawn_blocking(move || archive::delete_tool_dir(&tools_dir, &id_for_task))
-            .await
-            .map_err(|err| AppError::internal(format!("delete tool task failed: {err}")))??;
-
-    let removed_from_registry = state.registry.remove(&id).is_some();
+    let (removed_from_disk, removed_from_registry) = tokio::task::spawn_blocking(move || {
+        let fs_lock = registry.fs_lock();
+        let _fs_write = fs_lock.blocking_write();
+        let removed_from_disk = archive::delete_tool_dir(registry.tools_dir(), &id_for_task)?;
+        let removed_from_registry = registry.remove(&id_for_task).is_some();
+        Ok::<(bool, bool), AppError>((removed_from_disk, removed_from_registry))
+    })
+    .await
+    .map_err(|err| AppError::internal(format!("delete tool task failed: {err}")))??;
 
     if removed_from_disk || removed_from_registry {
         Ok(StatusCode::NO_CONTENT)
@@ -1868,14 +1946,18 @@ async fn redirect_tool_entry(
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Response, AppError> {
-    let entry = state
-        .registry
-        .get(&id)
-        .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+    let entry = {
+        let _fs_read = state.registry.fs_lock().read_owned().await;
+        let entry = state
+            .registry
+            .get(&id)
+            .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
-    if !can_access_tool_via_session(&state, &headers, &entry) {
-        return Err(AppError::not_found(format!("tool '{id}' not found")));
-    }
+        if !can_access_tool_via_session(&state, &headers, &entry) {
+            return Err(AppError::not_found(format!("tool '{id}' not found")));
+        }
+        entry
+    };
 
     let mut resp = Redirect::temporary(&entry.entry_url).into_response();
     if entry.visibility != Visibility::Public {
@@ -1898,6 +1980,7 @@ async fn serve_tool_asset(
     headers: HeaderMap,
     AxumPath((id, path)): AxumPath<(String, String)>,
 ) -> Result<Response, AppError> {
+    let fs_read = state.registry.fs_lock().read_owned().await;
     let entry = state
         .registry
         .get(&id)
@@ -1907,7 +1990,14 @@ async fn serve_tool_asset(
         return Err(AppError::not_found(format!("tool '{id}' not found")));
     }
 
-    serve_tool_asset_for_entry(&state, &entry, &path, ToolAssetCacheMode::SessionScoped).await
+    serve_tool_asset_for_entry(
+        &state,
+        &entry,
+        &path,
+        ToolAssetCacheMode::SessionScoped,
+        fs_read,
+    )
+    .await
 }
 
 /// `GET /tp/{grant}/{id}` and `GET /tp/{grant}/{id}/`: validates a session-bound read-only tool
@@ -1920,10 +2010,13 @@ async fn redirect_granted_tool_entry(
         return Err(AppError::not_found(format!("tool '{id}' not found")));
     }
 
-    let entry = state
-        .registry
-        .get(&id)
-        .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+    let entry = {
+        let _fs_read = state.registry.fs_lock().read_owned().await;
+        state
+            .registry
+            .get(&id)
+            .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?
+    };
 
     let target = format!("/tp/{grant}/{}/{}", entry.id, entry.entry);
     let mut resp = Redirect::temporary(&target).into_response();
@@ -1947,22 +2040,35 @@ async fn serve_granted_tool_asset(
         return Err(AppError::not_found(format!("tool '{id}' not found")));
     }
 
+    let fs_read = state.registry.fs_lock().read_owned().await;
     let entry = state
         .registry
         .get(&id)
         .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
-    serve_tool_asset_for_entry(&state, &entry, &path, ToolAssetCacheMode::GrantScoped).await
+    serve_tool_asset_for_entry(
+        &state,
+        &entry,
+        &path,
+        ToolAssetCacheMode::GrantScoped,
+        fs_read,
+    )
+    .await
 }
 
 /// Shared asset serving helper enforcing safe relative path validation, canonical containment,
 /// `Content-Security-Policy: sandbox` (never `allow-same-origin`), and visibility-appropriate
 /// caching/privacy headers.
+///
+/// Holds `fs_read` across canonicalization, metadata checks, and `tokio::fs::read` so visibility
+/// authorization and disk reads are bound to the same published tool version, then drops `fs_read`
+/// before building the HTTP response.
 async fn serve_tool_asset_for_entry(
     state: &AppState,
     entry: &ToolEntry,
     path: &str,
     cache_mode: ToolAssetCacheMode,
+    fs_read: tokio::sync::OwnedRwLockReadGuard<()>,
 ) -> Result<Response, AppError> {
     let rel_path = manifest::validate_safe_rel_path(path)
         .map_err(|err| AppError::bad_request(err.to_string()))?;
@@ -2017,6 +2123,9 @@ async fn serve_tool_asset_for_entry(
             AppError::internal(format!("failed to read tool asset: {err}"))
         }
     })?;
+
+    // Release the shared filesystem read guard before constructing and returning the response.
+    drop(fs_read);
 
     let content_type = content_type_for_path(&canonical_target);
 
@@ -2289,5 +2398,35 @@ mod tests {
             "forwarded",
             "for=192.0.2.60;proto=http",
         )])));
+    }
+
+    #[test]
+    fn redact_uri_for_log_masks_tp_grant_and_preserves_other_uris() {
+        let cases = [
+            (
+                "/tp/secret-grant-token/my-tool/index.html?theme=dark",
+                "/tp/[REDACTED]/my-tool/index.html?theme=dark",
+            ),
+            ("/tp/secret-grant-token/my-tool", "/tp/[REDACTED]/my-tool"),
+            ("/tp/secret-grant-token/", "/tp/[REDACTED]/"),
+            ("/tp/secret-grant-token", "/tp/[REDACTED]"),
+            (
+                "/tp/secret-grant-token?foo=1&bar=2",
+                "/tp/[REDACTED]?foo=1&bar=2",
+            ),
+            (
+                "https://tools.example.com/tp/secret-grant/my-tool/app.js?v=1",
+                "https://tools.example.com/tp/[REDACTED]/my-tool/app.js?v=1",
+            ),
+            ("/tp/", "/tp/"),
+            ("/t/my-tool/index.html?theme=dark", "/t/my-tool/index.html?theme=dark"),
+            ("/api/tools?q=tp", "/api/tools?q=tp"),
+            ("/healthz", "/healthz"),
+        ];
+
+        for (raw, expected) in cases {
+            let uri: Uri = raw.parse().unwrap();
+            assert_eq!(redact_uri_for_log(&uri), expected, "for uri {raw}");
+        }
     }
 }
