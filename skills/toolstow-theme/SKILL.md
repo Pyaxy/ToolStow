@@ -508,6 +508,8 @@ Key `ToolStowHost` static helpers & instance methods:
 
 Themes can pass `onSearchShortcut` to `ToolStowHost.create()` to receive `Cmd/Ctrl+K` from the focused tool iframe. Tools using the shared `theme.js` forward this shortcut after their own document-level handlers. Keep a visible search trigger when offering this shortcut so tools with their own keyboard handling remain usable.
 
+`ToolStowHost` also automatically revalidates the admin session and tool visibility whenever the tab returns to foreground/focus, clearing revoked `private` tools and their mounted iframes after logout without reloading still-authorized tools.
+
 ---
 
 ### 7.1 Stylesheet Load Order & Anti-FOUC `<head>` Bootstrap (Raw Contract Details)

@@ -8,12 +8,14 @@ to replace an existing tool with the same manifest.id.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -59,6 +61,143 @@ def resolve_tool_visibility(tool_obj: object) -> str:
         if tool_obj.get("draft") is True:
             return "draft"
     return "public"
+
+
+MAX_INSPECT_MANIFEST_BYTES = 5 * 1024 * 1024  # 5 MiB safety cap when inspecting .zip
+
+
+def read_manifest_from_dir(tool_dir: Path) -> Optional[Dict[str, object]]:
+    manifest_path = tool_dir / "manifest.json"
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def read_manifest_from_zip(zip_bytes: bytes) -> Optional[Dict[str, object]]:
+    """Inspect a .zip archive in memory and return its parsed manifest.json object, if found.
+
+    Supports both flat archives (`manifest.json` at root) and single top-level wrapper
+    folder archives (`<dir>/manifest.json`), ignoring macOS `__MACOSX/` and `.DS_Store` junk.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes), "r")
+    except zipfile.BadZipFile:
+        return None
+
+    with zf:
+        entries: List[Tuple[List[str], zipfile.ZipInfo]] = []
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            normalized = info.filename.replace("\\", "/")
+            parts = [p for p in normalized.split("/") if p and p != "."]
+            if not parts or ".." in parts:
+                continue
+            if parts[0] == "__MACOSX" or parts[-1] == ".DS_Store" or parts[-1].startswith("._"):
+                continue
+            entries.append((parts, info))
+
+        manifest_info: Optional[zipfile.ZipInfo] = None
+        for parts, info in entries:
+            if parts == ["manifest.json"]:
+                manifest_info = info
+                break
+
+        if manifest_info is None and entries and all(len(parts) >= 2 for parts, _ in entries):
+            top_dirs = {parts[0] for parts, _ in entries}
+            if len(top_dirs) == 1:
+                only_top = next(iter(top_dirs))
+                for parts, info in entries:
+                    if parts == [only_top, "manifest.json"]:
+                        manifest_info = info
+                        break
+
+        if manifest_info is None or manifest_info.file_size > MAX_INSPECT_MANIFEST_BYTES:
+            return None
+
+        try:
+            raw_bytes = zf.read(manifest_info)
+            raw = json.loads(raw_bytes.decode("utf-8-sig"))
+        except (KeyError, RuntimeError, zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return raw if isinstance(raw, dict) else None
+
+
+def manifest_requires_visibility_support(
+    manifest: Optional[Dict[str, object]],
+) -> Tuple[bool, str]:
+    """Return (requires_visibility_support, resolved_visibility).
+
+    Legacy ToolStow servers (<= v0.3.5) ignore `"visibility"` and only inspect `"draft": true`,
+    so uploading a `"private"` tool or a visibility-only `"draft"` tool (without `"draft": true`)
+    would silently publish it as `public`.
+    """
+    resolved = resolve_tool_visibility(manifest)
+    if resolved == "private":
+        return True, resolved
+    if resolved == "draft" and not (isinstance(manifest, dict) and manifest.get("draft") is True):
+        return True, resolved
+    return False, resolved
+
+
+def check_server_visibility_capability(base_url: str, timeout: int, visibility: str) -> bool:
+    """Verify GET /healthz advertises `"tool-visibility"` before uploading sensitive visibility."""
+    health_url = f"{base_url}/healthz"
+    req = urllib.request.Request(
+        health_url,
+        method="GET",
+        headers={"Accept": "application/json"},
+    )
+    detected_version: Optional[str] = None
+    failure_detail: Optional[str] = None
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw_body = resp.read().decode("utf-8", errors="replace")
+        health = json.loads(raw_body)
+        if isinstance(health, dict):
+            ver = health.get("version")
+            if isinstance(ver, str) and ver.strip():
+                detected_version = ver.strip()
+            caps = health.get("capabilities")
+            if isinstance(caps, list) and "tool-visibility" in caps:
+                return True
+            failure_detail = "/healthz does not advertise capability 'tool-visibility'"
+        else:
+            failure_detail = "/healthz returned non-object JSON"
+    except urllib.error.HTTPError as exc:
+        failure_detail = f"GET /healthz returned HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        failure_detail = f"failed to reach {health_url}: {exc.reason}"
+    except (TimeoutError, OSError) as exc:
+        failure_detail = f"failed to reach {health_url}: {exc}"
+    except json.JSONDecodeError:
+        failure_detail = "GET /healthz returned invalid JSON"
+
+    pkg_desc = (
+        "visibility='private'"
+        if visibility == "private"
+        else "visibility='draft' (without legacy 'draft': true)"
+    )
+    ver_note = f" (detected server version: {detected_version})" if detected_version else ""
+    print(
+        f"ERROR: aborting upload before sending package: target server at {base_url}{ver_note} "
+        f"does not report 3-state visibility support ({failure_detail}).",
+        file=sys.stderr,
+    )
+    print(
+        f"  Refusing to upload a {pkg_desc} package because legacy ToolStow servers (<= v0.3.5) "
+        "ignore 'visibility' and would silently expose this tool as 'public'.",
+        file=sys.stderr,
+    )
+    print(
+        "  Upgrade the ToolStow server to a version advertising 'tool-visibility' in /healthz "
+        "before uploading.",
+        file=sys.stderr,
+    )
+    return False
 
 
 def encode_multipart_file(field_name: str, filename: str, payload: bytes) -> Tuple[bytes, str]:
@@ -154,6 +293,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     max_bytes = int(args.max_mb * 1024 * 1024)
 
+    manifest_obj: Optional[Dict[str, object]] = None
+
     if args.target.is_dir():
         res = validate_tool_dir(
             args.target,
@@ -164,6 +305,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not print_result(res, strict=args.strict):
             return 1
         assert res.tool_id is not None
+        manifest_obj = read_manifest_from_dir(args.target)
         filename = f"{res.tool_id}.zip"
         try:
             zip_bytes, _ = build_tool_zip_bytes(args.target, max_zip_bytes=max_bytes)
@@ -178,12 +320,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        manifest_obj = read_manifest_from_zip(zip_bytes)
         filename = args.target.name
     else:
         print(
             f"ERROR: target must be a tool directory or .zip file: {args.target}",
             file=sys.stderr,
         )
+        return 1
+
+    requires_visibility_support, resolved_visibility = manifest_requires_visibility_support(
+        manifest_obj
+    )
+    if requires_visibility_support and not check_server_visibility_capability(
+        base_url, args.timeout, resolved_visibility
+    ):
         return 1
 
     overwrite_flag = "true" if args.overwrite else "false"

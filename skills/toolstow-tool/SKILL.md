@@ -10,7 +10,7 @@ Use this skill whenever generating, validating, packaging, or publishing a self-
 > **Companion scripts** live right inside this skill directory under `scripts/` (zero external dependencies, Python 3.9+ stdlib only):
 > - `scripts/validate.py <tool_dir>` — validate `manifest.json`, sandbox/XSS hygiene, `/ui/v1/*` SDK usage, archive limits, and JS syntax (`node --check` when available).
 > - `scripts/pack.py <tool_dir> [-o out.zip]` — run full validation and build a clean flat `.zip` (no `.DS_Store`, `__MACOSX`, `.git`, or symlinks).
-> - `scripts/publish.py <tool_dir> [--overwrite]` — validate, pack in memory, and upload via `Authorization: Bearer $TOOLSTOW_API_KEY` (defaults to `?overwrite=false` to prevent accidental overwrites).
+> - `scripts/publish.py <tool_dir> [--overwrite]` — validate, pack in memory, pre-check `/healthz` capabilities for `private` or visibility-only `draft` packages, and upload via `Authorization: Bearer $TOOLSTOW_API_KEY` (defaults to `?overwrite=false` to prevent accidental overwrites).
 
 ---
 
@@ -129,7 +129,7 @@ Full example:
 | `icon` | `string` | No | `"🛠️"` | Emoji string, or a safe relative image path inside the tool directory (e.g. `"assets/icon.svg"`). Must exist if path-like. |
 | `entry` | `string` | No | `"index.html"` | Safe relative path to an existing regular HTML file (no leading `/`, `..`, `\`, or URL scheme). |
 | `runtime` | `"static"` | No | `"static"` | Only `"static"` is currently supported. Declaring `"script"` is rejected. |
-| `visibility` | `"public" \| "private" \| "draft"` | No | `"public"` | 3-state visibility: **`"public"`** is visible to everyone on `/` and `/t/{id}/*`; **`"private"`** is hidden from anonymous visitors (`GET /api/tools` omits it, `/t/{id}/*` returns `404`), shown to an authenticated Admin Session on `/` and `/admin` (never exposed by `--include-drafts`), and served with session-bound capability URLs `/tp/{grant}/{id}/...` so relative assets load inside `Origin: null` sandboxes; **`"draft"`** is a WIP preview hidden from anonymous visitors and hidden from `/` by default even when logged in as admin (managed/previewed in `/admin` in a new tab, or shown on `/` only when `--include-drafts` is enabled). Non-public responses carry `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and `CSP: sandbox ...`. |
+| `visibility` | `"public" \| "private" \| "draft"` | No | `"public"` | 3-state visibility: **`"public"`** is visible to everyone on `/` and `/t/{id}/*`; **`"private"`** is hidden from anonymous visitors (`GET /api/tools` omits it, `/t/{id}/*` returns `404`), shown to an authenticated Admin Session on `/` and `/admin` (never exposed by `--include-drafts`), and served with session-bound capability URLs `/tp/{grant}/{id}/...` so relative assets load inside `Origin: null` sandboxes; **`"draft"`** is a WIP preview hidden from anonymous visitors and hidden from `/` by default even when logged in as admin (managed/previewed in `/admin` in a new tab, or shown on `/` only when `--include-drafts` is enabled). Non-public responses carry `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, and `CSP: sandbox ...`. **Overwrite preservation**: when overwriting an existing tool via ZIP upload or single-HTML import and omitting both `visibility` and `draft`, ToolStow preserves the existing tool's visibility instead of resetting it to `"public"` (an explicit `visibility` or `draft` overrides it). |
 | `draft` | `boolean` | No | *(derived)* | Legacy backward-compatible alias (`true` maps to `visibility: "draft"`, `false` / omitted maps to `"public"`). Providing both `visibility` and `draft` with conflicting semantics (e.g. `visibility: "private", draft: true` or `visibility: "draft", draft: false`) is rejected with `422`. Prefer `visibility` in new manifests; API responses include both `visibility` and derived `draft: boolean`. |
 | `themeAware` | `boolean` | No | `false` | Set `true` for plugins using `/ui/v1/theme.js` (the host also syncs automatically once `toolstow:ready` is received). |
 | `sandbox` | `string[]` | No | `["allow-scripts", "allow-downloads", "allow-forms"]` | Requested iframe sandbox tokens, filtered by the host allowlist. For pure calculation tools without file export, prefer least-privilege `["allow-scripts", "allow-forms"]` (`window.ToolStow.copy()` requires no extra sandbox token). |
@@ -375,6 +375,10 @@ python3 skills/toolstow-tool/scripts/publish.py ./my-tool --overwrite
 python3 skills/toolstow-tool/scripts/publish.py ./my-tool --env-file ./.env
 ```
 
+> **Pre-upload capability guard & overwrite visibility preservation**:
+> - Before uploading a `private` package or a visibility-only `draft` package (one that sets `"visibility": "draft"` without legacy `"draft": true`), `publish.py` inspects the directory or `.zip` archive's `manifest.json` and calls `GET /healthz` to confirm `"tool-visibility"` is listed in `capabilities`. If the target is a legacy server (`<= v0.3.5`) or `/healthz` fails, `publish.py` aborts before uploading so the tool cannot be silently exposed as `public`.
+> - When overwriting an existing tool (`--overwrite` / `?overwrite=true`), omitting both `visibility` and `draft` in the uploaded `manifest.json` (or single-HTML import payload) preserves the existing tool's current visibility; explicitly setting `visibility` or `draft` overrides it.
+
 ### Raw `curl` Reference (List / Visibility Toggle / Delete)
 
 ```bash
@@ -405,7 +409,7 @@ curl -i -X DELETE "$TOOLSTOW_URL/api/admin/tools/my-tool" \
   -H "Authorization: Bearer $TOOLSTOW_API_KEY"
 ```
 
-*(Backward compatibility: `PATCH /api/admin/tools/{id}` still accepts `{"draft": true | false}`, rejects conflicting `visibility` + `draft` pairs with `422`, and normalizes `manifest.json` on disk to `"visibility"` while removing legacy `"draft"`.)*
+*(Backward compatibility: `PATCH /api/admin/tools/{id}` still accepts `{"draft": true | false}`, rejects conflicting `visibility` + `draft` pairs with `422`, emits both `"visibility": "draft"` and `"draft": true` when writing drafts to disk for safe downgrade compatibility, and writes `"visibility"` while removing legacy `"draft"` for `public` / `private`.)*
 
 ---
 

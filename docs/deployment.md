@@ -88,7 +88,7 @@ docker compose pull && docker compose up -d
 docker build -t toolstow:local .
 ```
 
-> **降级兼容注意（`<= v0.3.5`）**：若 `data/tools/` 中存在设置了 `"visibility": "private"` 的私有工具，切勿直接将二进制/容器镜像降级回 `<= v0.3.5`——旧版本不识别 `"visibility"` 字段，会将未设置 `"draft": true` 的工具当作公开工具展示。如需降级，请先将私有工具移出 `data/tools/` 或在 `manifest.json` 中改为 `"draft": true`。
+> **降级兼容注意（`<= v0.3.5`）**：若 `data/tools/` 中存在设置了 `"visibility": "private"` 的私有工具，或存在仅声明 `"visibility": "draft"` 而未同时包含 `"draft": true` 的草稿工具，切勿直接将二进制/容器镜像降级回 `<= v0.3.5`——旧版本不识别 `"visibility"` 字段，会将这类未带 `"draft": true` 的工具当作公开工具展示（注：当前版本通过 `/admin` / API 写入或更新 `draft` 工具时会自动同时落盘 `"visibility": "draft"` 与 `"draft": true` 以保证降级安全，但手工编写或直接拷贝的旧目录仍需确认）。如需降级，请先将所有 `private` 工具移出 `data/tools/`，并确保需要保留隐藏的 `draft` 工具在 `manifest.json` 中带有 `"draft": true`。
 
 ---
 
@@ -139,6 +139,9 @@ tools.example.com {
 - **若前置 Cloudflare 代理（CDN / 小黄云）或 Nginx / 反代缓存**：
   - ToolStow 会随主题切换在同一路径（如 `/`、`/app.js`、`/style.css`、`/ui/v1/toolstow.css`、`/ui/v1/theme-assets/*`）下返回不同主题的资源并声明 `Cache-Control: no-store`。
   - **严禁缓存 `/api/tools`、`/api/me` 与 `/tp/*`**：`GET /api/tools` 随管理员 Cookie 返回不同可见性列表（含私有工具的会话能力 URL）并固定声明 `Cache-Control: private, no-store`、`Vary: Cookie`；非公开工具经 `/t/{id}/*` 与 `/tp/{grant}/{id}/*` 提供服务时同样返回 `Cache-Control: private, no-store` 与 `Referrer-Policy: no-referrer`。请务必在 Cloudflare / 反向代理侧对 `/api/tools`、`/api/me`、`/tp/*`（及主题资源）配置 Bypass Cache 或严格遵循源站 `private, no-store`（保持 `Respect Existing Headers`，切勿覆盖更高的 Edge/Browser Cache TTL），避免切换主题失败或将管理员私有工具列表/能力 URL 误缓存给其他访客。
+- **反向代理访问日志脱敏提示（`/tp/*` 能力路径）**：
+  - ToolStow 自身的 HTTP 追踪日志已自动将 `/tp/{grant}/...` 中的能力令牌脱敏记录为 `/tp/[REDACTED]/...`。
+  - 若在 Caddy、Nginx 或其他反向代理上开启了访问日志（Access Log），由于路径中的 `grant` 在当前管理员会话有效期内可只读访问对应非公开工具，建议严格限制访问日志文件权限，或对 `/tp/` 路径配置日志脱敏 / 跳过记录。
 
 ---
 

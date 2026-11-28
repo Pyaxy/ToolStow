@@ -39,13 +39,14 @@ ToolStow 将主题外观与工具内部结构解耦，核心资源统一由后�
   - `.zip` 解包拦截路径穿越（Zip Slip）、符号链接、特殊文件，并校验证明体积与文件数量上限（防解压炸弹）；替换安装采用同盘原子替换；
   - 单文件 `.html` 通过 `/admin` 预览/收录或调用 `POST /api/admin/tools/import/html`（默认 `overwrite=false`，同 ID 返回 `409` 防误覆盖），支持自动向合法 `<head>` 边界注入 SDK 引用。
 - **三态可见性与会话绑定能力 URL（`/tp/{grant}/{id}/*`）**：
-  - `manifest.json` 支持 `"visibility": "public" | "private" | "draft"`（默认 `"public"`，兼容旧版 `"draft": true / false`，语义冲突时拒绝返回 `422`；`PATCH /api/admin/tools/{id}` 写盘统一规范为 `"visibility"` 并移除旧版 `"draft"`）：
+  - `manifest.json` 支持 `"visibility": "public" | "private" | "draft"`（默认 `"public"`，兼容旧版 `"draft": true / false`，语义冲突时拒绝返回 `422`；写盘更新 `draft` 时会同时写入 `"visibility": "draft"` 与 `"draft": true` 以保障降级兼容，写入 `public` / `private` 时保留 `"visibility"` 并移除旧版 `"draft"`）：
     - `public`：对所有访客开放；
     - `private`：个人私有工具，对匿名访客隐藏（`GET /api/tools` 省略、`/t/{id}/*` 返回 `404`），仅已登录 Admin Session 在 `/`（返回 `public` + `private`）与 `/admin` 可见，**不受 `--include-drafts` 影响**；
     - `draft`：开发中预览工具，对匿名隐藏且默认不在 `/` 展示（仅在 `/admin` 管理与新标签页预览，或显式开启 `--include-drafts` 时出现在 `/`）。
-  - **多文件非公开工具能力 URL**：为已登录 Admin Session 返回的非公开工具自动将 `entryUrl` / `iconUrl` 签发为会话绑定、按工具隔离的只读路径 `/tp/{grant}/{id}/...`，使相对路径子资源（`./assets/*.js`、`./style.css`、`fetch(...)`）在 `Origin: null` 沙箱 iframe 与新标签页中稳定加载，无需削弱 `SameSite=Strict` 或添加 `allow-same-origin`；登出或会话过期时全部 `grant` 立即吊销。
-  - **缓存与防泄露响应头**：`GET /api/tools` 始终返回 `Cache-Control: private, no-store` 与 `Vary: Cookie`；非公开工具经 `/t/{id}/*` 或 `/tp/{grant}/{id}/*` 提供服务时附加 `Cache-Control: private, no-store`、`Referrer-Policy: no-referrer` 与 `Content-Security-Policy: sandbox ...`。
-  - *降级注意*：若回退到 `<= v0.3.5` 旧版二进制，旧版不识别 `manifest.json` 中的 `"visibility": "private"` 字段，降级前请先处理私有工具以免意外公开。
+  - **覆盖更新时的可见性保留**：当通过 `.zip` 上传或单文件 HTML 导入覆盖已存在的同 ID 工具且输入中同时省略了 `visibility` 与 `draft` 时，后端自动保留该工具当前的可见性状态（避免覆盖更新意外将 `private` / `draft` 重置为 `public`）；若显式声明了 `visibility` 或 `draft`，则以显式声明为准。
+  - **多文件非公开工具能力 URL 与日志脱敏**：为已登录 Admin Session 返回的非公开工具自动将 `entryUrl` / `iconUrl` 签发为会话绑定、按工具隔离的只读路径 `/tp/{grant}/{id}/...`，使相对路径子资源（`./assets/*.js`、`./style.css`、`fetch(...)`）在 `Origin: null` 沙箱 iframe 与新标签页中稳定加载，无需削弱 `SameSite=Strict` 或添加 `allow-same-origin`；登出或会话过期时全部 `grant` 立即吊销。后端 HTTP 追踪日志自动将 `/tp/{grant}/...` 脱敏为 `/tp/[REDACTED]/...`。
+  - **健康检查能力探测与缓存防泄露响应头**：`GET /healthz` 返回 `capabilities: ["tool-visibility"]`，供 `publish.py` 等客户端在上传 `private` 或新格式 `draft` 包前探测服务端能力；`GET /api/tools` 始终返回 `Cache-Control: private, no-store` 与 `Vary: Cookie`；非公开工具经 `/t/{id}/*` 或 `/tp/{grant}/{id}/*` 提供服务时附加 `Cache-Control: private, no-store`、`Referrer-Policy: no-referrer` 与 `Content-Security-Policy: sandbox ...`。
+  - *降级注意*：若回退到 `<= v0.3.5` 旧版二进制，旧版不识别 `manifest.json` 中的 `"visibility"` 字段——不仅 `private` 工具会被当作公开，任何仅含 `"visibility": "draft"` 而缺少 `"draft": true` 的草稿工具同样会被旧版公开；降级前请先移出 `private` 工具并确保所有 `draft` 工具带有 `"draft": true`。
 
 ---
 
