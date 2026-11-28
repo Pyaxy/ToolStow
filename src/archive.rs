@@ -10,7 +10,7 @@ use uuid::Uuid;
 use zip::ZipArchive;
 
 use crate::error::AppError;
-use crate::manifest::{self, RawManifest, ToolEntry};
+use crate::manifest::{self, RawManifest, ToolEntry, Visibility};
 
 /// Default maximum compressed `.zip` size (50 MiB).
 pub const DEFAULT_MAX_ZIP_BYTES: usize = 50 * 1024 * 1024;
@@ -95,8 +95,8 @@ pub struct SingleHtmlToolInput {
     pub tags: Option<Vec<String>>,
     /// Optional Emoji icon.
     pub icon: Option<String>,
-    /// Whether this tool is saved as a draft.
-    pub draft: bool,
+    /// Visibility state for this tool (`Public`, `Private`, or `Draft`).
+    pub visibility: Visibility,
     /// When `true`, injects `/ui/v1/toolstow.css` and `/ui/v1/theme.js` into the HTML document.
     pub inject_sdk: bool,
 }
@@ -300,7 +300,8 @@ pub fn install_single_html_checked(
         runtime: Some(manifest::DEFAULT_RUNTIME.to_string()),
         theme_aware: Some(theme_aware),
         sandbox: None,
-        draft: input.draft,
+        visibility: Some(input.visibility.as_str().to_string()),
+        draft: None,
     };
 
     let mut manifest_bytes = serde_json::to_vec_pretty(&raw_manifest)
@@ -830,12 +831,17 @@ pub fn delete_tool_dir(tools_dir: &Path, id: &str) -> Result<bool, AppError> {
     Ok(true)
 }
 
-/// Atomically updates `"draft"` in `tools_dir/{id}/manifest.json` and returns the reloaded [`ToolEntry`].
+/// Atomically updates `"visibility"` in `tools_dir/{id}/manifest.json` (and removes any legacy
+/// `"draft"` key so disk remains single-source-of-truth) and returns the reloaded [`ToolEntry`].
 ///
-/// Validates `id`, checks that `manifest.json` exists and is a regular file (returning `404` if missing),
-/// preserves all other JSON fields in `manifest.json`, writes atomically via a temporary file in the tool
-/// directory + rename, and reloads via [`manifest::load_and_validate_manifest`].
-pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEntry, AppError> {
+/// Validates `id`, checks that `manifest.json` exists and is a regular file (returning `404` if
+/// missing), preserves all other JSON fields in `manifest.json`, writes atomically via a temporary
+/// file in the tool directory + rename, and reloads via [`manifest::load_and_validate_manifest`].
+pub fn set_tool_visibility(
+    tools_dir: &Path,
+    id: &str,
+    visibility: Visibility,
+) -> Result<ToolEntry, AppError> {
     manifest::validate_id(id)?;
 
     let tool_dir = tools_dir.join(id);
@@ -886,7 +892,11 @@ pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEnt
     let obj = value
         .as_object_mut()
         .ok_or_else(|| AppError::unprocessable("manifest.json must be a JSON object"))?;
-    obj.insert("draft".to_string(), serde_json::Value::Bool(draft));
+    obj.insert(
+        "visibility".to_string(),
+        serde_json::Value::String(visibility.as_str().to_string()),
+    );
+    obj.remove("draft");
 
     let mut pretty = serde_json::to_vec_pretty(&value)
         .map_err(|err| AppError::internal(format!("failed to serialize manifest.json: {err}")))?;
@@ -913,6 +923,20 @@ pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEnt
     })?;
 
     manifest::load_and_validate_manifest(&tool_dir, Some(id))
+}
+
+/// Legacy compatibility wrapper around [`set_tool_visibility`], mapping `true` to
+/// [`Visibility::Draft`] and `false` to [`Visibility::Public`].
+pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEntry, AppError> {
+    set_tool_visibility(
+        tools_dir,
+        id,
+        if draft {
+            Visibility::Draft
+        } else {
+            Visibility::Public
+        },
+    )
 }
 
 /// Inspects every entry in the zip archive for symlinks, unsafe paths, and macOS junk.
@@ -1732,20 +1756,28 @@ mod tests {
 
         // Toggle draft -> true
         let updated_draft = set_tool_draft(&tools_dir, "draft-demo", true).unwrap();
+        assert_eq!(updated_draft.visibility, Visibility::Draft);
         assert!(updated_draft.draft);
         assert_eq!(updated_draft.version, "1.2.0");
         assert_eq!(updated_draft.tags, vec!["alpha"]);
 
-        // Existing fields (including extra JSON fields) remain preserved on disk
+        // Existing fields (including extra JSON fields) remain preserved on disk; legacy "draft" removed
         let raw: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(tools_dir.join("draft-demo/manifest.json")).unwrap())
                 .unwrap();
-        assert_eq!(raw["draft"], true);
+        assert_eq!(raw["visibility"], "draft");
+        assert!(raw.get("draft").is_none());
         assert_eq!(raw["customField"], "keep");
 
         // Toggle draft -> false
         let republished = set_tool_draft(&tools_dir, "draft-demo", false).unwrap();
+        assert_eq!(republished.visibility, Visibility::Public);
         assert!(!republished.draft);
+        let raw_pub: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tools_dir.join("draft-demo/manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(raw_pub["visibility"], "public");
+        assert!(raw_pub.get("draft").is_none());
 
         // Missing tool -> 404
         let err = set_tool_draft(&tools_dir, "no-such-tool", true).unwrap_err();
@@ -1754,6 +1786,49 @@ mod tests {
         // Invalid ID -> 422
         let err = set_tool_draft(&tools_dir, "../escape", true).unwrap_err();
         assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+    }
+
+    #[test]
+    fn set_tool_visibility_migrates_legacy_draft_and_preserves_other_fields() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"legacy-draft","name":"Legacy Draft","draft":true,"version":"3.1.0","extra":{"a":1}}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>Legacy</h1>"),
+        ]);
+        let installed = install_zip_bytes(&tools_dir, &zip, ArchiveLimits::default()).unwrap();
+        assert_eq!(installed.entry.visibility, Visibility::Draft);
+        assert!(installed.entry.draft);
+
+        // Migrate legacy `"draft": true` to `"visibility": "private"` and verify `"draft"` is removed
+        let private_entry =
+            set_tool_visibility(&tools_dir, "legacy-draft", Visibility::Private).unwrap();
+        assert_eq!(private_entry.visibility, Visibility::Private);
+        assert!(!private_entry.draft);
+        assert_eq!(private_entry.version, "3.1.0");
+
+        let raw: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("legacy-draft/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw["visibility"], "private");
+        assert!(raw.get("draft").is_none());
+        assert_eq!(raw["extra"]["a"], 1);
+
+        // Transition private -> public -> draft
+        let public_entry =
+            set_tool_visibility(&tools_dir, "legacy-draft", Visibility::Public).unwrap();
+        assert_eq!(public_entry.visibility, Visibility::Public);
+        assert!(!public_entry.draft);
+
+        let draft_entry =
+            set_tool_visibility(&tools_dir, "legacy-draft", Visibility::Draft).unwrap();
+        assert_eq!(draft_entry.visibility, Visibility::Draft);
+        assert!(draft_entry.draft);
     }
 
     #[test]
@@ -1832,7 +1907,7 @@ mod tests {
                 category: Some("Utilities".to_string()),
                 tags: Some(vec!["html".to_string(), " single ".to_string(), "html".to_string()]),
                 icon: Some("📄".to_string()),
-                draft: false,
+                visibility: Visibility::Public,
                 inject_sdk: false,
             },
             ArchiveLimits::default(),
@@ -1852,6 +1927,7 @@ mod tests {
                 assert_eq!(res.entry.runtime, "static");
                 assert_eq!(res.entry.entry, "index.html");
                 assert!(!res.entry.theme_aware);
+                assert_eq!(res.entry.visibility, Visibility::Public);
                 assert!(!res.entry.draft);
             }
             InstallOutcome::AlreadyExists { .. } => panic!("expected first install to succeed"),
@@ -1869,7 +1945,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: true,
+                visibility: Visibility::Draft,
                 inject_sdk: true,
             },
             ArchiveLimits::default(),
@@ -1884,6 +1960,7 @@ mod tests {
                 assert!(!existing.theme_aware);
                 assert_eq!(incoming.name, "My HTML Tool v2");
                 assert!(incoming.theme_aware);
+                assert_eq!(incoming.visibility, Visibility::Draft);
                 assert!(incoming.draft);
             }
             InstallOutcome::Installed(_) => panic!("expected AlreadyExists when overwrite=false"),
@@ -1906,7 +1983,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: true,
+                visibility: Visibility::Draft,
                 inject_sdk: true,
             },
             ArchiveLimits::default(),
@@ -1919,10 +1996,17 @@ mod tests {
                 assert!(res.updated);
                 assert_eq!(res.entry.name, "My HTML Tool v2");
                 assert!(res.entry.theme_aware);
+                assert_eq!(res.entry.visibility, Visibility::Draft);
                 assert!(res.entry.draft);
             }
             InstallOutcome::AlreadyExists { .. } => panic!("expected overwrite to succeed"),
         }
+        let disk_manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("my-html-tool/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_manifest["visibility"], "draft");
+        assert!(disk_manifest.get("draft").is_none());
         let disk_html = fs::read_to_string(tools_dir.join("my-html-tool/index.html")).unwrap();
         assert!(disk_html.contains("/ui/v1/toolstow.css"));
         assert!(disk_html.contains("/ui/v1/theme.js"));
@@ -1943,7 +2027,7 @@ mod tests {
             category: None,
             tags: None,
             icon: None,
-            draft: false,
+            visibility: Visibility::Public,
             inject_sdk: false,
         };
 
@@ -2072,7 +2156,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: false,
+                visibility: Visibility::Public,
                 inject_sdk: false,
             },
             ArchiveLimits::default(),
@@ -2126,7 +2210,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: false,
+                visibility: Visibility::Public,
                 inject_sdk: false,
             },
             ArchiveLimits::default(),
@@ -2148,7 +2232,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: false,
+                visibility: Visibility::Public,
                 inject_sdk: true,
             },
             ArchiveLimits::default(),

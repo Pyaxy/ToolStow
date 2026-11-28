@@ -38,6 +38,75 @@ pub const SANDBOX_ALLOWLIST: &[&str] = &[
     "allow-popups-to-escape-sandbox",
 ];
 
+/// Visibility state of a tool (`"public"`, `"private"`, or `"draft"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    /// Visible to everyone on `/` and `/t/{id}/*`.
+    #[default]
+    Public,
+    /// Visible only to an authenticated Admin Session.
+    Private,
+    /// Work-in-progress: hidden from `/` unless `--include-drafts` is enabled, visible in `/admin`.
+    Draft,
+}
+
+impl Visibility {
+    /// Returns the canonical lowercase string representation (`"public"`, `"private"`, or `"draft"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+            Self::Draft => "draft",
+        }
+    }
+
+    /// Parses a trimmed, case-insensitive visibility string (`"public" | "private" | "draft"`),
+    /// returning `422 Unprocessable Entity` for any other value.
+    pub fn parse(raw: &str) -> Result<Self, AppError> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "public" => Ok(Self::Public),
+            "private" => Ok(Self::Private),
+            "draft" => Ok(Self::Draft),
+            _ => Err(AppError::unprocessable(format!(
+                "invalid visibility '{}': expected 'public', 'private', or 'draft'",
+                raw.trim()
+            ))),
+        }
+    }
+}
+
+/// Resolves effective [`Visibility`] from optional `visibility` and legacy `draft` fields.
+///
+/// Rules:
+/// - If `visibility` is `Some(raw)`: parses `raw` (`422` if invalid) and rejects conflicting `draft`
+///   pairs (`Draft` + `false`, `Public` + `true`, `Private` + `true`) with `422`.
+/// - If `visibility` is `None`: `draft == Some(true)` resolves to [`Visibility::Draft`], otherwise
+///   [`Visibility::Public`].
+pub fn resolve_visibility(
+    visibility: Option<&str>,
+    draft: Option<bool>,
+) -> Result<Visibility, AppError> {
+    if let Some(raw_vis) = visibility {
+        let vis = Visibility::parse(raw_vis)?;
+        if let Some(is_draft) = draft {
+            let expected_draft = vis == Visibility::Draft;
+            if is_draft != expected_draft {
+                return Err(AppError::unprocessable(format!(
+                    "conflicting 'visibility' ('{}') and 'draft' ({is_draft}) fields",
+                    vis.as_str()
+                )));
+            }
+        }
+        Ok(vis)
+    } else if draft == Some(true) {
+        Ok(Visibility::Draft)
+    } else {
+        Ok(Visibility::Public)
+    }
+}
+
 /// Raw deserialized representation of a tool's `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,9 +142,12 @@ pub struct RawManifest {
     /// Requested `iframe sandbox` tokens (filtered against [`SANDBOX_ALLOWLIST`]).
     #[serde(default)]
     pub sandbox: Option<Vec<String>>,
-    /// Whether this tool is a draft (hidden from public listing and anonymous access).
-    #[serde(default)]
-    pub draft: bool,
+    /// Optional visibility state (`"public" | "private" | "draft"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+    /// Legacy boolean draft flag (mapped to `Visibility::Draft` when `visibility` is omitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
 }
 
 /// Validated and normalized tool metadata exposed by the registry and HTTP API.
@@ -111,7 +183,9 @@ pub struct ToolEntry {
     pub theme_aware: bool,
     /// Sanitized `iframe sandbox` tokens guaranteed to be a subset of [`SANDBOX_ALLOWLIST`].
     pub sandbox: Vec<String>,
-    /// Whether this tool is marked as a draft (hidden from public listing and anonymous access).
+    /// Effective 3-state visibility (`"public" | "private" | "draft"`).
+    pub visibility: Visibility,
+    /// Legacy compatibility flag strictly derived from `visibility == Visibility::Draft`.
     pub draft: bool,
 }
 
@@ -385,6 +459,8 @@ pub fn load_and_validate_manifest(
 
     let theme_aware = raw.theme_aware.unwrap_or(false);
     let sandbox = sanitize_sandbox(raw.sandbox.as_deref());
+    let visibility = resolve_visibility(raw.visibility.as_deref(), raw.draft)?;
+    let draft = visibility == Visibility::Draft;
 
     Ok(ToolEntry {
         id: raw.id,
@@ -401,7 +477,8 @@ pub fn load_and_validate_manifest(
         runtime: runtime.to_string(),
         theme_aware,
         sandbox,
-        draft: raw.draft,
+        visibility,
+        draft,
     })
 }
 
@@ -858,8 +935,94 @@ mod tests {
         write_file(dir_draft.path(), "index.html", "<h1>WIP</h1>");
 
         let draft = load_and_validate_manifest(dir_draft.path(), Some("wip-tool")).unwrap();
+        assert_eq!(draft.visibility, Visibility::Draft);
         assert!(draft.draft);
         let draft_json = serde_json::to_value(&draft).unwrap();
+        assert_eq!(draft_json["visibility"], "draft");
         assert_eq!(draft_json["draft"], true);
+    }
+
+    #[test]
+    fn load_manifest_visibility_resolution_and_conflicts() {
+        // Explicit visibilities (trimmed & case-insensitive) and consistent legacy `draft` pairs
+        let valid_cases = [
+            (r#"{"id":"t","name":"T"}"#, Visibility::Public, false),
+            (
+                r#"{"id":"t","name":"T","draft":false}"#,
+                Visibility::Public,
+                false,
+            ),
+            (
+                r#"{"id":"t","name":"T","draft":true}"#,
+                Visibility::Draft,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"public"}"#,
+                Visibility::Public,
+                false,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"  PRIVATE  "}"#,
+                Visibility::Private,
+                false,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"Draft"}"#,
+                Visibility::Draft,
+                true,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"public","draft":false}"#,
+                Visibility::Public,
+                false,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"private","draft":false}"#,
+                Visibility::Private,
+                false,
+            ),
+            (
+                r#"{"id":"t","name":"T","visibility":"draft","draft":true}"#,
+                Visibility::Draft,
+                true,
+            ),
+        ];
+
+        for (manifest_json, expected_vis, expected_draft) in valid_cases {
+            let dir = TempDir::new().unwrap();
+            write_file(dir.path(), "manifest.json", manifest_json);
+            write_file(dir.path(), "index.html", "<h1>ok</h1>");
+            let entry = load_and_validate_manifest(dir.path(), Some("t"))
+                .unwrap_or_else(|e| panic!("expected valid for {manifest_json}, got {e}"));
+            assert_eq!(entry.visibility, expected_vis, "for {manifest_json}");
+            assert_eq!(entry.draft, expected_draft, "for {manifest_json}");
+            let serialized = serde_json::to_value(&entry).unwrap();
+            assert_eq!(serialized["visibility"], expected_vis.as_str());
+            assert_eq!(serialized["draft"], expected_draft);
+        }
+
+        // Invalid visibility values and conflicting (visibility, draft) pairs -> 422
+        let invalid_cases = [
+            r#"{"id":"t","name":"T","visibility":""}"#,
+            r#"{"id":"t","name":"T","visibility":"   "}"#,
+            r#"{"id":"t","name":"T","visibility":"internal"}"#,
+            r#"{"id":"t","name":"T","visibility":"draft","draft":false}"#,
+            r#"{"id":"t","name":"T","visibility":"public","draft":true}"#,
+            r#"{"id":"t","name":"T","visibility":"private","draft":true}"#,
+        ];
+
+        for manifest_json in invalid_cases {
+            let dir = TempDir::new().unwrap();
+            write_file(dir.path(), "manifest.json", manifest_json);
+            write_file(dir.path(), "index.html", "<h1>ok</h1>");
+            let err = load_and_validate_manifest(dir.path(), Some("t"))
+                .expect_err(&format!("expected 422 for {manifest_json}"));
+            assert_eq!(
+                err.error_code(),
+                "UNPROCESSABLE_ENTITY",
+                "for {manifest_json}"
+            );
+        }
     }
 }

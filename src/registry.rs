@@ -13,7 +13,7 @@ use anyhow::Context;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tracing::{debug, warn};
 
-use crate::manifest::{self, ToolEntry};
+use crate::manifest::{self, ToolEntry, Visibility};
 
 /// Debounce window applied to bursty filesystem events before rescanning `tools_dir`.
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(150);
@@ -173,27 +173,45 @@ impl ToolRegistry {
         Ok(count)
     }
 
-    /// Lists registered non-draft tools filtered by optional keyword (`q`), `category`, and `tag`.
+    /// Lists registered public tools filtered by optional keyword (`q`), `category`, and `tag`.
     ///
-    /// Delegates to [`ToolRegistry::list_filtered`] with `include_drafts = false`.
+    /// Delegates to [`ToolRegistry::list_with_visibility`] with `include_private = false, include_drafts = false`.
     pub fn list(
         &self,
         q: Option<&str>,
         category: Option<&str>,
         tag: Option<&str>,
     ) -> Vec<ToolEntry> {
-        self.list_filtered(q, category, tag, false)
+        self.list_with_visibility(q, category, tag, false, false)
     }
 
-    /// Lists registered tools filtered by optional keyword (`q`), `category`, `tag`, and draft visibility.
+    /// Lists registered tools filtered by optional keyword (`q`), `category`, `tag`, and draft visibility
+    /// (excluding `Private` tools).
     ///
-    /// When `include_drafts` is `false`, entries with `draft == true` are excluded.
-    /// Results are deterministically sorted by `(category.to_lowercase(), name.to_lowercase(), id)`.
+    /// Delegates to [`ToolRegistry::list_with_visibility`] with `include_private = false`.
     pub fn list_filtered(
         &self,
         q: Option<&str>,
         category: Option<&str>,
         tag: Option<&str>,
+        include_drafts: bool,
+    ) -> Vec<ToolEntry> {
+        self.list_with_visibility(q, category, tag, false, include_drafts)
+    }
+
+    /// Lists registered tools filtered by optional keyword (`q`), `category`, `tag`, and 3-state visibility.
+    ///
+    /// - [`Visibility::Public`] entries are always included.
+    /// - [`Visibility::Private`] entries are included iff `include_private` is `true`.
+    /// - [`Visibility::Draft`] entries are included iff `include_drafts` is `true`.
+    ///
+    /// Results are deterministically sorted by `(category.to_lowercase(), name.to_lowercase(), id)`.
+    pub fn list_with_visibility(
+        &self,
+        q: Option<&str>,
+        category: Option<&str>,
+        tag: Option<&str>,
+        include_private: bool,
         include_drafts: bool,
     ) -> Vec<ToolEntry> {
         let q_norm = q
@@ -214,8 +232,11 @@ impl ToolRegistry {
             guard
                 .values()
                 .filter(|entry| {
-                    if !include_drafts && entry.draft {
-                        return false;
+                    match entry.visibility {
+                        Visibility::Public => {}
+                        Visibility::Private if !include_private => return false,
+                        Visibility::Draft if !include_drafts => return false,
+                        _ => {}
                     }
 
                     if let Some(ref expected_cat) = category_norm
@@ -739,5 +760,64 @@ mod tests {
             .map(|e| e.id)
             .collect();
         assert_eq!(filtered_with_drafts, vec!["draft-tool", "public-tool"]);
+    }
+
+    #[test]
+    fn list_with_visibility_handles_all_three_states() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+        let registry = ToolRegistry::new(tools_dir.clone());
+
+        create_tool(
+            &tools_dir,
+            "public-tool",
+            r#"{"id":"public-tool","name":"Public Tool","category":"Dev","tags":["util"],"visibility":"public"}"#,
+            "<h1>Public</h1>",
+        );
+        create_tool(
+            &tools_dir,
+            "private-tool",
+            r#"{"id":"private-tool","name":"Private Tool","category":"Dev","tags":["util"],"visibility":"private"}"#,
+            "<h1>Private</h1>",
+        );
+        create_tool(
+            &tools_dir,
+            "draft-tool",
+            r#"{"id":"draft-tool","name":"Draft Tool","category":"Dev","tags":["util"],"visibility":"draft"}"#,
+            "<h1>Draft</h1>",
+        );
+
+        assert_eq!(registry.scan_all().unwrap(), 3);
+
+        let ids = |entries: Vec<ToolEntry>| -> Vec<String> {
+            entries.into_iter().map(|e| e.id).collect()
+        };
+
+        // `list` returns ONLY public tools
+        assert_eq!(ids(registry.list(None, None, None)), vec!["public-tool"]);
+
+        // (false, false) -> public only
+        assert_eq!(
+            ids(registry.list_with_visibility(Some("tool"), Some("dev"), Some("util"), false, false)),
+            vec!["public-tool"]
+        );
+
+        // (true, false) -> public + private (no drafts)
+        assert_eq!(
+            ids(registry.list_with_visibility(Some("tool"), Some("dev"), Some("util"), true, false)),
+            vec!["private-tool", "public-tool"]
+        );
+
+        // (false, true) -> public + draft (no private)
+        assert_eq!(
+            ids(registry.list_with_visibility(Some("tool"), Some("dev"), Some("util"), false, true)),
+            vec!["draft-tool", "public-tool"]
+        );
+
+        // (true, true) -> all 3 states
+        assert_eq!(
+            ids(registry.list_with_visibility(Some("tool"), Some("dev"), Some("util"), true, true)),
+            vec!["draft-tool", "private-tool", "public-tool"]
+        );
     }
 }

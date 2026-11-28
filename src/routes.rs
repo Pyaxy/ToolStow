@@ -14,7 +14,8 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Path as AxumPath, Query, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH,
-    CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, ORIGIN, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, ORIGIN, REFERRER_POLICY, SET_COOKIE, VARY,
+    X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::request::Parts;
 use axum::http::uri::Authority;
@@ -29,7 +30,7 @@ use crate::archive::{self, ArchiveLimits, SingleHtmlToolInput};
 use crate::auth::AuthManager;
 use crate::config::Config;
 use crate::error::AppError;
-use crate::manifest::{self, ToolEntry};
+use crate::manifest::{self, ToolEntry, Visibility};
 use crate::registry::ToolRegistry;
 use crate::settings::{SettingsStore, SiteSettings, SiteSettingsUpdate};
 use crate::themes::{self, BUILTIN_DEFAULT_THEME, ResolvedTheme, ThemeEntry, ThemeInstallOutcome};
@@ -91,6 +92,7 @@ struct AdminListToolsQuery {
     q: Option<String>,
     category: Option<String>,
     tag: Option<String>,
+    visibility: Option<String>,
     draft: Option<String>,
 }
 
@@ -136,7 +138,10 @@ struct LoginResponse {
 /// JSON request payload for `PATCH /api/admin/tools/{id}`.
 #[derive(Debug, Deserialize)]
 struct PatchToolRequest {
-    draft: bool,
+    #[serde(default)]
+    visibility: Option<String>,
+    #[serde(default)]
+    draft: Option<bool>,
 }
 
 /// JSON request payload for `POST /api/admin/tools/import/html`.
@@ -155,7 +160,9 @@ struct UploadSingleHtmlToolRequest {
     #[serde(default)]
     icon: Option<String>,
     #[serde(default)]
-    draft: bool,
+    visibility: Option<String>,
+    #[serde(default)]
+    draft: Option<bool>,
     #[serde(default)]
     inject_sdk: bool,
 }
@@ -285,6 +292,13 @@ impl FromRequestParts<AppState> for AdminSessionOnly {
     }
 }
 
+/// Credential mechanism that authenticated an [`AdminToolsAuth`] request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdminToolsAuthKind {
+    ApiKey,
+    AdminSession,
+}
+
 /// Request guard for Admin Tool Management routes (`/api/admin/tools*`).
 ///
 /// Accepts EITHER a valid `Authorization: Bearer <TOOLSTOW_API_KEY>` OR a valid Admin Session
@@ -292,7 +306,13 @@ impl FromRequestParts<AppState> for AdminSessionOnly {
 /// Running as a [`FromRequestParts`] extractor ensures unauthorized or cross-site requests are
 /// rejected before any multipart upload body is parsed.
 #[derive(Debug, Clone, Copy)]
-struct AdminToolsAuth;
+struct AdminToolsAuth(AdminToolsAuthKind);
+
+impl AdminToolsAuth {
+    fn is_admin_session(self) -> bool {
+        self.0 == AdminToolsAuthKind::AdminSession
+    }
+}
 
 impl FromRequestParts<AppState> for AdminToolsAuth {
     type Rejection = AppError;
@@ -315,7 +335,7 @@ impl FromRequestParts<AppState> for AdminToolsAuth {
             if !verified {
                 return Err(AppError::unauthorized("authentication required"));
             }
-            return Ok(Self);
+            return Ok(Self(AdminToolsAuthKind::ApiKey));
         }
 
         if state.auth.has_valid_admin_session(&parts.headers) {
@@ -326,7 +346,7 @@ impl FromRequestParts<AppState> for AdminToolsAuth {
             } else if parts.headers.contains_key(ORIGIN) {
                 verify_csrf_headers(&parts.headers)?;
             }
-            return Ok(Self);
+            return Ok(Self(AdminToolsAuthKind::AdminSession));
         }
 
         Err(AppError::unauthorized("authentication required"))
@@ -515,6 +535,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/t/{id}", get(redirect_tool_entry))
         .route("/t/{id}/", get(redirect_tool_entry))
         .route("/t/{id}/{*path}", get(serve_tool_asset))
+        // Session-bound capability URLs for non-public multi-file tools in Origin: null iframes
+        .route("/tp/{grant}/{id}", get(redirect_granted_tool_entry))
+        .route("/tp/{grant}/{id}/", get(redirect_granted_tool_entry))
+        .route("/tp/{grant}/{id}/{*path}", get(serve_granted_tool_asset))
         // Locked embedded admin panel (never shadowable by data/theme/ or data/themes/)
         .route("/admin", get(serve_admin_index))
         .route("/admin/", get(serve_admin_index))
@@ -588,6 +612,8 @@ async fn serve_frontend_fallback(
         || raw_path.starts_with("/api/")
         || raw_path == "/t"
         || raw_path.starts_with("/t/")
+        || raw_path == "/tp"
+        || raw_path.starts_with("/tp/")
         || raw_path == "/admin"
         || raw_path.starts_with("/admin/")
         || raw_path == "/ui"
@@ -1161,23 +1187,45 @@ async fn get_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
         theme_source,
     };
 
-    no_store_json(StatusCode::OK, body)
+    let mut resp = no_store_json(StatusCode::OK, body);
+    resp.headers_mut()
+        .insert(VARY, HeaderValue::from_static("Cookie"));
+    resp
 }
 
-/// `GET /api/tools`: returns sorted public tool entries filtered by optional `q`, `category`,
-/// and `tag`. Drafts are hidden unless `config.include_drafts` is enabled.
+/// `GET /api/tools`: returns sorted tool entries filtered by optional `q`, `category`, and `tag`.
+///
+/// Visibility rules:
+/// - `public` tools are always included.
+/// - `private` tools are included only when authenticated via a valid Admin Session cookie.
+/// - `draft` tools are included only when `--include-drafts` is enabled (NOT automatically for admins).
+///
+/// For authenticated admin sessions, non-public entries have `entryUrl` (and `iconUrl` when
+/// `iconIsPath` is `true`) rewritten to session-bound capability URLs `/tp/{grant}/{id}/...`.
 async fn list_tools(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<ListToolsQuery>,
-) -> Json<Vec<ToolEntry>> {
+) -> Response {
     let q = normalize_query_param(query.q.as_deref());
     let category = normalize_query_param(query.category.as_deref());
     let tag = normalize_query_param(query.tag.as_deref());
 
-    let tools = state
-        .registry
-        .list_filtered(q, category, tag, state.config.include_drafts);
-    Json(tools)
+    let is_admin = state.auth.has_valid_admin_session(&headers);
+    let mut tools = state.registry.list_with_visibility(
+        q,
+        category,
+        tag,
+        is_admin,
+        state.config.include_drafts,
+    );
+    if is_admin {
+        for tool in &mut tools {
+            rewrite_non_public_tool_urls(&state, &headers, tool);
+        }
+    }
+
+    private_no_store_vary_cookie_json(StatusCode::OK, tools)
 }
 
 /// `GET /api/admin/session`: reports admin authentication and availability status (always 200 JSON).
@@ -1453,24 +1501,49 @@ async fn delete_theme(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /api/admin/tools`: returns all tools (including drafts) with optional `q`, `category`,
-/// `tag`, and `draft=true|false` filters (Admin Session OR AI Bearer API key).
+/// `GET /api/admin/tools`: returns all tools (`public`, `private`, `draft`) with optional `q`,
+/// `category`, `tag`, `visibility=public|private|draft`, and legacy `draft=true|false` filters
+/// (Admin Session OR AI Bearer API key).
+///
+/// When authenticated via Admin Session cookie, non-public entries have `entryUrl`/`iconUrl`
+/// rewritten to `/tp/{grant}/{id}/...`; Bearer API key requests keep `/t/{id}/...`.
 async fn list_admin_tools(
-    _auth: AdminToolsAuth,
+    auth: AdminToolsAuth,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<AdminListToolsQuery>,
 ) -> Result<Response, AppError> {
     let q = normalize_query_param(query.q.as_deref());
     let category = normalize_query_param(query.category.as_deref());
     let tag = normalize_query_param(query.tag.as_deref());
+    let visibility_filter = parse_optional_visibility_param(query.visibility.as_deref())?;
     let draft_filter = parse_optional_bool_param("draft", query.draft.as_deref())?;
 
-    let mut tools = state.registry.list_filtered(q, category, tag, true);
-    if let Some(expected_draft) = draft_filter {
+    if let (Some(vis), Some(expected_draft)) = (visibility_filter, draft_filter)
+        && (vis == Visibility::Draft) != expected_draft
+    {
+        return Err(AppError::bad_request(format!(
+            "conflicting 'visibility' ('{}') and 'draft' ({expected_draft}) query parameters",
+            vis.as_str()
+        )));
+    }
+
+    let mut tools = state
+        .registry
+        .list_with_visibility(q, category, tag, true, true);
+    if let Some(expected_vis) = visibility_filter {
+        tools.retain(|tool| tool.visibility == expected_vis);
+    } else if let Some(expected_draft) = draft_filter {
         tools.retain(|tool| tool.draft == expected_draft);
     }
 
-    Ok(no_store_json(StatusCode::OK, tools))
+    if auth.is_admin_session() {
+        for tool in &mut tools {
+            rewrite_non_public_tool_urls(&state, &headers, tool);
+        }
+    }
+
+    Ok(private_no_store_vary_cookie_json(StatusCode::OK, tools))
 }
 
 /// `POST /api/admin/tools/upload`: validates and atomically installs or updates a `.zip` tool
@@ -1479,8 +1552,9 @@ async fn list_admin_tools(
 /// Supports optional `?overwrite=false` to reject existing tool IDs with `409 Conflict`
 /// (`TOOL_EXISTS`) and both `existing` / `incoming` metadata for confirmation dialogs.
 async fn upload_tool(
-    _auth: AdminToolsAuth,
+    auth: AdminToolsAuth,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<UploadOverwriteQuery>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Response, AppError> {
@@ -1512,7 +1586,12 @@ async fn upload_tool(
                 StatusCode::CREATED
             };
 
-            Ok((status, Json(result.entry)).into_response())
+            let mut resp_entry = result.entry;
+            if auth.is_admin_session() {
+                rewrite_non_public_tool_urls(&state, &headers, &mut resp_entry);
+            }
+
+            Ok(private_no_store_vary_cookie_json(status, resp_entry))
         }
         archive::InstallOutcome::AlreadyExists { existing, incoming } => {
             let body = ToolExistsConflictResponse {
@@ -1524,7 +1603,7 @@ async fn upload_tool(
                 existing: existing.map(|e| *e),
                 incoming,
             };
-            Ok((StatusCode::CONFLICT, Json(body)).into_response())
+            Ok(private_no_store_vary_cookie_json(StatusCode::CONFLICT, body))
         }
     }
 }
@@ -1536,8 +1615,9 @@ async fn upload_tool(
 /// (`TOOL_EXISTS`) and both `existing` / `incoming` metadata without modifying existing files on
 /// disk. Pass `?overwrite=true` to explicitly replace an existing tool.
 async fn upload_single_html_tool(
-    _auth: AdminToolsAuth,
+    auth: AdminToolsAuth,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<UploadOverwriteQuery>,
     payload: Result<Json<UploadSingleHtmlToolRequest>, JsonRejection>,
 ) -> Result<Response, AppError> {
@@ -1555,6 +1635,8 @@ async fn upload_single_html_tool(
         }
     })?;
 
+    let visibility = manifest::resolve_visibility(body.visibility.as_deref(), body.draft)?;
+
     let input = SingleHtmlToolInput {
         id: body.id,
         name: body.name,
@@ -1563,7 +1645,7 @@ async fn upload_single_html_tool(
         category: body.category,
         tags: body.tags,
         icon: body.icon,
-        draft: body.draft,
+        visibility,
         inject_sdk: body.inject_sdk,
     };
 
@@ -1590,7 +1672,12 @@ async fn upload_single_html_tool(
                 StatusCode::CREATED
             };
 
-            Ok((status, Json(result.entry)).into_response())
+            let mut resp_entry = result.entry;
+            if auth.is_admin_session() {
+                rewrite_non_public_tool_urls(&state, &headers, &mut resp_entry);
+            }
+
+            Ok(private_no_store_vary_cookie_json(status, resp_entry))
         }
         archive::InstallOutcome::AlreadyExists { existing, incoming } => {
             let body = ToolExistsConflictResponse {
@@ -1602,7 +1689,7 @@ async fn upload_single_html_tool(
                 existing: existing.map(|e| *e),
                 incoming,
             };
-            Ok((StatusCode::CONFLICT, Json(body)).into_response())
+            Ok(private_no_store_vary_cookie_json(StatusCode::CONFLICT, body))
         }
     }
 }
@@ -1662,30 +1749,48 @@ async fn extract_uploaded_zip_bytes(
     Ok(zip_bytes)
 }
 
-/// `PATCH /api/admin/tools/{id}`: atomically updates a tool's `draft` flag in `manifest.json`
-/// and refreshes the in-memory registry (Admin Session OR AI Bearer API key).
+/// `PATCH /api/admin/tools/{id}`: atomically updates a tool's `visibility` (or legacy `draft`)
+/// in `manifest.json` and refreshes the in-memory registry (Admin Session OR AI Bearer API key).
 async fn patch_tool(
-    _auth: AdminToolsAuth,
+    auth: AdminToolsAuth,
     State(state): State<AppState>,
+    headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
     payload: Result<Json<PatchToolRequest>, JsonRejection>,
-) -> Result<Json<ToolEntry>, AppError> {
+) -> Result<Response, AppError> {
     manifest::validate_id(&id)?;
     let Json(body) = payload
         .map_err(|err| AppError::bad_request(format!("invalid JSON patch payload: {err}")))?;
+
+    if body.visibility.is_none() && body.draft.is_none() {
+        return Err(AppError::bad_request(
+            "patch payload must include at least one of 'visibility' or 'draft'",
+        ));
+    }
+
+    let visibility = manifest::resolve_visibility(body.visibility.as_deref(), body.draft)?;
 
     let _write_guard = state.registry.write_lock().lock_owned().await;
     let tools_dir = state.registry.tools_dir().to_path_buf();
     let id_for_task = id.clone();
 
     let updated = tokio::task::spawn_blocking(move || {
-        archive::set_tool_draft(&tools_dir, &id_for_task, body.draft)
+        archive::set_tool_visibility(&tools_dir, &id_for_task, visibility)
     })
     .await
-    .map_err(|err| AppError::internal(format!("update tool draft task failed: {err}")))??;
+    .map_err(|err| AppError::internal(format!("update tool visibility task failed: {err}")))??;
 
     state.registry.upsert(updated.clone());
-    Ok(Json(updated))
+
+    let mut resp_entry = updated;
+    if auth.is_admin_session() {
+        rewrite_non_public_tool_urls(&state, &headers, &mut resp_entry);
+    }
+
+    Ok(private_no_store_vary_cookie_json(
+        StatusCode::OK,
+        resp_entry,
+    ))
 }
 
 /// `DELETE /api/admin/tools/{id}`: deletes a tool directory from disk and removes it from the
@@ -1715,9 +1820,49 @@ async fn delete_tool(
     }
 }
 
+/// Rewrites a non-public [`ToolEntry`]'s `entry_url` (and `icon_url` if path-based) to
+/// session-bound capability URLs `/tp/{grant}/{id}/...` for an authenticated Admin Session.
+fn rewrite_non_public_tool_urls(state: &AppState, headers: &HeaderMap, entry: &mut ToolEntry) {
+    if entry.visibility == Visibility::Public {
+        return;
+    }
+    if let Some(grant) = state.auth.issue_tool_grant(headers, &entry.id) {
+        entry.entry_url = format!("/tp/{grant}/{}/{}", entry.id, entry.entry);
+        if entry.icon_is_path {
+            entry.icon_url = Some(format!("/tp/{grant}/{}/{}", entry.id, entry.icon));
+        }
+    }
+}
+
+/// Checks whether a request on `/t/{id}*` is permitted to access `entry`.
+///
+/// - `Public`: always allowed.
+/// - `Private`: allowed ONLY with a valid Admin Session (`--include-drafts` does NOT expose `Private`).
+/// - `Draft`: allowed with a valid Admin Session OR when `--include-drafts` is enabled.
+fn can_access_tool_via_session(state: &AppState, headers: &HeaderMap, entry: &ToolEntry) -> bool {
+    match entry.visibility {
+        Visibility::Public => true,
+        Visibility::Private => state.auth.has_valid_admin_session(headers),
+        Visibility::Draft => {
+            state.config.include_drafts || state.auth.has_valid_admin_session(headers)
+        }
+    }
+}
+
+/// Caching/privacy header mode for serving tool assets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolAssetCacheMode {
+    /// Served under `/t/{id}/{*path}`: public tools use `no-cache`, non-public tools use
+    /// `private, no-store`, `Vary: Cookie`, and `Referrer-Policy: no-referrer`.
+    SessionScoped,
+    /// Served under `/tp/{grant}/{id}/{*path}`: always uses `private, no-store` and
+    /// `Referrer-Policy: no-referrer`.
+    GrantScoped,
+}
+
 /// `GET /t/{id}` and `GET /t/{id}/`: redirects to the registered tool's `entry_url`.
-/// Draft tools return `404` unless `--include-drafts` is enabled or a valid Admin Session Cookie
-/// is present.
+/// Non-public tools enforce visibility gating and return `Cache-Control: private, no-store`,
+/// `Vary: Cookie`, and `Referrer-Policy: no-referrer`.
 async fn redirect_tool_entry(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1728,16 +1873,26 @@ async fn redirect_tool_entry(
         .get(&id)
         .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
-    if entry.draft && !state.config.include_drafts && !state.auth.has_valid_admin_session(&headers)
-    {
+    if !can_access_tool_via_session(&state, &headers, &entry) {
         return Err(AppError::not_found(format!("tool '{id}' not found")));
     }
 
-    Ok(Redirect::temporary(&entry.entry_url).into_response())
+    let mut resp = Redirect::temporary(&entry.entry_url).into_response();
+    if entry.visibility != Visibility::Public {
+        resp.headers_mut().insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+        resp.headers_mut()
+            .insert(VARY, HeaderValue::from_static("Cookie"));
+        resp.headers_mut()
+            .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    }
+    Ok(resp)
 }
 
 /// `GET /t/{id}/{*path}`: serves a static asset inside a registered tool directory with strict
-/// draft visibility gating, path containment, and `Content-Security-Policy: sandbox` headers.
+/// visibility gating, path containment, and `Content-Security-Policy: sandbox` headers.
 async fn serve_tool_asset(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1748,12 +1903,68 @@ async fn serve_tool_asset(
         .get(&id)
         .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
-    if entry.draft && !state.config.include_drafts && !state.auth.has_valid_admin_session(&headers)
-    {
+    if !can_access_tool_via_session(&state, &headers, &entry) {
         return Err(AppError::not_found(format!("tool '{id}' not found")));
     }
 
-    let rel_path = manifest::validate_safe_rel_path(&path)
+    serve_tool_asset_for_entry(&state, &entry, &path, ToolAssetCacheMode::SessionScoped).await
+}
+
+/// `GET /tp/{grant}/{id}` and `GET /tp/{grant}/{id}/`: validates a session-bound read-only tool
+/// capability grant and redirects to `/tp/{grant}/{id}/{entry}`.
+async fn redirect_granted_tool_entry(
+    State(state): State<AppState>,
+    AxumPath((grant, id)): AxumPath<(String, String)>,
+) -> Result<Response, AppError> {
+    if !state.auth.verify_tool_grant(&grant, &id) {
+        return Err(AppError::not_found(format!("tool '{id}' not found")));
+    }
+
+    let entry = state
+        .registry
+        .get(&id)
+        .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+
+    let target = format!("/tp/{grant}/{}/{}", entry.id, entry.entry);
+    let mut resp = Redirect::temporary(&target).into_response();
+    resp.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    resp.headers_mut()
+        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    Ok(resp)
+}
+
+/// `GET /tp/{grant}/{id}/{*path}`: validates a session-bound read-only tool capability grant and
+/// serves the requested static asset so multi-file private/draft tools work cleanly inside
+/// `Origin: null` sandboxed iframes without weakening `SameSite=Strict` or `sandbox`.
+async fn serve_granted_tool_asset(
+    State(state): State<AppState>,
+    AxumPath((grant, id, path)): AxumPath<(String, String, String)>,
+) -> Result<Response, AppError> {
+    if !state.auth.verify_tool_grant(&grant, &id) {
+        return Err(AppError::not_found(format!("tool '{id}' not found")));
+    }
+
+    let entry = state
+        .registry
+        .get(&id)
+        .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+
+    serve_tool_asset_for_entry(&state, &entry, &path, ToolAssetCacheMode::GrantScoped).await
+}
+
+/// Shared asset serving helper enforcing safe relative path validation, canonical containment,
+/// `Content-Security-Policy: sandbox` (never `allow-same-origin`), and visibility-appropriate
+/// caching/privacy headers.
+async fn serve_tool_asset_for_entry(
+    state: &AppState,
+    entry: &ToolEntry,
+    path: &str,
+    cache_mode: ToolAssetCacheMode,
+) -> Result<Response, AppError> {
+    let rel_path = manifest::validate_safe_rel_path(path)
         .map_err(|err| AppError::bad_request(err.to_string()))?;
 
     let tool_dir = state.registry.tools_dir().join(&entry.id);
@@ -1821,12 +2032,36 @@ async fn serve_tool_asset(
     let csp_header = HeaderValue::from_str(&csp_str)
         .unwrap_or_else(|_| HeaderValue::from_static("sandbox;"));
 
-    Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, content_type)
         .header(CONTENT_SECURITY_POLICY, csp_header)
-        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"))
-        .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+        .header(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+
+    match cache_mode {
+        ToolAssetCacheMode::SessionScoped if entry.visibility == Visibility::Public => {
+            builder = builder.header(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        }
+        ToolAssetCacheMode::SessionScoped => {
+            builder = builder
+                .header(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("private, no-store"),
+                )
+                .header(VARY, HeaderValue::from_static("Cookie"))
+                .header(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+        }
+        ToolAssetCacheMode::GrantScoped => {
+            builder = builder
+                .header(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("private, no-store"),
+                )
+                .header(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+        }
+    }
+
+    builder
         .body(Body::from(bytes))
         .map_err(|err| AppError::internal(format!("failed to build tool asset response: {err}")))
 }
@@ -1862,9 +2097,38 @@ fn no_store_json<T: Serialize>(status: StatusCode, payload: T) -> Response {
     resp
 }
 
+/// Builds a JSON response with `Cache-Control: private, no-store` and `Vary: Cookie`.
+fn private_no_store_vary_cookie_json<T: Serialize>(status: StatusCode, payload: T) -> Response {
+    let mut resp = (status, Json(payload)).into_response();
+    resp.headers_mut().insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    resp.headers_mut()
+        .insert(VARY, HeaderValue::from_static("Cookie"));
+    resp
+}
+
 /// Converts blank/whitespace query parameters into `None`.
 fn normalize_query_param(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Parses an optional `visibility` query parameter (`"public"` / `"private"` / `"draft"`,
+/// blank treated as `None`), returning `400 Bad Request` on invalid values.
+fn parse_optional_visibility_param(value: Option<&str>) -> Result<Option<Visibility>, AppError> {
+    let Some(raw) = normalize_query_param(value) else {
+        return Ok(None);
+    };
+
+    match raw.to_ascii_lowercase().as_str() {
+        "public" => Ok(Some(Visibility::Public)),
+        "private" => Ok(Some(Visibility::Private)),
+        "draft" => Ok(Some(Visibility::Draft)),
+        _ => Err(AppError::bad_request(format!(
+            "invalid 'visibility' query parameter '{raw}': expected 'public', 'private', or 'draft'"
+        ))),
+    }
 }
 
 /// Parses an optional boolean query parameter (`"true"` / `"false"`, blank treated as `None`).
