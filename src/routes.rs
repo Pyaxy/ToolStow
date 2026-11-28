@@ -1418,7 +1418,7 @@ async fn upload_theme(
     let max_upload_mb = state.config.max_upload_mb;
     let zip_bytes = extract_uploaded_zip_bytes(multipart, max_upload_bytes, max_upload_mb).await?;
 
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
     let themes_dir = state.config.themes_dir.clone();
     let limits = ArchiveLimits {
         max_zip_bytes: max_upload_bytes,
@@ -1426,6 +1426,7 @@ async fn upload_theme(
     };
 
     let outcome = tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
         themes::install_theme_zip_checked(&themes_dir, &zip_bytes, limits, allow_overwrite)
     })
     .await
@@ -1482,26 +1483,21 @@ async fn set_active_theme(
         themes::validate_theme_short(&short)?;
     }
 
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
+    let themes_dir = state.config.themes_dir.clone();
+    let settings_store = state.settings.clone();
 
-    if short != BUILTIN_DEFAULT_THEME {
-        let themes_dir = state.config.themes_dir.clone();
-        let short_for_check = short.clone();
-        let exists = tokio::task::spawn_blocking(move || {
-            themes::resolve_active_theme(&themes_dir, &short_for_check).is_some()
-        })
-        .await
-        .map_err(|err| AppError::internal(format!("resolve theme task failed: {err}")))?;
-
-        if !exists {
+    let updated = tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
+        if short != BUILTIN_DEFAULT_THEME
+            && themes::resolve_active_theme(&themes_dir, &short).is_none()
+        {
             return Err(AppError::not_found(format!("theme '{short}' not found")));
         }
-    }
-
-    let settings_store = state.settings.clone();
-    let updated = tokio::task::spawn_blocking(move || settings_store.set_active_theme(short))
-        .await
-        .map_err(|err| AppError::internal(format!("set active theme task failed: {err}")))??;
+        settings_store.set_active_theme(short)
+    })
+    .await
+    .map_err(|err| AppError::internal(format!("set active theme task failed: {err}")))??;
 
     Ok(no_store_json(
         StatusCode::OK,
@@ -1519,27 +1515,23 @@ async fn delete_theme(
     State(state): State<AppState>,
     AxumPath(short): AxumPath<String>,
 ) -> Result<StatusCode, AppError> {
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
     let themes_dir = state.config.themes_dir.clone();
-    let short_for_task = short.clone();
+    let settings_store = state.settings.clone();
 
-    let removed =
-        tokio::task::spawn_blocking(move || themes::delete_theme_dir(&themes_dir, &short_for_task))
-            .await
-            .map_err(|err| AppError::internal(format!("delete theme task failed: {err}")))??;
-
-    if !removed {
-        return Err(AppError::not_found(format!("theme '{short}' not found")));
-    }
-
-    if state.settings.get().active_theme == short {
-        let settings_store = state.settings.clone();
-        tokio::task::spawn_blocking(move || {
-            settings_store.set_active_theme(BUILTIN_DEFAULT_THEME.to_string())
-        })
-        .await
-        .map_err(|err| AppError::internal(format!("reset active theme task failed: {err}")))??;
-    }
+    tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
+        let removed = themes::delete_theme_dir(&themes_dir, &short)?;
+        if !removed {
+            return Err(AppError::not_found(format!("theme '{short}' not found")));
+        }
+        if settings_store.get().active_theme == short {
+            settings_store.set_active_theme(BUILTIN_DEFAULT_THEME.to_string())?;
+        }
+        Ok::<(), AppError>(())
+    })
+    .await
+    .map_err(|err| AppError::internal(format!("delete theme task failed: {err}")))??;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1606,7 +1598,7 @@ async fn upload_tool(
     let max_upload_mb = state.config.max_upload_mb;
     let zip_bytes = extract_uploaded_zip_bytes(multipart, max_upload_bytes, max_upload_mb).await?;
 
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
     let registry = Arc::clone(&state.registry);
     let tools_dir = registry.tools_dir().to_path_buf();
     let limits = ArchiveLimits {
@@ -1615,6 +1607,7 @@ async fn upload_tool(
     };
 
     let outcome = tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
         archive::install_zip_bytes_checked_with_commit(
             &tools_dir,
             &zip_bytes,
@@ -1710,7 +1703,7 @@ async fn upload_single_html_tool(
         inject_sdk: body.inject_sdk,
     };
 
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
     let registry = Arc::clone(&state.registry);
     let tools_dir = registry.tools_dir().to_path_buf();
     let limits = ArchiveLimits {
@@ -1719,6 +1712,7 @@ async fn upload_single_html_tool(
     };
 
     let outcome = tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
         archive::install_single_html_checked_with_commit(
             &tools_dir,
             input,
@@ -1842,11 +1836,12 @@ async fn patch_tool(
 
     let visibility = manifest::resolve_visibility(body.visibility.as_deref(), body.draft)?;
 
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
     let registry = Arc::clone(&state.registry);
     let id_for_task = id.clone();
 
     let updated = tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
         let fs_lock = registry.fs_lock();
         let _fs_write = fs_lock.blocking_write();
         let updated =
@@ -1877,11 +1872,12 @@ async fn delete_tool(
 ) -> Result<StatusCode, AppError> {
     manifest::validate_id(&id)?;
 
-    let _write_guard = state.registry.write_lock().lock_owned().await;
+    let write_guard = state.registry.write_lock().lock_owned().await;
     let registry = Arc::clone(&state.registry);
     let id_for_task = id.clone();
 
     let (removed_from_disk, removed_from_registry) = tokio::task::spawn_blocking(move || {
+        let _write_guard = write_guard;
         let fs_lock = registry.fs_lock();
         let _fs_write = fs_lock.blocking_write();
         let removed_from_disk = archive::delete_tool_dir(registry.tools_dir(), &id_for_task)?;
@@ -1938,6 +1934,46 @@ enum ToolAssetCacheMode {
     GrantScoped,
 }
 
+/// Re-validates a tool's on-disk `manifest.json` metadata fingerprint while holding `fs_lock`
+/// so out-of-band filesystem edits (`rsync`, `git pull`, manual edits, or deletions) take effect
+/// immediately on `/t/{id}*` before the debounced watcher rescans `tools_dir`.
+///
+/// - Fast path: if `tool_dir` is a non-symlink directory and `manifest.json` is a regular
+///   non-symlink file whose `(len, modified)` matches `entry.manifest_fingerprint`, returns
+///   `Some(entry.clone())` without reading `manifest.json`.
+/// - Slow path: reads `manifest.json`, parses live `visibility` (failing closed with `None` if
+///   missing, symlinked, unreadable, or invalid), and returns a cloned entry with updated
+///   `visibility`, `draft`, and `manifest_fingerprint`.
+async fn resolve_live_entry_for_session(state: &AppState, entry: &ToolEntry) -> Option<ToolEntry> {
+    let tool_dir = state.registry.tools_dir().join(&entry.id);
+    let dir_meta = tokio::fs::symlink_metadata(&tool_dir).await.ok()?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return None;
+    }
+
+    let manifest_path = tool_dir.join("manifest.json");
+    let meta = tokio::fs::symlink_metadata(&manifest_path).await.ok()?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return None;
+    }
+
+    let live_fp = manifest::ManifestFingerprint {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    };
+    if live_fp.modified.is_some() && entry.manifest_fingerprint == Some(live_fp) {
+        return Some(entry.clone());
+    }
+
+    let raw_bytes = tokio::fs::read(&manifest_path).await.ok()?;
+    let live_visibility = manifest::parse_visibility_from_bytes(&raw_bytes).ok()?;
+    let mut live_entry = entry.clone();
+    live_entry.visibility = live_visibility;
+    live_entry.draft = live_visibility == Visibility::Draft;
+    live_entry.manifest_fingerprint = Some(live_fp);
+    Some(live_entry)
+}
+
 /// `GET /t/{id}` and `GET /t/{id}/`: redirects to the registered tool's `entry_url`.
 /// Non-public tools enforce visibility gating and return `Cache-Control: private, no-store`,
 /// `Vary: Cookie`, and `Referrer-Policy: no-referrer`.
@@ -1952,11 +1988,14 @@ async fn redirect_tool_entry(
             .registry
             .get(&id)
             .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+        let live_entry = resolve_live_entry_for_session(&state, &entry)
+            .await
+            .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
-        if !can_access_tool_via_session(&state, &headers, &entry) {
+        if !can_access_tool_via_session(&state, &headers, &live_entry) {
             return Err(AppError::not_found(format!("tool '{id}' not found")));
         }
-        entry
+        live_entry
     };
 
     let mut resp = Redirect::temporary(&entry.entry_url).into_response();
@@ -1985,14 +2024,17 @@ async fn serve_tool_asset(
         .registry
         .get(&id)
         .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
+    let live_entry = resolve_live_entry_for_session(&state, &entry)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("tool '{id}' not found")))?;
 
-    if !can_access_tool_via_session(&state, &headers, &entry) {
+    if !can_access_tool_via_session(&state, &headers, &live_entry) {
         return Err(AppError::not_found(format!("tool '{id}' not found")));
     }
 
     serve_tool_asset_for_entry(
         &state,
-        &entry,
+        &live_entry,
         &path,
         ToolAssetCacheMode::SessionScoped,
         fs_read,

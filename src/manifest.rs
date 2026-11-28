@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -107,6 +108,92 @@ pub fn resolve_visibility(
     }
 }
 
+/// Lightweight metadata fingerprint of a tool's `manifest.json`, used to detect out-of-band
+/// filesystem edits before the debounced watcher rescans `tools_dir`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManifestFingerprint {
+    /// File byte length from `symlink_metadata`.
+    pub len: u64,
+    /// File modification timestamp from `symlink_metadata`, if supported by the platform.
+    pub modified: Option<SystemTime>,
+}
+
+/// Reads the [`ManifestFingerprint`] of `tool_dir/manifest.json` using `symlink_metadata`,
+/// returning `None` if `manifest.json` is missing, unreadable, a symlink, or not a regular file.
+pub fn read_manifest_fingerprint(tool_dir: &Path) -> Option<ManifestFingerprint> {
+    let meta = fs::symlink_metadata(tool_dir.join("manifest.json")).ok()?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return None;
+    }
+    Some(ManifestFingerprint {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    })
+}
+
+/// Minimal subset of `manifest.json` needed to resolve visibility independently of asset files.
+#[derive(Debug, Deserialize)]
+struct RawVisibilityFields {
+    #[serde(default)]
+    visibility: Option<String>,
+    #[serde(default)]
+    draft: Option<bool>,
+}
+
+/// Parses `visibility` and legacy `draft` fields from raw `manifest.json` bytes and resolves
+/// effective [`Visibility`] without validating unrelated asset paths (`entry`, `icon`, etc.).
+pub fn parse_visibility_from_bytes(raw_bytes: &[u8]) -> Result<Visibility, AppError> {
+    let value: serde_json::Value = serde_json::from_slice(raw_bytes)
+        .map_err(|err| AppError::unprocessable(format!("invalid manifest.json: {err}")))?;
+    if !value.is_object() {
+        return Err(AppError::unprocessable(
+            "invalid manifest.json: expected a JSON object",
+        ));
+    }
+    let fields: RawVisibilityFields = serde_json::from_value(value)
+        .map_err(|err| AppError::unprocessable(format!("invalid manifest.json: {err}")))?;
+    resolve_visibility(fields.visibility.as_deref(), fields.draft)
+}
+
+/// Independently inspects `tool_dir/manifest.json` and resolves the existing tool's [`Visibility`]
+/// without validating `entry` or `icon` file existence.
+///
+/// Rejects missing, unreadable, symlinked, non-regular, or invalid `manifest.json` files so
+/// callers can fail closed rather than defaulting a damaged private tool to [`Visibility::Public`].
+pub fn read_existing_visibility(tool_dir: &Path) -> Result<Visibility, AppError> {
+    let dir_meta = fs::symlink_metadata(tool_dir).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::unprocessable("existing tool directory does not exist")
+        } else {
+            AppError::unprocessable(format!("failed to inspect existing tool directory: {err}"))
+        }
+    })?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return Err(AppError::unprocessable(
+            "existing tool path must be a regular directory (symlinks are not allowed)",
+        ));
+    }
+
+    let manifest_path = tool_dir.join("manifest.json");
+    let manifest_meta = fs::symlink_metadata(&manifest_path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::unprocessable("missing manifest.json in existing tool directory")
+        } else {
+            AppError::unprocessable(format!("failed to inspect manifest.json: {err}"))
+        }
+    })?;
+    if manifest_meta.file_type().is_symlink() || !manifest_meta.file_type().is_file() {
+        return Err(AppError::unprocessable(
+            "manifest.json must be a regular file (symlinks are not allowed)",
+        ));
+    }
+
+    let raw_bytes = fs::read(&manifest_path)
+        .map_err(|err| AppError::unprocessable(format!("failed to read manifest.json: {err}")))?;
+
+    parse_visibility_from_bytes(&raw_bytes)
+}
+
 /// Raw deserialized representation of a tool's `manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,6 +274,9 @@ pub struct ToolEntry {
     pub visibility: Visibility,
     /// Legacy compatibility flag strictly derived from `visibility == Visibility::Draft`.
     pub draft: bool,
+    /// Metadata fingerprint of `manifest.json` at the time this entry was loaded.
+    #[serde(skip)]
+    pub manifest_fingerprint: Option<ManifestFingerprint>,
 }
 
 impl ToolEntry {
@@ -473,6 +563,10 @@ pub fn load_and_validate_manifest_with_source(
     let has_explicit_visibility = raw.visibility.is_some() || raw.draft.is_some();
     let visibility = resolve_visibility(raw.visibility.as_deref(), raw.draft)?;
     let draft = visibility == Visibility::Draft;
+    let manifest_fingerprint = Some(ManifestFingerprint {
+        len: manifest_meta.len(),
+        modified: manifest_meta.modified().ok(),
+    });
 
     Ok((
         ToolEntry {
@@ -492,6 +586,7 @@ pub fn load_and_validate_manifest_with_source(
             sandbox,
             visibility,
             draft,
+            manifest_fingerprint,
         },
         has_explicit_visibility,
     ))
@@ -1091,5 +1186,132 @@ mod tests {
             assert_eq!(entry.visibility, expected_vis, "for {manifest_json}");
             assert_eq!(has_explicit, expected_explicit, "for {manifest_json}");
         }
+    }
+
+    #[test]
+    fn read_existing_visibility_works_on_damaged_tools_and_fails_closed_on_bad_manifest() {
+        // Damaged private tool: missing index.html and missing path-based icon -> still reports Private
+        let damaged_priv = TempDir::new().unwrap();
+        write_file(
+            damaged_priv.path(),
+            "manifest.json",
+            r#"{"id":"broken-priv","name":"Broken","icon":"assets/missing.svg","visibility":"private"}"#,
+        );
+        assert!(load_and_validate_manifest(damaged_priv.path(), Some("broken-priv")).is_err());
+        assert_eq!(
+            read_existing_visibility(damaged_priv.path()).unwrap(),
+            Visibility::Private
+        );
+
+        // Damaged legacy draft tool: missing index.html -> still reports Draft
+        let damaged_draft = TempDir::new().unwrap();
+        write_file(
+            damaged_draft.path(),
+            "manifest.json",
+            r#"{"id":"broken-draft","name":"Broken","draft":true}"#,
+        );
+        assert_eq!(
+            read_existing_visibility(damaged_draft.path()).unwrap(),
+            Visibility::Draft
+        );
+
+        // Damaged public tool (visibility omitted, missing index.html) -> Public
+        let damaged_pub = TempDir::new().unwrap();
+        write_file(
+            damaged_pub.path(),
+            "manifest.json",
+            r#"{"id":"broken-pub","name":"Broken"}"#,
+        );
+        assert_eq!(
+            read_existing_visibility(damaged_pub.path()).unwrap(),
+            Visibility::Public
+        );
+
+        // Missing manifest.json -> 422 error
+        let missing = TempDir::new().unwrap();
+        assert_eq!(
+            read_existing_visibility(missing.path())
+                .unwrap_err()
+                .error_code(),
+            "UNPROCESSABLE_ENTITY"
+        );
+
+        // Corrupt JSON / non-object / invalid visibility / conflicting draft -> 422 error
+        for bad in [
+            "{broken-json",
+            "[]",
+            r#"{"visibility":"internal"}"#,
+            r#"{"visibility":"private","draft":true}"#,
+            r#"{"visibility":123}"#,
+        ] {
+            let dir = TempDir::new().unwrap();
+            write_file(dir.path(), "manifest.json", bad);
+            assert_eq!(
+                read_existing_visibility(dir.path())
+                    .unwrap_err()
+                    .error_code(),
+                "UNPROCESSABLE_ENTITY",
+                "expected failure for {bad}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_existing_visibility_and_fingerprint_reject_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let outside = TempDir::new().unwrap();
+        write_file(
+            outside.path(),
+            "manifest.json",
+            r#"{"id":"sym","name":"Sym","visibility":"public"}"#,
+        );
+
+        // Symlinked manifest.json
+        let dir = TempDir::new().unwrap();
+        symlink(
+            outside.path().join("manifest.json"),
+            dir.path().join("manifest.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            read_existing_visibility(dir.path())
+                .unwrap_err()
+                .error_code(),
+            "UNPROCESSABLE_ENTITY"
+        );
+        assert!(read_manifest_fingerprint(dir.path()).is_none());
+
+        // Symlinked tool directory
+        let parent = TempDir::new().unwrap();
+        let linked_tool = parent.path().join("linked-tool");
+        symlink(outside.path(), &linked_tool).unwrap();
+        assert_eq!(
+            read_existing_visibility(&linked_tool)
+                .unwrap_err()
+                .error_code(),
+            "UNPROCESSABLE_ENTITY"
+        );
+    }
+
+    #[test]
+    fn manifest_fingerprint_populates_on_load_and_is_skipped_in_json() {
+        let dir = TempDir::new().unwrap();
+        write_file(
+            dir.path(),
+            "manifest.json",
+            r#"{"id":"fp-tool","name":"FP Tool","visibility":"public"}"#,
+        );
+        write_file(dir.path(), "index.html", "<h1>fp</h1>");
+
+        let entry = load_and_validate_manifest(dir.path(), Some("fp-tool")).unwrap();
+        let fp = read_manifest_fingerprint(dir.path()).expect("fingerprint present");
+        assert_eq!(entry.manifest_fingerprint, Some(fp));
+        assert!(fp.len > 0);
+
+        let serialized = serde_json::to_value(&entry).unwrap();
+        assert!(serialized.get("manifestFingerprint").is_none());
+        assert!(serialized.get("manifest_fingerprint").is_none());
     }
 }

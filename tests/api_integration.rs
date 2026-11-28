@@ -5463,3 +5463,366 @@ async fn concurrent_reads_during_visibility_overwrite_never_leak_private_body_or
         handle.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn damaged_tool_overwrite_fail_closed_and_explicit_draft_zip_normalization() {
+    let env = build_test_env(Some(ADMIN_KEY), Some(API_KEY), 50, false, false);
+
+    // 1. Damaged private tool (missing index.html, intact manifest.json with visibility: "private")
+    let damaged_dir = env.tools_dir.join("broken-priv");
+    fs::create_dir_all(&damaged_dir).unwrap();
+    fs::write(
+        damaged_dir.join("manifest.json"),
+        r#"{"id":"broken-priv","name":"Broken Private","visibility":"private"}"#,
+    )
+    .unwrap();
+
+    // 1a. Overwrite with ZIP omitting visibility/draft -> 200 OK, preserves `private`, hidden from anonymous
+    let zip_omitted = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"broken-priv","name":"Fixed ZIP"}"#,
+        ),
+        ("index.html", b"<h1>Fixed Private ZIP</h1>"),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&zip_omitted, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["visibility"], "private");
+    assert_eq!(body["draft"], false);
+
+    let anon = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/broken-priv/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anon.status(), StatusCode::NOT_FOUND);
+
+    // 1b. Delete index.html again and overwrite with single-HTML omitting visibility/draft -> preserves `private`
+    fs::remove_file(damaged_dir.join("index.html")).unwrap();
+    let html_omitted = json!({
+        "id": "broken-priv",
+        "name": "Fixed HTML",
+        "html": "<h1>Fixed Private HTML</h1>",
+        "injectSdk": false
+    });
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_omitted.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["visibility"], "private");
+    assert_eq!(body["draft"], false);
+
+    let anon = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/broken-priv/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anon.status(), StatusCode::NOT_FOUND);
+
+    // 2. Corrupt manifest.json -> omitted visibility rejected with 422 (both ZIP & single-HTML)
+    fs::write(damaged_dir.join("manifest.json"), "{corrupt").unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&zip_omitted, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_omitted.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 2b. Missing manifest.json -> omitted visibility also rejected with 422
+    fs::remove_file(damaged_dir.join("manifest.json")).unwrap();
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&zip_omitted, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 2c. Explicit visibility repairs corrupt/missing manifest.json (ZIP -> private, single-HTML -> public)
+    let zip_explicit_priv = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"broken-priv","name":"Repaired Explicit Private","visibility":"private"}"#,
+        ),
+        ("index.html", b"<h1>Explicit Private</h1>"),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&zip_explicit_priv, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_json(resp).await["visibility"], "private");
+
+    fs::write(damaged_dir.join("manifest.json"), "not-json").unwrap();
+    let html_explicit_pub = json!({
+        "id": "broken-priv",
+        "name": "Repaired Explicit Public",
+        "html": "<h1>Explicit Public</h1>",
+        "visibility": "public",
+        "injectSdk": false
+    });
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/admin/tools/import/html?overwrite=true")
+                .header(AUTHORIZATION, format!("Bearer {API_KEY}"))
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(html_explicit_pub.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(read_body_json(resp).await["visibility"], "public");
+
+    // 3. Explicit `{"visibility": "draft"}` ZIP (without `"draft": true`) writes BOTH keys on disk
+    let draft_zip = make_zip(&[
+        (
+            "manifest.json",
+            br#"{"id":"draft-compat-zip","name":"Draft Compat ZIP","visibility":"draft"}"#,
+        ),
+        ("index.html", b"<h1>Draft Compat</h1>"),
+    ]);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(bearer_upload_request(&draft_zip, API_KEY))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = read_body_json(resp).await;
+    assert_eq!(created["visibility"], "draft");
+    assert_eq!(created["draft"], true);
+
+    let disk_draft: Value = serde_json::from_str(
+        &fs::read_to_string(env.tools_dir.join("draft-compat-zip/manifest.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(disk_draft["visibility"], "draft");
+    assert_eq!(disk_draft["draft"], true);
+}
+
+#[tokio::test]
+async fn external_disk_manifest_change_takes_effect_immediately_without_rescan() {
+    let env = build_test_env(Some(ADMIN_KEY), None, 50, false, false);
+    let cookie = login_as_admin(&env.app, ADMIN_KEY).await;
+
+    // 1. Seed a public tool and scan once into in-memory registry (no watcher running, no later scan_all!)
+    create_disk_tool(
+        &env.tools_dir,
+        "live-check",
+        r#"{"id":"live-check","name":"Live Check","visibility":"public"}"#,
+        "<h1>Sensitive Content</h1>",
+    );
+    assert_eq!(env.registry.scan_all().unwrap(), 1);
+
+    // Baseline: anonymous can reach both /t/live-check and /t/live-check/index.html
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/live-check")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/live-check/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+
+    // 2. Out-of-band edit on disk (simulating rsync / git pull): change visibility to "private" WITHOUT scan_all()
+    let manifest_path = env.tools_dir.join("live-check/manifest.json");
+    fs::write(
+        &manifest_path,
+        r#"{"id":"live-check","name":"Live Check","visibility":"private"}"#,
+    )
+    .unwrap();
+
+    // Anonymous immediately receives 404 on both redirect and asset routes!
+    for uri in ["/t/live-check", "/t/live-check/", "/t/live-check/index.html"] {
+        let resp = env
+            .app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "anonymous {uri} must fail closed immediately after out-of-band private edit"
+        );
+    }
+
+    // Authenticated admin still succeeds AND receives private, no-store + Vary: Cookie + Referrer-Policy: no-referrer
+    let admin_redirect = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/live-check")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_redirect.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(
+        admin_redirect.headers()[CACHE_CONTROL].to_str().unwrap(),
+        "private, no-store"
+    );
+    assert_eq!(admin_redirect.headers()[VARY].to_str().unwrap(), "Cookie");
+    assert_eq!(
+        admin_redirect.headers()[REFERRER_POLICY].to_str().unwrap(),
+        "no-referrer"
+    );
+
+    let admin_asset = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/t/live-check/index.html")
+                .header(COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(admin_asset.status(), StatusCode::OK);
+    assert_eq!(
+        admin_asset.headers()[CACHE_CONTROL].to_str().unwrap(),
+        "private, no-store"
+    );
+    assert_eq!(admin_asset.headers()[VARY].to_str().unwrap(), "Cookie");
+    assert_eq!(
+        admin_asset.headers()[REFERRER_POLICY].to_str().unwrap(),
+        "no-referrer"
+    );
+    assert!(
+        admin_asset
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none()
+    );
+    assert_eq!(read_body_bytes(admin_asset).await, b"<h1>Sensitive Content</h1>");
+
+    // 3. Out-of-band corrupt manifest.json (WITHOUT scan_all) -> fail-closed 404 for BOTH anonymous and admin
+    fs::write(&manifest_path, "{corrupt-json-from-partial-sync").unwrap();
+    for uri in ["/t/live-check", "/t/live-check/index.html"] {
+        let anon_resp = env
+            .app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(anon_resp.status(), StatusCode::NOT_FOUND);
+
+        let admin_resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(admin_resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // 4. Out-of-band deleted manifest.json (WITHOUT scan_all) -> fail-closed 404 for BOTH anonymous and admin
+    fs::remove_file(&manifest_path).unwrap();
+    for uri in ["/t/live-check", "/t/live-check/index.html"] {
+        let anon_resp = env
+            .app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(anon_resp.status(), StatusCode::NOT_FOUND);
+
+        let admin_resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(admin_resp.status(), StatusCode::NOT_FOUND);
+    }
+}
