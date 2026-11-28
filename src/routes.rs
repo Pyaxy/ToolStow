@@ -2040,7 +2040,9 @@ async fn serve_tool_asset_for_entry(
 
     match cache_mode {
         ToolAssetCacheMode::SessionScoped if entry.visibility == Visibility::Public => {
-            builder = builder.header(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+            builder = builder
+                .header(CACHE_CONTROL, HeaderValue::from_static("no-cache"))
+                .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
         }
         ToolAssetCacheMode::SessionScoped => {
             builder = builder
@@ -2057,7 +2059,8 @@ async fn serve_tool_asset_for_entry(
                     CACHE_CONTROL,
                     HeaderValue::from_static("private, no-store"),
                 )
-                .header(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+                .header(REFERRER_POLICY, HeaderValue::from_static("no-referrer"))
+                .header(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
         }
     }
 

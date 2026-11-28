@@ -13,9 +13,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::connect_info::ConnectInfo;
 use axum::http::header::{
-    ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL, CONTENT_SECURITY_POLICY,
-    CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN, REFERRER_POLICY, SET_COOKIE, VARY,
-    X_CONTENT_TYPE_OPTIONS,
+    ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION, CACHE_CONTROL,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN, REFERRER_POLICY,
+    SET_COOKIE, VARY, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
@@ -4264,7 +4264,7 @@ async fn three_state_visibility_matrix_and_capability_grants_end_to_end() {
     assert_eq!(anon_list[0]["draft"], false);
     assert_eq!(anon_list[0]["entryUrl"], "/t/pub-tool/index.html");
 
-    // Anonymous /t/ access: public 200 (no-cache), private & draft 404
+    // Anonymous /t/ access: public 200 (no-cache + ACAO: * for Origin: null fetches), private & draft 404
     let pub_resp = env
         .app
         .clone()
@@ -4278,6 +4278,18 @@ async fn three_state_visibility_matrix_and_capability_grants_end_to_end() {
         .unwrap();
     assert_eq!(pub_resp.status(), StatusCode::OK);
     assert_eq!(pub_resp.headers()[CACHE_CONTROL].to_str().unwrap(), "no-cache");
+    assert_eq!(
+        pub_resp.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert!(
+        pub_resp
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_CREDENTIALS)
+            .is_none()
+    );
 
     for blocked in [
         "/t/priv-multi",
@@ -4427,6 +4439,19 @@ async fn three_state_visibility_matrix_and_capability_grants_end_to_end() {
         t_priv_asset.headers()[REFERRER_POLICY].to_str().unwrap(),
         "no-referrer"
     );
+    // Cookie-gated non-public /t/ route MUST NOT emit Access-Control-Allow-Origin
+    assert!(
+        t_priv_asset
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none()
+    );
+    assert!(
+        t_priv_asset
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_CREDENTIALS)
+            .is_none()
+    );
 
     // 4. Capability URL /tp/{grant}/priv-multi/... works WITHOUT Cookie for redirect, HTML, JS, icon
     for redir_uri in [
@@ -4481,6 +4506,18 @@ async fn three_state_visibility_matrix_and_capability_grants_end_to_end() {
         tp_html.headers()[REFERRER_POLICY].to_str().unwrap(),
         "no-referrer"
     );
+    assert_eq!(
+        tp_html.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert!(
+        tp_html
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_CREDENTIALS)
+            .is_none()
+    );
     assert!(
         String::from_utf8(read_body_bytes(tp_html).await)
             .unwrap()
@@ -4506,6 +4543,18 @@ async fn three_state_visibility_matrix_and_capability_grants_end_to_end() {
     assert_eq!(
         tp_js.headers()[REFERRER_POLICY].to_str().unwrap(),
         "no-referrer"
+    );
+    assert_eq!(
+        tp_js.headers()[ACCESS_CONTROL_ALLOW_ORIGIN]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert!(
+        tp_js
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_CREDENTIALS)
+            .is_none()
     );
     assert_eq!(
         read_body_bytes(tp_js).await,
@@ -4732,6 +4781,12 @@ async fn three_state_visibility_matrix_and_capability_grants_end_to_end() {
     assert_eq!(
         dev_draft_resp.headers()[REFERRER_POLICY].to_str().unwrap(),
         "no-referrer"
+    );
+    assert!(
+        dev_draft_resp
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none()
     );
 
     // Admin on --include-drafts: sees all 3 with /tp/{grant}/... on private and draft
