@@ -21,6 +21,7 @@
   var DEFAULT_SITE_TITLE = "ToolStow";
   var DEFAULT_SITE_DESC = "Personal Micro-App Toolbox";
   var DEFAULT_ICON_GLYPH = "🛠️";
+  var RESUME_REFRESH_MIN_INTERVAL_MS = 1500;
 
   var SANDBOX_ALLOWLIST = new Set([
     "allow-scripts",
@@ -301,10 +302,12 @@
     };
 
     var activeTool = null;
+    var activeMountedPath = null;
     var tokens = {};
     var subscribers = new Set();
     var bootstrapPromise = null;
     var refreshSeq = 0;
+    var lastLoadCompletedAt = 0;
     var listenersBound = false;
 
     /* ---------- notifications ---------- */
@@ -640,6 +643,21 @@
 
     /* ---------- URLs & iframe ---------- */
 
+    function normalizeEntryPathname(entryUrl) {
+      if (!isSafeToolUrl(entryUrl)) return null;
+      try {
+        var base =
+          global.location && global.location.origin && global.location.origin !== "null"
+            ? global.location.origin
+            : "http://localhost";
+        var url = new URL(entryUrl, base);
+        return isSafeToolUrl(url.pathname) ? url.pathname : null;
+      } catch (_) {
+        var path = entryUrl.split("#")[0].split("?")[0];
+        return isSafeToolUrl(path) ? path : null;
+      }
+    }
+
     function buildToolUrl(entryUrl, buildOpts) {
       if (!isSafeToolUrl(entryUrl)) return null;
       var cacheBust = Boolean(buildOpts && buildOpts.cacheBust);
@@ -672,6 +690,7 @@
       state.activeIframe = null;
       state.activeIframeReady = false;
       activeTool = null;
+      activeMountedPath = null;
       if (iframe && iframe.parentNode) {
         iframe.parentNode.removeChild(iframe);
       }
@@ -715,6 +734,7 @@
       state.activeIframe = iframe;
       state.activeIframeReady = false;
       activeTool = tool;
+      activeMountedPath = normalizeEntryPathname(tool.entryUrl);
       containerEl.replaceChildren(iframe);
       notify();
       return iframe;
@@ -890,6 +910,7 @@
         if (toolsResult.ok) {
           state.allTools = toolsResult.tools;
           state.error = null;
+          lastLoadCompletedAt = Date.now();
           applyFilters();
         } else {
           var message =
@@ -904,11 +925,40 @@
 
     function refresh(refreshOpts) {
       var keepSelection = !refreshOpts || refreshOpts.keepSelection !== false;
+      var prevSelectedId = state.selectedId;
+      var prevTool = activeTool || getSelectedTool();
+      var prevMountedPath =
+        activeMountedPath || (prevTool ? normalizeEntryPathname(prevTool.entryUrl) : null);
+
       return loadData().then(function (applied) {
         if (!applied) return getState();
         if (state.selectedId && (!keepSelection || !findTool(state.selectedId))) {
           clearSelection({ updateHash: true }); // notifies
-        } else if (state.selectedId || !restoreToolFromHash()) {
+        } else if (state.selectedId) {
+          var updatedTool = findTool(state.selectedId);
+          var nextMountedPath = normalizeEntryPathname(updatedTool.entryUrl);
+          var currentMountedPath =
+            activeMountedPath || (prevSelectedId === state.selectedId ? prevMountedPath : null);
+
+          if (state.activeIframe && nextMountedPath !== currentMountedPath) {
+            var container = state.activeIframe.parentNode || iframeHost || null;
+            updateDocumentTitle(updatedTool);
+            if (container) {
+              if (!mountTool(container, updatedTool, { cacheBust: true })) {
+                detachActiveIframe();
+                if (iframeHost) iframeHost.replaceChildren();
+                notify();
+              }
+            } else {
+              detachActiveIframe();
+              notify();
+            }
+          } else {
+            if (state.activeIframe) activeTool = updatedTool;
+            updateDocumentTitle(updatedTool);
+            notify();
+          }
+        } else if (!restoreToolFromHash()) {
           updateDocumentTitle(getSelectedTool());
           notify();
         }
@@ -953,11 +1003,55 @@
       }
     }
 
+    function isDocumentVisible() {
+      return !doc.visibilityState || doc.visibilityState === "visible";
+    }
+
+    function shouldRevalidateOnResume() {
+      if (!state.selectedId) return true;
+      if (state.site.isAdmin === true) return true;
+      var current = activeTool || getSelectedTool();
+      if (current && normalizeVisibility(current) !== "public") return true;
+      return state.allTools.some(function (tool) {
+        return normalizeVisibility(tool) !== "public";
+      });
+    }
+
+    function triggerResumeRefresh(force) {
+      if (!bootstrapPromise) return;
+      if (!isDocumentVisible()) return;
+      if (!shouldRevalidateOnResume()) return;
+      if (!force) {
+        if (state.loading) return;
+        if (
+          lastLoadCompletedAt &&
+          Date.now() - lastLoadCompletedAt < RESUME_REFRESH_MIN_INTERVAL_MS
+        ) {
+          return;
+        }
+      }
+      refresh({ keepSelection: true });
+    }
+
+    function handleResumeCheck() {
+      triggerResumeRefresh(false);
+    }
+
+    function handlePageShow(event) {
+      var persisted = Boolean(event && event.persisted);
+      triggerResumeRefresh(persisted);
+    }
+
     function bindListeners() {
       if (listenersBound) return;
       listenersBound = true;
       global.addEventListener("message", handleMessage);
       if (hashRouting) global.addEventListener("hashchange", handleHashChange);
+      if (typeof doc.addEventListener === "function") {
+        doc.addEventListener("visibilitychange", handleResumeCheck);
+      }
+      global.addEventListener("focus", handleResumeCheck);
+      global.addEventListener("pageshow", handlePageShow);
       if (mediaQuery) {
         if (typeof mediaQuery.addEventListener === "function") {
           mediaQuery.addEventListener("change", handleSystemModeChange);
@@ -972,6 +1066,11 @@
       listenersBound = false;
       global.removeEventListener("message", handleMessage);
       global.removeEventListener("hashchange", handleHashChange);
+      if (typeof doc.removeEventListener === "function") {
+        doc.removeEventListener("visibilitychange", handleResumeCheck);
+      }
+      global.removeEventListener("focus", handleResumeCheck);
+      global.removeEventListener("pageshow", handlePageShow);
       if (mediaQuery) {
         if (typeof mediaQuery.removeEventListener === "function") {
           mediaQuery.removeEventListener("change", handleSystemModeChange);

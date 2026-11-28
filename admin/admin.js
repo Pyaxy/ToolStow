@@ -835,13 +835,19 @@ function formatOverwritePrompt(body, fileName) {
   const toolId = (incoming && incoming.id) || (existing && existing.id) || fileName;
   const existingName = (existing && existing.name) || toolId;
   const existingVer = existing && existing.version ? `v${existing.version}` : "未知版本";
-  const existingStatus = existing ? visibilityLabel(normalizeVisibility(existing)) : "已安装";
+  const existingVis = existing ? normalizeVisibility(existing) : null;
+  const existingStatus = existingVis ? visibilityLabel(existingVis) : "已安装";
 
   if (incoming) {
     const incomingName = incoming.name || toolId;
     const incomingVer = incoming.version ? `v${incoming.version}` : "未知版本";
-    const incomingStatus = visibilityLabel(normalizeVisibility(incoming));
-    return `工具「${existingName}」(${toolId}) 已存在（当前 ${existingVer} · ${existingStatus}）。确定要用新上传的「${incomingName}」(${incomingVer} · ${incomingStatus}) 覆盖替换现有目录吗？`;
+    const incomingVis = normalizeVisibility(incoming);
+    const incomingStatus = visibilityLabel(incomingVis);
+    const publicExposureWarning =
+      (existingVis === "private" || existingVis === "draft") && incomingVis === "public"
+        ? "（⚠️ 注意：新包显式声明为公开，覆盖后该工具将对匿名访客可见！）"
+        : "";
+    return `工具「${existingName}」(${toolId}) 已存在（当前 ${existingVer} · ${existingStatus}）。确定要用新上传的「${incomingName}」(${incomingVer} · ${incomingStatus}) 覆盖替换现有目录吗？${publicExposureWarning}`;
   }
 
   return `工具 ID「${toolId}」已存在（当前 ${existingVer} · ${existingStatus}）。确定要覆盖替换现有工具目录吗？`;

@@ -620,20 +620,7 @@ function focusSearch() {
   els.searchInput.select();
 }
 
-function refreshVisibleDirectory() {
-  const state = host.getState();
-  if (document.visibilityState === "visible" && !state.selectedId && !state.loading) {
-    host.refresh();
-  }
-}
-
 function bindEvents() {
-  document.addEventListener("visibilitychange", refreshVisibleDirectory);
-  window.addEventListener("focus", refreshVisibleDirectory);
-  window.addEventListener("pageshow", (e) => {
-    if (e.persisted) refreshVisibleDirectory();
-  });
-
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
     host.clearSelection({ updateHash: true });
