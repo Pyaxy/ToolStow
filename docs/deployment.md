@@ -43,6 +43,8 @@ TOOLSTOW_API_KEY=<另一把 64 位随机十六进制 API Key>
 ```
 
 > **纯只读模式**：如果不填写 `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY`，`/admin` 与所有 `/api/admin/*` 接口将自动返回 `404`，可通过 SSH / `rsync` / `git pull` 直接维护 `data/tools/` 触发热加载。
+>
+> **热更新与可见性切换注意（`rsync` / `git pull`）**：尽管 ToolStow 在 `/t/{id}/*` 路由上会实时比对 `manifest.json` 元数据指纹以消除 `notify` 防抖延迟，但外部多文件原地同步（`rsync`、`git pull` 等）在跨文件维度上**并非原子操作**（例如新的敏感资源文件可能早于 `manifest.json` 落盘）。因此**切勿通过 `rsync` / `git pull` 将已有的 `public` 工具原地改为 `private`**——请先在 `/admin` 或通过 `PATCH /api/admin/tools/{id}` 将该工具切换为 `private`，或直接通过管理 API / `publish.py` 进行同盘暂存后的原子替换部署。
 
 ---
 
