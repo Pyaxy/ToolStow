@@ -57,6 +57,7 @@
           <select id="quick-switcher" class="quick-switcher" aria-label="快速切换工具"></select>
           <span id="active-tool-icon" class="tool-icon wb-icon" aria-hidden="true"></span>
           <h1 id="active-tool-name" class="wb-name"></h1>
+          <span id="active-tool-vis-badge" class="vis-badge wb-vis-badge" hidden></span>
         </div>
 
         <div class="wb-right">
@@ -92,6 +93,10 @@
             <div id="info-version-row" class="info-row">
               <dt>版本</dt>
               <dd><code id="active-tool-version"></code></dd>
+            </div>
+            <div id="info-visibility-row" class="info-row" hidden>
+              <dt>可见性</dt>
+              <dd><span id="active-tool-vis-info" class="vis-badge"></span></dd>
             </div>
             <div id="info-theme-row" class="info-row" hidden>
               <dt>主题</dt>

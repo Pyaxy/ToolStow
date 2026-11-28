@@ -68,7 +68,21 @@
      ------------------------------------------------------------------------ */
 
   function isSafeToolUrl(url) {
-    return typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//");
+    if (typeof url !== "string" || url.startsWith("//")) return false;
+    if (/[\u0000-\u001f\u007f]/.test(url)) return false;
+    return /^\/(?:t\/|tp\/[0-9a-f]{64}\/)/i.test(url);
+  }
+
+  function normalizeVisibility(tool) {
+    if (!tool || typeof tool !== "object") return "public";
+    if (
+      tool.visibility === "private" ||
+      tool.visibility === "draft" ||
+      tool.visibility === "public"
+    ) {
+      return tool.visibility;
+    }
+    return tool.draft === true ? "draft" : "public";
   }
 
   function normalizeHexColor(val) {
@@ -143,7 +157,12 @@
         return encodeURIComponent(s);
       });
     if (segments.length === 0) return null;
-    var url = "/t/" + encodeURIComponent(tool.id) + "/" + segments.join("/");
+    var prefix = "/t/";
+    if (typeof tool.entryUrl === "string") {
+      var tpMatch = tool.entryUrl.match(/^(\/tp\/[0-9a-f]{64}\/)/i);
+      if (tpMatch) prefix = tpMatch[1];
+    }
+    var url = prefix + encodeURIComponent(tool.id) + "/" + segments.join("/");
     return isSafeToolUrl(url) ? url : null;
   }
 
@@ -1007,6 +1026,7 @@
     SYNCED_TOKENS: SYNCED_TOKENS,
     STORAGE_KEY_MODE: STORAGE_KEY_MODE,
     isSafeToolUrl: isSafeToolUrl,
+    normalizeVisibility: normalizeVisibility,
     normalizeHexColor: normalizeHexColor,
     sanitizeSandboxTokens: sanitizeSandboxTokens,
     resolveIconUrl: resolveIconUrl,

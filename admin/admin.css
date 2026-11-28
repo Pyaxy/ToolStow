@@ -429,7 +429,7 @@ a {
 /* Stats Strip */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -595,6 +595,7 @@ a {
   font: inherit;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color 0.12s ease, color 0.12s ease;
 }
@@ -740,24 +741,65 @@ a {
   border-radius: 999px;
 }
 
-.status-pill-published {
+.status-pill-public {
   background: var(--inverted-bg);
   border-color: var(--inverted-bg);
   color: var(--inverted-ink);
 }
 
-.status-pill-published .status-dot {
+.status-pill-public .status-dot {
   background: var(--inverted-ink);
+}
+
+.status-pill-private {
+  background: var(--surface-hover);
+  border-color: var(--ink-secondary);
+  color: var(--ink);
+}
+
+.status-pill-private .status-dot {
+  background: transparent;
+  border: 1.5px solid var(--ink);
 }
 
 .status-pill-draft {
   background: var(--surface);
+  border-style: dashed;
   border-color: var(--border-strong);
   color: var(--ink-muted);
 }
 
 .status-pill-draft .status-dot {
   background: var(--ink-muted);
+}
+
+.visibility-select {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--canvas);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background-color 0.14s ease, opacity 0.14s ease;
+}
+
+.visibility-select:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.visibility-select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.visibility-select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .row-actions {
@@ -1254,7 +1296,7 @@ a {
   }
 
   .stats-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .themes-grid {

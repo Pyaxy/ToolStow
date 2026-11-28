@@ -130,6 +130,36 @@ a {
   border-color: var(--border-strong);
 }
 
+.vis-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--ts-border);
+  border-radius: 4px;
+  background: var(--ts-surface);
+  color: var(--ts-ink-secondary);
+  font-family: var(--ts-font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.vis-badge-private {
+  border-color: var(--ts-border-strong);
+  background: var(--ts-surface-hover);
+  color: var(--ts-ink);
+}
+
+.vis-badge-draft {
+  border-style: dashed;
+  border-color: var(--ts-border-strong);
+  background: transparent;
+  color: var(--ts-ink-muted);
+}
+
 .inline-kbd {
   padding: 1px 5px;
   font-size: 11px;
@@ -320,7 +350,16 @@ a {
   gap: 2px;
 }
 
+.tool-row-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .tool-row-name {
+  flex: 0 1 auto;
   min-width: 0;
   font-weight: 600;
   font-size: 14px;
@@ -523,6 +562,7 @@ a {
 
 .wb-name {
   margin: 0;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 14px;
   font-weight: 600;
@@ -530,6 +570,10 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.wb-vis-badge {
+  flex-shrink: 0;
 }
 
 .btn-glyph {
@@ -595,7 +639,7 @@ a {
 }
 
 .info-row dt {
-  width: 40px;
+  width: 44px;
   flex-shrink: 0;
   color: var(--ink-muted);
 }
@@ -841,7 +885,8 @@ a {
 /* ───────────── Responsive ───────────── */
 @media (max-width: 720px) {
   .wb-name,
-  .wb-icon {
+  .wb-icon,
+  .wb-vis-badge {
     display: none;
   }
 
