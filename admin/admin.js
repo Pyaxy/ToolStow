@@ -13,7 +13,7 @@ const state = {
   adminEnabled: true,
   tools: [],
   themes: [],
-  filter: "all", // "all" | "published" | "draft"
+  filter: "all", // "all" | "public" | "private" | "draft"
   search: "",
   themeMode: "light",
   pendingConfirmAction: null,
@@ -60,7 +60,8 @@ const els = {
 
   // Stats
   statTotal: document.getElementById("stat-total"),
-  statPublished: document.getElementById("stat-published"),
+  statPublic: document.getElementById("stat-public"),
+  statPrivate: document.getElementById("stat-private"),
   statDraft: document.getElementById("stat-draft"),
 
   // Upload
@@ -89,7 +90,7 @@ const els = {
   htmlCategoryOptions: document.getElementById("html-category-options"),
   htmlIcon: document.getElementById("html-icon"),
   htmlDesc: document.getElementById("html-desc"),
-  htmlDraft: document.getElementById("html-draft"),
+  htmlVisibility: document.getElementById("html-visibility"),
   htmlInjectSdk: document.getElementById("html-inject-sdk"),
   htmlError: document.getElementById("html-error"),
   htmlPreviewFrame: document.getElementById("html-preview-frame"),
@@ -97,7 +98,8 @@ const els = {
   // Tools Manager
   filterTabs: Array.from(document.querySelectorAll(".filter-tab")),
   tabCountAll: document.getElementById("tab-count-all"),
-  tabCountPublished: document.getElementById("tab-count-published"),
+  tabCountPublic: document.getElementById("tab-count-public"),
+  tabCountPrivate: document.getElementById("tab-count-private"),
   tabCountDraft: document.getElementById("tab-count-draft"),
   toolsSearchInput: document.getElementById("tools-search-input"),
   refreshToolsBtn: document.getElementById("refresh-tools-btn"),
@@ -170,8 +172,33 @@ function normalizeHexColor(value) {
   return null;
 }
 
+const VISIBILITY_OPTIONS = ["public", "private", "draft"];
+const VISIBILITY_META = {
+  public: { label: "公开", pillClass: "status-pill-public" },
+  private: { label: "私有", pillClass: "status-pill-private" },
+  draft: { label: "草稿", pillClass: "status-pill-draft" },
+};
+
+function normalizeVisibility(tool) {
+  if (!tool || typeof tool !== "object") return "public";
+  if (
+    tool.visibility === "private" ||
+    tool.visibility === "draft" ||
+    tool.visibility === "public"
+  ) {
+    return tool.visibility;
+  }
+  return tool.draft === true ? "draft" : "public";
+}
+
+function visibilityLabel(vis) {
+  return (VISIBILITY_META[vis] && VISIBILITY_META[vis].label) || "公开";
+}
+
 function isSafeToolUrl(url) {
-  return typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//");
+  if (typeof url !== "string" || url.startsWith("//")) return false;
+  if (/[\u0000-\u001f\u007f]/.test(url)) return false;
+  return /^\/(?:t\/|tp\/[0-9a-f]{64}\/)/i.test(url);
 }
 
 function isSafeThemePreviewUrl(url) {
@@ -477,7 +504,12 @@ function resolveIconUrl(tool) {
     .filter((s) => s && s !== "." && s !== "..")
     .map((s) => encodeURIComponent(s))
     .join("/");
-  return `/t/${encodeURIComponent(tool.id)}/${encodedSegments}`;
+  let prefix = "/t/";
+  if (typeof tool.entryUrl === "string") {
+    const tpMatch = tool.entryUrl.match(/^(\/tp\/[0-9a-f]{64}\/)/i);
+    if (tpMatch) prefix = tpMatch[1];
+  }
+  return `${prefix}${encodeURIComponent(tool.id)}/${encodedSegments}`;
 }
 
 function renderIconInto(container, tool) {
@@ -502,9 +534,8 @@ function renderIconInto(container, tool) {
 function getFilteredTools() {
   const q = state.search.trim().toLowerCase();
   return state.tools.filter((tool) => {
-    const isDraft = tool.draft === true;
-    if (state.filter === "published" && isDraft) return false;
-    if (state.filter === "draft" && !isDraft) return false;
+    const vis = normalizeVisibility(tool);
+    if (state.filter !== "all" && vis !== state.filter) return false;
 
     if (!q) return true;
     const tags = Array.isArray(tool.tags) ? tool.tags.join(" ") : "";
@@ -518,18 +549,24 @@ function getFilteredTools() {
 
 function renderStatsAndTabs() {
   const total = state.tools.length;
+  let publicCount = 0;
+  let privateCount = 0;
   let draftCount = 0;
   for (const tool of state.tools) {
-    if (tool.draft === true) draftCount += 1;
+    const vis = normalizeVisibility(tool);
+    if (vis === "private") privateCount += 1;
+    else if (vis === "draft") draftCount += 1;
+    else publicCount += 1;
   }
-  const publishedCount = total - draftCount;
 
   els.statTotal.textContent = String(total);
-  els.statPublished.textContent = String(publishedCount);
+  els.statPublic.textContent = String(publicCount);
+  els.statPrivate.textContent = String(privateCount);
   els.statDraft.textContent = String(draftCount);
 
   els.tabCountAll.textContent = String(total);
-  els.tabCountPublished.textContent = String(publishedCount);
+  els.tabCountPublic.textContent = String(publicCount);
+  els.tabCountPrivate.textContent = String(privateCount);
   els.tabCountDraft.textContent = String(draftCount);
 
   for (const tab of els.filterTabs) {
@@ -560,7 +597,8 @@ function renderToolsTable() {
   const fragment = document.createDocumentFragment();
 
   for (const tool of visibleTools) {
-    const isDraft = tool.draft === true;
+    const vis = normalizeVisibility(tool);
+    const visMeta = VISIBILITY_META[vis] || VISIBILITY_META.public;
     const tr = document.createElement("tr");
 
     // 1. Tool cell (icon + name + desc)
@@ -618,12 +656,12 @@ function renderToolsTable() {
     const tdStatus = document.createElement("td");
     tdStatus.dataset.label = "状态";
     const pill = document.createElement("span");
-    pill.className = isDraft ? "status-pill status-pill-draft" : "status-pill status-pill-published";
+    pill.className = `status-pill ${visMeta.pillClass}`;
     const dot = document.createElement("span");
     dot.className = "status-dot";
     dot.setAttribute("aria-hidden", "true");
     const statusText = document.createElement("span");
-    statusText.textContent = isDraft ? "草稿" : "已发布";
+    statusText.textContent = visMeta.label;
     pill.append(dot, statusText);
     tdStatus.appendChild(pill);
 
@@ -633,15 +671,21 @@ function renderToolsTable() {
     const actionsWrap = document.createElement("div");
     actionsWrap.className = "row-actions";
 
-    const toggleDraftBtn = document.createElement("button");
-    toggleDraftBtn.type = "button";
-    toggleDraftBtn.className = isDraft ? "btn btn-primary btn-xs" : "btn btn-xs";
-    toggleDraftBtn.textContent = isDraft ? "发布上线" : "设为草稿";
-    toggleDraftBtn.addEventListener("click", () => {
-      toggleToolDraft(tool, toggleDraftBtn);
+    const visSelect = document.createElement("select");
+    visSelect.className = "visibility-select";
+    visSelect.setAttribute("aria-label", "可见性");
+    for (const value of VISIBILITY_OPTIONS) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = visibilityLabel(value);
+      visSelect.appendChild(opt);
+    }
+    visSelect.value = vis;
+    visSelect.addEventListener("change", () => {
+      updateToolVisibility(tool, visSelect.value, vis, visSelect);
     });
 
-    actionsWrap.appendChild(toggleDraftBtn);
+    actionsWrap.appendChild(visSelect);
 
     if (isSafeToolUrl(tool.entryUrl)) {
       const previewLink = document.createElement("a");
@@ -791,13 +835,19 @@ function formatOverwritePrompt(body, fileName) {
   const toolId = (incoming && incoming.id) || (existing && existing.id) || fileName;
   const existingName = (existing && existing.name) || toolId;
   const existingVer = existing && existing.version ? `v${existing.version}` : "未知版本";
-  const existingStatus = existing ? (existing.draft ? "草稿" : "已发布") : "已安装";
+  const existingVis = existing ? normalizeVisibility(existing) : null;
+  const existingStatus = existingVis ? visibilityLabel(existingVis) : "已安装";
 
   if (incoming) {
     const incomingName = incoming.name || toolId;
     const incomingVer = incoming.version ? `v${incoming.version}` : "未知版本";
-    const incomingStatus = incoming.draft ? "草稿" : "已发布";
-    return `工具「${existingName}」(${toolId}) 已存在（当前 ${existingVer} · ${existingStatus}）。确定要用新上传的「${incomingName}」(${incomingVer} · ${incomingStatus}) 覆盖替换现有目录吗？`;
+    const incomingVis = normalizeVisibility(incoming);
+    const incomingStatus = visibilityLabel(incomingVis);
+    const publicExposureWarning =
+      (existingVis === "private" || existingVis === "draft") && incomingVis === "public"
+        ? "（⚠️ 注意：新包显式声明为公开，覆盖后该工具将对匿名访客可见！）"
+        : "";
+    return `工具「${existingName}」(${toolId}) 已存在（当前 ${existingVer} · ${existingStatus}）。确定要用新上传的「${incomingName}」(${incomingVer} · ${incomingStatus}) 覆盖替换现有目录吗？${publicExposureWarning}`;
   }
 
   return `工具 ID「${toolId}」已存在（当前 ${existingVer} · ${existingStatus}）。确定要覆盖替换现有工具目录吗？`;
@@ -863,8 +913,9 @@ async function uploadZipFile(file, overwrite = false) {
 
     const tool = body && body.id ? body : body && body.entry ? body.entry : null;
     const actionLabel = res.status === 201 ? "已新增安装" : "已覆盖更新";
-    const draftSuffix = tool && tool.draft ? "（草稿状态）" : "";
-    const detail = tool ? `${tool.name} (${tool.id}) v${tool.version}${draftSuffix}` : file.name;
+    const vis = tool ? normalizeVisibility(tool) : "public";
+    const visSuffix = vis === "public" ? "" : `（${visibilityLabel(vis)}状态）`;
+    const detail = tool ? `${tool.name} (${tool.id}) v${tool.version}${visSuffix}` : file.name;
     const msg = `${actionLabel}：${detail}`;
 
     setUploadStatus(msg, "success");
@@ -878,15 +929,15 @@ async function uploadZipFile(file, overwrite = false) {
   }
 }
 
-async function toggleToolDraft(tool, buttonEl) {
-  const nextDraft = !(tool.draft === true);
-  buttonEl.disabled = true;
+async function updateToolVisibility(tool, nextVisibility, previousVisibility, selectEl) {
+  if (nextVisibility === previousVisibility) return;
+  selectEl.disabled = true;
 
   try {
     const res = await apiRequest(`/api/admin/tools/${encodeURIComponent(tool.id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ draft: nextDraft }),
+      body: JSON.stringify({ visibility: nextVisibility }),
     });
 
     if (res.status === 401) {
@@ -896,17 +947,18 @@ async function toggleToolDraft(tool, buttonEl) {
 
     const body = await readJsonSafe(res);
     if (!res.ok) {
-      throw new Error(parseErrorPayload(body, `更新状态失败 (HTTP ${res.status})`));
+      throw new Error(parseErrorPayload(body, `更新可见性失败 (HTTP ${res.status})`));
     }
 
     showToast(
-      nextDraft ? `已设为草稿：${tool.name} (${tool.id})` : `已发布上线：${tool.name} (${tool.id})`,
+      `已设为${visibilityLabel(nextVisibility)}：${tool.name} (${tool.id})`,
       "info"
     );
     await fetchAdminTools();
   } catch (err) {
-    showToast(err.message || "更新状态失败", "error", 5000);
-    buttonEl.disabled = false;
+    selectEl.value = previousVisibility;
+    selectEl.disabled = false;
+    showToast(err.message || "更新可见性失败", "error", 5000);
   }
 }
 
@@ -1455,7 +1507,7 @@ function initCurlExample() {
     "curl -X POST \\",
     '  -H "Authorization: Bearer $TOOLSTOW_API_KEY" \\',
     '  -H "Content-Type: application/json" \\',
-    `  -d '{"id":"hello","name":"Hello","html":"<h1>Hello</h1>","draft":true}' \\`,
+    `  -d '{"id":"hello","name":"Hello","html":"<h1>Hello</h1>","visibility":"draft"}' \\`,
     `  ${origin}/api/admin/tools/import/html`,
   ].join("\n");
 }
@@ -1602,11 +1654,26 @@ function setHtmlSubmitting(submitting) {
 
 function updateHtmlIdHint() {
   const value = els.htmlId.value.trim();
+  const rawVis = els.htmlVisibility.value;
   let message = "仅限小写字母、数字与连字符，例如 my-tool";
   let kind = "info";
   if (value) {
     if (TOOL_ID_PATTERN.test(value)) {
-      message = `✓ 格式有效 · 访问路径 /t/${value}/`;
+      if (rawVis === "private") {
+        message = `✓ 格式有效 · 私有工具（仅管理员通过会话授权链接访问）`;
+      } else if (rawVis === "draft") {
+        message = `✓ 格式有效 · 草稿工具（暂不展示于公开目录）`;
+      } else if (rawVis === "public") {
+        message = `✓ 格式有效 · 访问路径 /t/${value}/`;
+      } else {
+        const existing = state.tools.find((t) => t && t.id === value);
+        if (existing) {
+          const existingLabel = visibilityLabel(normalizeVisibility(existing));
+          message = `✓ 格式有效 · 同名工具已存在，覆盖时将保留原可见性（${existingLabel}）`;
+        } else {
+          message = `✓ 格式有效 · 新建默认公开（/t/${value}/），覆盖时保留原状态`;
+        }
+      }
       kind = "success";
     } else {
       message = "✗ 格式无效：需匹配 ^[a-z0-9]+(?:-[a-z0-9]+)*$（小写字母/数字，以单个连字符分隔）";
@@ -1700,7 +1767,7 @@ function openHtmlDialog({ html = "", fileName = "", pasteMode = false } = {}) {
   els.htmlSource.value = html;
   els.htmlCategory.value = "";
   els.htmlIcon.value = DEFAULT_TOOL_ICON;
-  els.htmlDraft.checked = false;
+  els.htmlVisibility.value = "";
   setHtmlError("");
   setHtmlSubmitting(false);
   populateCategoryOptions();
@@ -1734,9 +1801,11 @@ function readHtmlPayload() {
     name: els.htmlName.value.trim(),
     html: session ? session.html : "",
     icon: els.htmlIcon.value.trim() || DEFAULT_TOOL_ICON,
-    draft: els.htmlDraft.checked,
     injectSdk: els.htmlInjectSdk.checked,
   };
+  if (VISIBILITY_OPTIONS.includes(els.htmlVisibility.value)) {
+    payload.visibility = els.htmlVisibility.value;
+  }
   const description = els.htmlDesc.value.trim();
   const category = els.htmlCategory.value.trim();
   if (description) payload.description = description;
@@ -1808,8 +1877,9 @@ async function submitHtmlIngest(overwrite = false) {
     const tool = body && body.id ? body : body && body.entry ? body.entry : null;
     const actionLabel = res.status === 201 ? "已收录" : "已覆盖更新";
     const info = tool || payload;
-    const draftSuffix = info.draft ? "（草稿状态）" : "";
-    const msg = `${actionLabel}：${info.name || payload.name} (${info.id || payload.id})${draftSuffix}`;
+    const vis = normalizeVisibility(info);
+    const visSuffix = vis === "public" ? "" : `（${visibilityLabel(vis)}状态）`;
+    const msg = `${actionLabel}：${info.name || payload.name} (${info.id || payload.id})${visSuffix}`;
 
     closeHtmlDialog();
     setUploadStatus(msg, "success");
@@ -1864,6 +1934,8 @@ function bindHtmlDialogEvents() {
   els.htmlDesc.addEventListener("input", () => {
     if (state.html) state.html.descTouched = true;
   });
+
+  els.htmlVisibility.addEventListener("change", updateHtmlIdHint);
 
   els.htmlInjectSdk.addEventListener("change", () => {
     if (state.html) state.html.injectTouched = true;

@@ -21,6 +21,7 @@
   var DEFAULT_SITE_TITLE = "ToolStow";
   var DEFAULT_SITE_DESC = "Personal Micro-App Toolbox";
   var DEFAULT_ICON_GLYPH = "🛠️";
+  var RESUME_REFRESH_MIN_INTERVAL_MS = 1500;
 
   var SANDBOX_ALLOWLIST = new Set([
     "allow-scripts",
@@ -68,7 +69,21 @@
      ------------------------------------------------------------------------ */
 
   function isSafeToolUrl(url) {
-    return typeof url === "string" && url.startsWith("/t/") && !url.startsWith("//");
+    if (typeof url !== "string" || url.startsWith("//")) return false;
+    if (/[\u0000-\u001f\u007f]/.test(url)) return false;
+    return /^\/(?:t\/|tp\/[0-9a-f]{64}\/)/i.test(url);
+  }
+
+  function normalizeVisibility(tool) {
+    if (!tool || typeof tool !== "object") return "public";
+    if (
+      tool.visibility === "private" ||
+      tool.visibility === "draft" ||
+      tool.visibility === "public"
+    ) {
+      return tool.visibility;
+    }
+    return tool.draft === true ? "draft" : "public";
   }
 
   function normalizeHexColor(val) {
@@ -143,7 +158,12 @@
         return encodeURIComponent(s);
       });
     if (segments.length === 0) return null;
-    var url = "/t/" + encodeURIComponent(tool.id) + "/" + segments.join("/");
+    var prefix = "/t/";
+    if (typeof tool.entryUrl === "string") {
+      var tpMatch = tool.entryUrl.match(/^(\/tp\/[0-9a-f]{64}\/)/i);
+      if (tpMatch) prefix = tpMatch[1];
+    }
+    var url = prefix + encodeURIComponent(tool.id) + "/" + segments.join("/");
     return isSafeToolUrl(url) ? url : null;
   }
 
@@ -282,10 +302,14 @@
     };
 
     var activeTool = null;
+    var activeMountedPath = null;
     var tokens = {};
     var subscribers = new Set();
     var bootstrapPromise = null;
     var refreshSeq = 0;
+    var lastLoadCompletedAt = 0;
+    var resumeRefreshTimer = null;
+    var pendingResumeRefresh = false;
     var listenersBound = false;
 
     /* ---------- notifications ---------- */
@@ -621,6 +645,21 @@
 
     /* ---------- URLs & iframe ---------- */
 
+    function normalizeEntryPathname(entryUrl) {
+      if (!isSafeToolUrl(entryUrl)) return null;
+      try {
+        var base =
+          global.location && global.location.origin && global.location.origin !== "null"
+            ? global.location.origin
+            : "http://localhost";
+        var url = new URL(entryUrl, base);
+        return isSafeToolUrl(url.pathname) ? url.pathname : null;
+      } catch (_) {
+        var path = entryUrl.split("#")[0].split("?")[0];
+        return isSafeToolUrl(path) ? path : null;
+      }
+    }
+
     function buildToolUrl(entryUrl, buildOpts) {
       if (!isSafeToolUrl(entryUrl)) return null;
       var cacheBust = Boolean(buildOpts && buildOpts.cacheBust);
@@ -653,6 +692,7 @@
       state.activeIframe = null;
       state.activeIframeReady = false;
       activeTool = null;
+      activeMountedPath = null;
       if (iframe && iframe.parentNode) {
         iframe.parentNode.removeChild(iframe);
       }
@@ -696,6 +736,7 @@
       state.activeIframe = iframe;
       state.activeIframeReady = false;
       activeTool = tool;
+      activeMountedPath = normalizeEntryPathname(tool.entryUrl);
       containerEl.replaceChildren(iframe);
       notify();
       return iframe;
@@ -851,6 +892,8 @@
 
     function loadData() {
       var seq = ++refreshSeq;
+      pendingResumeRefresh = false;
+      clearResumeRefreshTimer();
       state.loading = true;
       notify();
       return Promise.all([
@@ -867,31 +910,92 @@
         if (seq !== refreshSeq) return false; // A newer refresh superseded this one.
         var site = results[0];
         var toolsResult = results[1];
+        var prevWasAdmin = state.site.isAdmin === true;
         if (site) state.site = site;
         if (toolsResult.ok) {
           state.allTools = toolsResult.tools;
           state.error = null;
+          lastLoadCompletedAt = Date.now();
           applyFilters();
         } else {
           var message =
             (toolsResult.err && toolsResult.err.message) || "无法连接到 ToolStow 服务";
           state.error = message;
+          var hasPrivateTools = state.allTools.some(function (tool) {
+            return normalizeVisibility(tool) === "private";
+          });
+          var activeIsPrivate = Boolean(
+            activeTool && normalizeVisibility(activeTool) === "private"
+          );
+          if (state.site.isAdmin !== true && (prevWasAdmin || hasPrivateTools || activeIsPrivate)) {
+            state.allTools = state.allTools.filter(function (tool) {
+              return normalizeVisibility(tool) !== "private";
+            });
+            applyFilters();
+          }
           reportError(message, toolsResult.err);
         }
         state.loading = false;
+        if (pendingResumeRefresh) {
+          if (listenersBound && isDocumentVisible() && shouldRevalidateOnResume()) {
+            scheduleTrailingResumeRefresh(50);
+          } else {
+            pendingResumeRefresh = false;
+          }
+        }
         return true;
       });
     }
 
     function refresh(refreshOpts) {
       var keepSelection = !refreshOpts || refreshOpts.keepSelection !== false;
+      var prevSelectedId = state.selectedId;
+      var prevTool = activeTool || getSelectedTool();
+      var prevMountedPath =
+        activeMountedPath || (prevTool ? normalizeEntryPathname(prevTool.entryUrl) : null);
+
       return loadData().then(function (applied) {
         if (!applied) return getState();
         if (state.selectedId && (!keepSelection || !findTool(state.selectedId))) {
           clearSelection({ updateHash: true }); // notifies
-        } else if (state.selectedId || !restoreToolFromHash()) {
-          updateDocumentTitle(getSelectedTool());
-          notify();
+        } else if (state.selectedId) {
+          var updatedTool = findTool(state.selectedId);
+          var nextMountedPath = normalizeEntryPathname(updatedTool.entryUrl);
+          var currentMountedPath =
+            activeMountedPath || (prevSelectedId === state.selectedId ? prevMountedPath : null);
+
+          if (state.activeIframe && nextMountedPath !== currentMountedPath) {
+            var container = state.activeIframe.parentNode || iframeHost || null;
+            updateDocumentTitle(updatedTool);
+            if (container) {
+              if (!mountTool(container, updatedTool, { cacheBust: true })) {
+                detachActiveIframe();
+                if (iframeHost) iframeHost.replaceChildren();
+                notify();
+              }
+            } else {
+              detachActiveIframe();
+              notify();
+            }
+          } else {
+            if (state.activeIframe) activeTool = updatedTool;
+            updateDocumentTitle(updatedTool);
+            notify();
+          }
+        } else {
+          if (
+            state.activeIframe &&
+            activeTool &&
+            state.site.isAdmin !== true &&
+            normalizeVisibility(activeTool) === "private"
+          ) {
+            detachActiveIframe();
+            if (iframeHost) iframeHost.replaceChildren();
+          }
+          if (!restoreToolFromHash()) {
+            updateDocumentTitle(getSelectedTool());
+            notify();
+          }
         }
         return getState();
       });
@@ -934,11 +1038,88 @@
       }
     }
 
+    function isDocumentVisible() {
+      return !doc.visibilityState || doc.visibilityState === "visible";
+    }
+
+    function shouldRevalidateOnResume() {
+      if (!state.selectedId) return true;
+      if (state.site.isAdmin === true) return true;
+      var current = activeTool || getSelectedTool();
+      if (current && normalizeVisibility(current) !== "public") return true;
+      return state.allTools.some(function (tool) {
+        return normalizeVisibility(tool) !== "public";
+      });
+    }
+
+    function clearResumeRefreshTimer() {
+      if (resumeRefreshTimer !== null) {
+        try {
+          if (typeof global.clearTimeout === "function") {
+            global.clearTimeout(resumeRefreshTimer);
+          }
+        } catch (_) {
+          // Ignore timer clear errors.
+        }
+        resumeRefreshTimer = null;
+      }
+    }
+
+    function scheduleTrailingResumeRefresh(delayMs) {
+      if (!bootstrapPromise || !listenersBound) return;
+      if (resumeRefreshTimer !== null) return;
+      if (typeof global.setTimeout !== "function") return;
+      var wait = Math.max(25, Number(delayMs) || 25);
+      resumeRefreshTimer = global.setTimeout(function () {
+        resumeRefreshTimer = null;
+        if (!pendingResumeRefresh) return;
+        pendingResumeRefresh = false;
+        triggerResumeRefresh(true);
+      }, wait);
+    }
+
+    function triggerResumeRefresh(force) {
+      if (!bootstrapPromise || !listenersBound) return;
+      if (!isDocumentVisible()) return;
+      if (!shouldRevalidateOnResume()) return;
+      if (!force) {
+        if (state.loading) {
+          pendingResumeRefresh = true;
+          return;
+        }
+        if (lastLoadCompletedAt) {
+          var elapsed = Date.now() - lastLoadCompletedAt;
+          if (elapsed >= 0 && elapsed < RESUME_REFRESH_MIN_INTERVAL_MS) {
+            pendingResumeRefresh = true;
+            scheduleTrailingResumeRefresh(RESUME_REFRESH_MIN_INTERVAL_MS - elapsed);
+            return;
+          }
+        }
+      }
+      pendingResumeRefresh = false;
+      clearResumeRefreshTimer();
+      refresh({ keepSelection: true });
+    }
+
+    function handleResumeCheck() {
+      triggerResumeRefresh(false);
+    }
+
+    function handlePageShow(event) {
+      var persisted = Boolean(event && event.persisted);
+      triggerResumeRefresh(persisted);
+    }
+
     function bindListeners() {
       if (listenersBound) return;
       listenersBound = true;
       global.addEventListener("message", handleMessage);
       if (hashRouting) global.addEventListener("hashchange", handleHashChange);
+      if (typeof doc.addEventListener === "function") {
+        doc.addEventListener("visibilitychange", handleResumeCheck);
+      }
+      global.addEventListener("focus", handleResumeCheck);
+      global.addEventListener("pageshow", handlePageShow);
       if (mediaQuery) {
         if (typeof mediaQuery.addEventListener === "function") {
           mediaQuery.addEventListener("change", handleSystemModeChange);
@@ -949,10 +1130,17 @@
     }
 
     function destroy() {
+      pendingResumeRefresh = false;
+      clearResumeRefreshTimer();
       if (!listenersBound) return;
       listenersBound = false;
       global.removeEventListener("message", handleMessage);
       global.removeEventListener("hashchange", handleHashChange);
+      if (typeof doc.removeEventListener === "function") {
+        doc.removeEventListener("visibilitychange", handleResumeCheck);
+      }
+      global.removeEventListener("focus", handleResumeCheck);
+      global.removeEventListener("pageshow", handlePageShow);
       if (mediaQuery) {
         if (typeof mediaQuery.removeEventListener === "function") {
           mediaQuery.removeEventListener("change", handleSystemModeChange);
@@ -1007,6 +1195,7 @@
     SYNCED_TOKENS: SYNCED_TOKENS,
     STORAGE_KEY_MODE: STORAGE_KEY_MODE,
     isSafeToolUrl: isSafeToolUrl,
+    normalizeVisibility: normalizeVisibility,
     normalizeHexColor: normalizeHexColor,
     sanitizeSandboxTokens: sanitizeSandboxTokens,
     resolveIconUrl: resolveIconUrl,

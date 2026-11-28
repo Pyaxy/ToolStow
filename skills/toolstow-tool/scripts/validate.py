@@ -41,6 +41,7 @@ SANDBOX_ALLOWLIST = frozenset(
 )
 
 FORBIDDEN_SANDBOX_PREFIXES = ("allow-same-origin", "allow-top-navigation")
+VALID_VISIBILITIES = ("public", "private", "draft")
 
 IGNORED_NAMES = frozenset({".DS_Store", "__MACOSX", ".git", ".gitignore", "Thumbs.db"})
 
@@ -77,6 +78,7 @@ class ValidationResult:
     name: Optional[str] = None
     version: str = "0.1.0"
     entry: str = "index.html"
+    visibility: str = "public"
     draft: bool = False
     file_count: int = 0
     total_bytes: int = 0
@@ -96,6 +98,7 @@ class ValidationResult:
             "name": self.name,
             "version": self.version,
             "entry": self.entry,
+            "visibility": self.visibility,
             "draft": self.draft,
             "fileCount": self.file_count,
             "totalBytes": self.total_bytes,
@@ -595,13 +598,51 @@ def validate_tool_dir(
         if not isinstance(raw_tags, list) or not all(isinstance(t, str) for t in raw_tags):
             result.errors.append("manifest 'tags' must be an array of strings")
 
-    # Optional booleans
+    # Optional visibility ("public" | "private" | "draft") & legacy draft boolean
+    raw_visibility = raw.get("visibility")
+    parsed_visibility: Optional[str] = None
+    if raw_visibility is not None:
+        if not isinstance(raw_visibility, str):
+            result.errors.append(
+                "manifest 'visibility' must be a string ('public', 'private', or 'draft')"
+            )
+        else:
+            vis = raw_visibility.strip().lower()
+            if vis not in VALID_VISIBILITIES:
+                result.errors.append(
+                    f"invalid manifest 'visibility' {raw_visibility!r}: "
+                    "expected 'public', 'private', or 'draft'"
+                )
+            else:
+                parsed_visibility = vis
+
     raw_draft = raw.get("draft")
+    parsed_draft: Optional[bool] = None
     if raw_draft is not None:
         if not isinstance(raw_draft, bool):
             result.errors.append("manifest 'draft' must be a boolean")
         else:
-            result.draft = raw_draft
+            parsed_draft = raw_draft
+
+    if parsed_visibility is not None and parsed_draft is not None:
+        if (parsed_visibility == "draft") != parsed_draft:
+            result.errors.append(
+                f"conflicting manifest fields: 'visibility': {parsed_visibility!r} conflicts "
+                f"with legacy 'draft': {str(parsed_draft).lower()} "
+                "(remove 'draft' or use consistent values)"
+            )
+        else:
+            result.visibility = parsed_visibility
+            result.draft = parsed_visibility == "draft"
+    elif parsed_visibility is not None:
+        result.visibility = parsed_visibility
+        result.draft = parsed_visibility == "draft"
+    elif parsed_draft is not None:
+        result.visibility = "draft" if parsed_draft else "public"
+        result.draft = parsed_draft
+    else:
+        result.visibility = "public"
+        result.draft = False
 
     raw_theme_aware = raw.get("themeAware")
     if raw_theme_aware is not None and not isinstance(raw_theme_aware, bool):

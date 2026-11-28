@@ -8,12 +8,14 @@ to replace an existing tool with the same manifest.id.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -47,6 +49,230 @@ def load_dotenv(env_path: Path) -> Dict[str, str]:
         if key:
             values[key] = val
     return values
+
+
+VALID_VISIBILITIES = ("public", "private", "draft")
+MAX_INSPECT_MANIFEST_BYTES = 10 * 1024 * 1024  # 10 MiB safety cap for uncompressed manifest.json
+
+
+def resolve_tool_visibility(tool_obj: object) -> str:
+    if isinstance(tool_obj, dict):
+        raw_vis = tool_obj.get("visibility")
+        if isinstance(raw_vis, str):
+            vis = raw_vis.strip().lower()
+            if vis in VALID_VISIBILITIES:
+                return vis
+        if tool_obj.get("draft") is True:
+            return "draft"
+    return "public"
+
+
+def inspect_zip_manifest(
+    zip_bytes: bytes,
+    *,
+    max_manifest_bytes: int = MAX_INSPECT_MANIFEST_BYTES,
+) -> Tuple[Optional[Dict[str, object]], Optional[str]]:
+    """Inspect actual ZIP bytes in memory and return (manifest_dict, error_reason).
+
+    Supports both flat archives (`manifest.json` at root) and single top-level wrapper
+    folder archives (`<dir>/manifest.json`), ignoring macOS `__MACOSX/` and `.DS_Store` junk.
+    Fails closed by returning an error reason whenever `manifest.json` is missing,
+    duplicated, a symlink, exceeds `max_manifest_bytes`, unreadable, or invalid JSON.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes), "r")
+    except (zipfile.BadZipFile, OSError) as exc:
+        return None, f"invalid ZIP archive: {exc}"
+
+    with zf:
+        entries: List[Tuple[List[str], zipfile.ZipInfo]] = []
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            normalized = info.filename.replace("\\", "/")
+            parts = [p for p in normalized.split("/") if p and p != "."]
+            if not parts or ".." in parts:
+                continue
+            if parts[0] == "__MACOSX" or parts[-1] == ".DS_Store" or parts[-1].startswith("._"):
+                continue
+            entries.append((parts, info))
+
+        root_manifests = [info for parts, info in entries if parts == ["manifest.json"]]
+        if len(root_manifests) > 1:
+            return None, "duplicate manifest.json entries found in ZIP archive"
+        manifest_info: Optional[zipfile.ZipInfo] = root_manifests[0] if root_manifests else None
+
+        if manifest_info is None and entries and all(len(parts) >= 2 for parts, _ in entries):
+            top_dirs = {parts[0] for parts, _ in entries}
+            if len(top_dirs) == 1:
+                only_top = next(iter(top_dirs))
+                nested_manifests = [
+                    info for parts, info in entries if parts == [only_top, "manifest.json"]
+                ]
+                if len(nested_manifests) > 1:
+                    return None, "duplicate manifest.json entries found in ZIP archive"
+                if nested_manifests:
+                    manifest_info = nested_manifests[0]
+
+        if manifest_info is None:
+            return None, "manifest.json not found in ZIP archive"
+
+        unix_mode = (manifest_info.external_attr >> 16) & 0o170000
+        if unix_mode == 0o120000:
+            return None, "manifest.json in ZIP archive is a symlink"
+
+        if manifest_info.file_size > max_manifest_bytes:
+            return (
+                None,
+                f"manifest.json uncompressed size ({manifest_info.file_size} bytes) "
+                f"exceeds inspection limit ({max_manifest_bytes} bytes)",
+            )
+
+        try:
+            with zf.open(manifest_info, "r") as handle:
+                raw_bytes = handle.read(max_manifest_bytes + 1)
+        except (KeyError, RuntimeError, zipfile.BadZipFile, OSError) as exc:
+            return None, f"failed to read manifest.json from ZIP archive: {exc}"
+
+        if len(raw_bytes) > max_manifest_bytes:
+            return (
+                None,
+                f"manifest.json decompressed size exceeds inspection limit ({max_manifest_bytes} bytes)",
+            )
+
+        try:
+            raw = json.loads(raw_bytes.decode("utf-8-sig"))
+        except UnicodeDecodeError as exc:
+            return None, f"manifest.json is not valid UTF-8: {exc}"
+        except json.JSONDecodeError as exc:
+            return None, f"manifest.json contains invalid JSON: {exc}"
+
+        if not isinstance(raw, dict):
+            return None, "manifest.json root must be a JSON object"
+        return raw, None
+
+
+def validate_manifest_visibility(
+    manifest: Dict[str, object],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Validate `visibility` and legacy `draft` fields, returning (resolved_visibility, error)."""
+    raw_visibility = manifest.get("visibility")
+    parsed_visibility: Optional[str] = None
+    if raw_visibility is not None:
+        if not isinstance(raw_visibility, str):
+            return (
+                None,
+                "manifest 'visibility' must be a string ('public', 'private', or 'draft')",
+            )
+        vis = raw_visibility.strip().lower()
+        if vis not in VALID_VISIBILITIES:
+            return (
+                None,
+                f"invalid manifest 'visibility' {raw_visibility!r}: "
+                "expected 'public', 'private', or 'draft'",
+            )
+        parsed_visibility = vis
+
+    raw_draft = manifest.get("draft")
+    parsed_draft: Optional[bool] = None
+    if raw_draft is not None:
+        if not isinstance(raw_draft, bool):
+            return None, "manifest 'draft' must be a boolean"
+        parsed_draft = raw_draft
+
+    if parsed_visibility is not None and parsed_draft is not None:
+        if (parsed_visibility == "draft") != parsed_draft:
+            return (
+                None,
+                f"conflicting manifest fields: 'visibility': {parsed_visibility!r} "
+                f"conflicts with legacy 'draft': {str(parsed_draft).lower()}",
+            )
+        return parsed_visibility, None
+
+    if parsed_visibility is not None:
+        return parsed_visibility, None
+    if parsed_draft is not None:
+        return ("draft" if parsed_draft else "public"), None
+    return "public", None
+
+
+def manifest_requires_visibility_support(
+    manifest: Dict[str, object],
+    resolved_visibility: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Return (requires_visibility_support, resolved_visibility).
+
+    Legacy ToolStow servers (<= v0.3.5) ignore `"visibility"` and only inspect `"draft": true`,
+    so uploading a `"private"` tool or a visibility-only `"draft"` tool (without `"draft": true`)
+    would silently publish it as `public`.
+    """
+    if resolved_visibility is None:
+        resolved_visibility, vis_err = validate_manifest_visibility(manifest)
+        if vis_err is not None or resolved_visibility is None:
+            raise ValueError(vis_err or "invalid manifest visibility")
+    if resolved_visibility == "private":
+        return True, resolved_visibility
+    if resolved_visibility == "draft" and manifest.get("draft") is not True:
+        return True, resolved_visibility
+    return False, resolved_visibility
+
+
+def check_server_visibility_capability(base_url: str, timeout: int, visibility: str) -> bool:
+    """Verify GET /healthz advertises `"tool-visibility"` before uploading sensitive visibility."""
+    health_url = f"{base_url}/healthz"
+    req = urllib.request.Request(
+        health_url,
+        method="GET",
+        headers={"Accept": "application/json"},
+    )
+    detected_version: Optional[str] = None
+    failure_detail: Optional[str] = None
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw_body = resp.read().decode("utf-8", errors="replace")
+        health = json.loads(raw_body)
+        if isinstance(health, dict):
+            ver = health.get("version")
+            if isinstance(ver, str) and ver.strip():
+                detected_version = ver.strip()
+            caps = health.get("capabilities")
+            if isinstance(caps, list) and "tool-visibility" in caps:
+                return True
+            failure_detail = "/healthz does not advertise capability 'tool-visibility'"
+        else:
+            failure_detail = "/healthz returned non-object JSON"
+    except urllib.error.HTTPError as exc:
+        failure_detail = f"GET /healthz returned HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        failure_detail = f"failed to reach {health_url}: {exc.reason}"
+    except (TimeoutError, OSError) as exc:
+        failure_detail = f"failed to reach {health_url}: {exc}"
+    except json.JSONDecodeError:
+        failure_detail = "GET /healthz returned invalid JSON"
+
+    pkg_desc = (
+        "visibility='private'"
+        if visibility == "private"
+        else "visibility='draft' (without legacy 'draft': true)"
+    )
+    ver_note = f" (detected server version: {detected_version})" if detected_version else ""
+    print(
+        f"ERROR: aborting upload before sending package: target server at {base_url}{ver_note} "
+        f"does not report 3-state visibility support ({failure_detail}).",
+        file=sys.stderr,
+    )
+    print(
+        f"  Refusing to upload a {pkg_desc} package because legacy ToolStow servers (<= v0.3.5) "
+        "ignore 'visibility' and would silently expose this tool as 'public'.",
+        file=sys.stderr,
+    )
+    print(
+        "  Upgrade the ToolStow server to a version advertising 'tool-visibility' in /healthz "
+        "before uploading.",
+        file=sys.stderr,
+    )
+    return False
 
 
 def encode_multipart_file(field_name: str, filename: str, payload: bytes) -> Tuple[bytes, str]:
@@ -159,7 +385,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"ERROR: failed to build ZIP: {exc}", file=sys.stderr)
             return 1
     elif args.target.is_file() and args.target.suffix.lower() == ".zip":
-        zip_bytes = args.target.read_bytes()
+        try:
+            zip_bytes = args.target.read_bytes()
+        except OSError as exc:
+            print(f"ERROR: failed to read ZIP archive '{args.target}': {exc}", file=sys.stderr)
+            return 1
         if len(zip_bytes) > max_bytes:
             print(
                 f"ERROR: ZIP archive exceeds {args.max_mb:.1f} MiB limit",
@@ -172,6 +402,37 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"ERROR: target must be a tool directory or .zip file: {args.target}",
             file=sys.stderr,
         )
+        return 1
+
+    # Always inspect the actual zip_bytes about to be uploaded and fail closed if unreadable/invalid.
+    manifest_obj, inspect_err = inspect_zip_manifest(
+        zip_bytes,
+        max_manifest_bytes=MAX_INSPECT_MANIFEST_BYTES,
+    )
+    if inspect_err is not None or manifest_obj is None:
+        print(
+            "ERROR: aborting upload before sending package: failed to read/parse manifest.json "
+            f"from ZIP archive to verify tool visibility ({inspect_err or 'unknown error'}).",
+            file=sys.stderr,
+        )
+        return 1
+
+    resolved_visibility, vis_err = validate_manifest_visibility(manifest_obj)
+    if vis_err is not None or resolved_visibility is None:
+        print(
+            "ERROR: aborting upload before sending package: invalid visibility configuration "
+            f"in manifest.json ({vis_err or 'unknown error'}).",
+            file=sys.stderr,
+        )
+        return 1
+
+    requires_visibility_support, resolved_visibility = manifest_requires_visibility_support(
+        manifest_obj,
+        resolved_visibility=resolved_visibility,
+    )
+    if requires_visibility_support and not check_server_visibility_capability(
+        base_url, args.timeout, resolved_visibility
+    ):
         return 1
 
     overwrite_flag = "true" if args.overwrite else "false"
@@ -209,15 +470,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                 file=sys.stderr,
             )
             if existing:
+                existing_vis = resolve_tool_visibility(existing)
                 print(
                     f"  existing: {existing.get('name')} v{existing.get('version')} "
-                    f"(draft={existing.get('draft')})",
+                    f"(visibility={existing_vis})",
                     file=sys.stderr,
                 )
             if incoming:
+                incoming_vis = resolve_tool_visibility(incoming)
                 print(
                     f"  incoming: {incoming.get('name')} v{incoming.get('version')} "
-                    f"(draft={incoming.get('draft')})",
+                    f"(visibility={incoming_vis})",
                     file=sys.stderr,
                 )
             print("  Re-run with --overwrite to replace the existing tool.", file=sys.stderr)
@@ -254,11 +517,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     tool = data.get("tool") if isinstance(data, dict) and isinstance(data.get("tool"), dict) else data
     tool_id = tool.get("id", "unknown") if isinstance(tool, dict) else "unknown"
     version = tool.get("version", "") if isinstance(tool, dict) else ""
-    draft = tool.get("draft", False) if isinstance(tool, dict) else False
+    visibility = resolve_tool_visibility(tool)
     verb = "CREATED" if status_code == 201 else "UPDATED"
+    if visibility == "public":
+        target_note = f"-> {base_url}/#tool={tool_id}"
+    elif visibility == "private":
+        target_note = f"(admin-only on /) -> {base_url}/#tool={tool_id} (requires /admin session)"
+    else:
+        target_note = f"(preview in /admin) -> {base_url}/admin"
     print(
         f"{verb} (HTTP {status_code}): '{tool_id}' v{version} "
-        f"(draft={draft}) -> {base_url}/#tool={tool_id}"
+        f"(visibility={visibility}) {target_note}"
     )
     return 0
 

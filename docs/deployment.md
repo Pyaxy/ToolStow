@@ -43,6 +43,8 @@ TOOLSTOW_API_KEY=<另一把 64 位随机十六进制 API Key>
 ```
 
 > **纯只读模式**：如果不填写 `TOOLSTOW_ADMIN_KEY` 与 `TOOLSTOW_API_KEY`，`/admin` 与所有 `/api/admin/*` 接口将自动返回 `404`，可通过 SSH / `rsync` / `git pull` 直接维护 `data/tools/` 触发热加载。
+>
+> **热更新与可见性切换注意（`rsync` / `git pull`）**：尽管 ToolStow 在 `/t/{id}/*` 路由上会实时比对 `manifest.json` 元数据指纹以消除 `notify` 防抖延迟，但外部多文件原地同步（`rsync`、`git pull` 等）在跨文件维度上**并非原子操作**（例如新的敏感资源文件可能早于 `manifest.json` 落盘）。因此**切勿通过 `rsync` / `git pull` 将已有的 `public` 工具原地改为 `private`**——请先在 `/admin` 或通过 `PATCH /api/admin/tools/{id}` 将该工具切换为 `private`，或直接通过管理 API / `publish.py` 进行同盘暂存后的原子替换部署。
 
 ---
 
@@ -87,6 +89,8 @@ docker compose pull && docker compose up -d
 # 如需从本地源码构建镜像
 docker build -t toolstow:local .
 ```
+
+> **降级兼容注意（`<= v0.3.5`）**：若 `data/tools/` 中存在设置了 `"visibility": "private"` 的私有工具，或存在仅声明 `"visibility": "draft"` 而未同时包含 `"draft": true` 的草稿工具，切勿直接将二进制/容器镜像降级回 `<= v0.3.5`——旧版本不识别 `"visibility"` 字段，会将这类未带 `"draft": true` 的工具当作公开工具展示（注：当前版本通过 `/admin` / API 写入或更新 `draft` 工具时会自动同时落盘 `"visibility": "draft"` 与 `"draft": true` 以保证降级安全，但手工编写或直接拷贝的旧目录仍需确认）。如需降级，请先将所有 `private` 工具移出 `data/tools/`，并确保需要保留隐藏的 `draft` 工具在 `manifest.json` 中带有 `"draft": true`。
 
 ---
 
@@ -134,7 +138,12 @@ tools.example.com {
 
 - Caddy 默认会透传 `X-Forwarded-Proto: https` 和 `Host`，ToolStow 会自动为管理员 Session Cookie 附加 `Secure` 属性（同时配合 `.env` 中的 `TOOLSTOW_COOKIE_SECURE=true` 双保险）。
 - 如需为 `/admin` 叠加额外访问控制（如 IP 白名单或 Zero Trust / OAuth），可直接对 `/admin*` 与 `/api/admin/*` 路径规则加保护，无需修改 ToolStow 源码。
-- **若前置 Cloudflare 代理（CDN / 小黄云）**：ToolStow 会随主题切换在同一路径（如 `/`、`/app.js`、`/style.css`、`/ui/v1/toolstow.css`、`/ui/v1/theme-assets/*`）下返回不同主题的资源并声明 `Cache-Control: no-store`。请勿在 Cloudflare 覆盖更高的浏览器缓存 TTL（保持 `Respect Existing Headers`，或配置遵循源站 `no-store` 的 Cache Rule），否则切换主题后浏览器仍可能复用旧脚本导致页面初始化失败。
+- **若前置 Cloudflare 代理（CDN / 小黄云）或 Nginx / 反代缓存**：
+  - ToolStow 会随主题切换在同一路径（如 `/`、`/app.js`、`/style.css`、`/ui/v1/toolstow.css`、`/ui/v1/theme-assets/*`）下返回不同主题的资源并声明 `Cache-Control: no-store`。
+  - **严禁缓存 `/api/tools`、`/api/me` 与 `/tp/*`**：`GET /api/tools` 随管理员 Cookie 返回不同可见性列表（含私有工具的会话能力 URL）并固定声明 `Cache-Control: private, no-store`、`Vary: Cookie`；非公开工具经 `/t/{id}/*` 与 `/tp/{grant}/{id}/*` 提供服务时同样返回 `Cache-Control: private, no-store` 与 `Referrer-Policy: no-referrer`。请务必在 Cloudflare / 反向代理侧对 `/api/tools`、`/api/me`、`/tp/*`（及主题资源）配置 Bypass Cache 或严格遵循源站 `private, no-store`（保持 `Respect Existing Headers`，切勿覆盖更高的 Edge/Browser Cache TTL），避免切换主题失败或将管理员私有工具列表/能力 URL 误缓存给其他访客。
+- **反向代理访问日志脱敏提示（`/tp/*` 能力路径）**：
+  - ToolStow 自身的 HTTP 追踪日志已自动将 `/tp/{grant}/...` 中的能力令牌脱敏记录为 `/tp/[REDACTED]/...`。
+  - 若在 Caddy、Nginx 或其他反向代理上开启了访问日志（Access Log），由于路径中的 `grant` 在当前管理员会话有效期内可只读访问对应非公开工具，建议严格限制访问日志文件权限，或对 `/tp/` 路径配置日志脱敏 / 跳过记录。
 
 ---
 
@@ -207,7 +216,7 @@ ToolStow 支持借鉴 [monitor-probe/themes](https://github.com/monitor-probe/th
    - 公开前台继续复用编译期内嵌的默认壳界面，后端在响应 `GET /ui/v1/toolstow.css` 时自动先输出基础样式、再追加该主题的 `ui.css`，一次覆盖 `--ts-*` 设计令牌与 `.ts-*` 原语，让**主站与全部插件同步换肤**。
 2. **完整自定义前台（Full Custom Shell：`index.html` 或 `dist/index.html`，可选配 `ui.css`）**：
    - 公开前台 `/` 直接托管该主题静态文件（支持原生静态页或 Vite / React / Tailwind 构建后的 `dist/` 目录）；若同时包含 `ui.css`，也会自动追加至 `/ui/v1/toolstow.css` 使子工具与外壳保持视觉统一。
-   - 自定义前台需遵循只读契约：先加载 `/ui/v1/toolstow.css`，请求 `GET /api/me` 仅当 `isAdmin === true` 时显示 `/admin` 管理入口，请求 `GET /api/tools` 并保持 `<iframe sandbox>` 安全白名单（永不授予 `allow-same-origin`）与 `toolstow:theme` / `toolstow:ready` 握手。
+   - 自定义前台需遵循只读契约：先加载 `/ui/v1/toolstow.css`，请求 `GET /api/me` 在 `isAdmin === true` 时显示 `/admin` 管理入口（自定义主题可自由决定是否在 `adminEnabled === true && !isAdmin` 时提供指向 `/admin` 的轻量登录链接，但严禁在 `/` 内嵌登录表单或写操作控件），请求 `GET /api/tools`（通过 `ToolStowHost.isSafeToolUrl(url)` 同时兼容公开 `/t/*` 与管理员非公开 `/tp/{grant}/*` 能力 URL，并对非公开工具展示克制角标）并保持 `<iframe sandbox>` 安全白名单（永不授予 `allow-same-origin`）与 `toolstow:theme` / `toolstow:ready` 握手。
 
 ### 6.3 `/admin` 主题管理操作与 API（仅 Admin Session）
 
@@ -240,7 +249,7 @@ cp -r examples/themes/ascii-probe examples/themes/serverstatus examples/themes/r
 
 ### 6.5 路由安全锁定、`/ui/v1/theme-assets/` 与旧版 `data/theme/` 向后兼容
 
-- `/admin*`、`/api/*`、`/t/*` 与 `/ui/*`（`/ui/v1/toolstow.css`、`/ui/v1/theme.js`、`/ui/v1/host.js`、`/ui/v1/theme-assets/{*path}`，其余未知 `/ui/*` 路径一律返回 `404`）始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱边界。
+- `/admin*`、`/api/*`、`/t/*`、`/tp/*` 与 `/ui/*`（`/ui/v1/toolstow.css`、`/ui/v1/theme.js`、`/ui/v1/host.js`、`/ui/v1/theme-assets/{*path}`，其余未知 `/ui/*` 路径一律返回 `404`）始终由 Rust 后端强制接管，外置主题无法覆盖管理面板、共享 SDK 或绕过沙箱与能力 URL 隔离边界。
 - **跨沙箱主题静态资源（`GET /ui/v1/theme-assets/{*path}`）**：无论当前启用的是**纯皮肤主题**还是**完整自定义前台**（或 `default` 下的旧版 `data/theme/`），主题内自带的 `.woff2` 字体、背景图与 SVG 纹理均可通过 `/ui/v1/theme-assets/<rel-path>` 加载；后端固定返回 `Access-Control-Allow-Origin: *`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`（对 `.svg`/`.html` 额外附带 `Content-Security-Policy: sandbox;`），并拒绝点开头路径、越界路径、`theme.json` 与符号链接逃逸（`403 Forbidden`），确保字体与纹理在公开首页 `/` 与 `Origin: null` 沙箱插件 iframe 内一致生效。
 - 后端对主题静态文件与 `ui.css` 均执行规范路径 Containment 校验，禁止通过符号链接逃逸出主题目录（越界返回 `403 Forbidden`）。
 - **向后兼容**：当 `activeTheme` 为 `"default"` 时，仍保留旧版单目录 `/opt/toolstow/data/theme/`（`index.html` / `ui.css`）的自动覆盖逻辑；切换至任意已安装命名主题后，不再混入旧版 `data/theme/ui.css`。

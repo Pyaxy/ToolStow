@@ -40,6 +40,29 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     black_box(diff) == 0
 }
 
+/// Per-session state storing expiration and issued per-tool read-only capability grants.
+#[derive(Debug)]
+struct SessionRecord {
+    expires_at: Instant,
+    /// Maps `tool_id -> grant_token` issued for this session.
+    tool_grants: HashMap<String, String>,
+}
+
+/// Reverse lookup entry binding a capability grant token back to its owning session and tool.
+#[derive(Debug, Clone)]
+struct ToolGrant {
+    session_token: String,
+    tool_id: String,
+}
+
+/// Combined in-memory session and capability-grant store guarded under a single lock so
+/// session revocation and expiration always prune grants atomically.
+#[derive(Debug, Default)]
+struct SessionStore {
+    sessions: HashMap<String, SessionRecord>,
+    grants: HashMap<String, ToolGrant>,
+}
+
 /// Manages dual-key authentication, in-memory admin sessions, and per-client failure rate limiting.
 ///
 /// - `admin_key` (`TOOLSTOW_ADMIN_KEY`) grants human browser login at `/admin` via a 256-bit
@@ -51,7 +74,7 @@ pub struct AuthManager {
     admin_key: Option<String>,
     api_key: Option<String>,
     cookie_secure: bool,
-    sessions: Arc<RwLock<HashMap<String, Instant>>>,
+    sessions: Arc<RwLock<SessionStore>>,
     failures: Arc<Mutex<HashMap<String, Vec<Instant>>>>,
 }
 
@@ -77,7 +100,7 @@ impl AuthManager {
             admin_key: normalize(admin_key),
             api_key: normalize(api_key),
             cookie_secure,
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: Arc::new(RwLock::new(SessionStore::default())),
             failures: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -151,18 +174,41 @@ impl AuthManager {
         let expires_at = now + Duration::from_secs(SESSION_TTL_SECS);
 
         {
-            let mut guard = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-            guard.retain(|_, exp| *exp > now);
-            guard.insert(token.clone(), expires_at);
+            let mut store = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+            let expired_tokens: Vec<String> = store
+                .sessions
+                .iter()
+                .filter(|(_, rec)| rec.expires_at <= now)
+                .map(|(tok, _)| tok.clone())
+                .collect();
+            for expired in expired_tokens {
+                if let Some(rec) = store.sessions.remove(&expired) {
+                    for grant_token in rec.tool_grants.into_values() {
+                        store.grants.remove(&grant_token);
+                    }
+                }
+            }
+            store.sessions.insert(
+                token.clone(),
+                SessionRecord {
+                    expires_at,
+                    tool_grants: HashMap::new(),
+                },
+            );
         }
 
         Ok(token)
     }
 
-    /// Invalidates a single admin session token, if present.
+    /// Invalidates a single admin session token and immediately revokes all capability grants
+    /// issued for that session.
     pub fn logout_session(&self, token: &str) {
-        let mut guard = self.sessions.write().unwrap_or_else(|e| e.into_inner());
-        guard.remove(token);
+        let mut store = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(rec) = store.sessions.remove(token) {
+            for grant_token in rec.tool_grants.into_values() {
+                store.grants.remove(&grant_token);
+            }
+        }
     }
 
     /// Extracts the value of the [`SESSION_COOKIE_NAME`] cookie from `headers`, if present.
@@ -196,8 +242,77 @@ impl AuthManager {
         };
 
         let now = Instant::now();
-        let guard = self.sessions.read().unwrap_or_else(|e| e.into_inner());
-        matches!(guard.get(&token), Some(&expires_at) if expires_at > now)
+        let store = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+        matches!(store.sessions.get(&token), Some(rec) if rec.expires_at > now)
+    }
+
+    /// Returns an existing or newly generated 64-char lowercase hex read-only capability grant
+    /// bound to `(session_token, tool_id)` when `headers` carries a valid non-expired admin session.
+    pub fn issue_tool_grant(&self, headers: &HeaderMap, tool_id: &str) -> Option<String> {
+        if !self.is_admin_enabled() || tool_id.is_empty() {
+            return None;
+        }
+        let session_token = Self::extract_session_cookie(headers)?;
+        let now = Instant::now();
+
+        // Fast path: reuse existing grant under a shared read lock.
+        {
+            let store = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+            let rec = store.sessions.get(&session_token)?;
+            if rec.expires_at <= now {
+                return None;
+            }
+            if let Some(existing) = rec.tool_grants.get(tool_id) {
+                return Some(existing.clone());
+            }
+        }
+
+        // Slow path: issue a fresh 256-bit grant under a write lock.
+        let mut store = self.sessions.write().unwrap_or_else(|e| e.into_inner());
+        let rec = store.sessions.get_mut(&session_token)?;
+        if rec.expires_at <= now {
+            return None;
+        }
+        if let Some(existing) = rec.tool_grants.get(tool_id) {
+            return Some(existing.clone());
+        }
+
+        let grant = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        rec.tool_grants.insert(tool_id.to_string(), grant.clone());
+        store.grants.insert(
+            grant.clone(),
+            ToolGrant {
+                session_token,
+                tool_id: tool_id.to_string(),
+            },
+        );
+        Some(grant)
+    }
+
+    /// Verifies that `grant` is a well-formed 64-char lowercase hex capability token bound to
+    /// `tool_id` and that its owning admin session is still active and non-expired.
+    pub fn verify_tool_grant(&self, grant: &str, tool_id: &str) -> bool {
+        if !self.is_admin_enabled()
+            || grant.len() != 64
+            || !grant
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+        {
+            return false;
+        }
+
+        let now = Instant::now();
+        let store = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+        let Some(tool_grant) = store.grants.get(grant) else {
+            return false;
+        };
+        if tool_grant.tool_id != tool_id {
+            return false;
+        }
+        matches!(
+            store.sessions.get(&tool_grant.session_token),
+            Some(rec) if rec.expires_at > now
+        )
     }
 
     /// Verifies an `Authorization: Bearer <token>` header against `TOOLSTOW_API_KEY`.
@@ -537,5 +652,80 @@ mod tests {
                 .build_clear_cookie_header(false)
                 .ends_with("; Secure")
         );
+    }
+
+    #[test]
+    fn tool_grants_issue_reuse_scope_to_tool_and_revoke_on_logout_and_expiry() {
+        let auth = AuthManager::new(Some("my-strong-admin-key-1234".to_string()), None, false);
+
+        // No session -> cannot issue grant
+        assert!(auth.issue_tool_grant(&HeaderMap::new(), "tool-a").is_none());
+
+        let session1 = auth
+            .login_admin("127.0.0.1", "my-strong-admin-key-1234")
+            .unwrap();
+        let session2 = auth
+            .login_admin("127.0.0.2", "my-strong-admin-key-1234")
+            .unwrap();
+        let headers1 = headers_with_cookie(&format!("{SESSION_COOKIE_NAME}={session1}"));
+        let headers2 = headers_with_cookie(&format!("{SESSION_COOKIE_NAME}={session2}"));
+
+        // Issue grant for (session1, tool-a) -> 64 lowercase hex chars
+        let grant_a1 = auth
+            .issue_tool_grant(&headers1, "tool-a")
+            .expect("grant for tool-a");
+        assert_eq!(grant_a1.len(), 64);
+        assert!(
+            grant_a1
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+        );
+
+        // Reused for same (session1, tool-a)
+        assert_eq!(
+            auth.issue_tool_grant(&headers1, "tool-a").as_deref(),
+            Some(grant_a1.as_str())
+        );
+
+        // Distinct grant for different tool or different session
+        let grant_b1 = auth
+            .issue_tool_grant(&headers1, "tool-b")
+            .expect("grant for tool-b");
+        let grant_a2 = auth
+            .issue_tool_grant(&headers2, "tool-a")
+            .expect("grant for session2 tool-a");
+        assert_ne!(grant_a1, grant_b1);
+        assert_ne!(grant_a1, grant_a2);
+
+        // Verification checks exact tool_id and rejects malformed/uppercase/cross-tool grants
+        assert!(auth.verify_tool_grant(&grant_a1, "tool-a"));
+        assert!(!auth.verify_tool_grant(&grant_a1, "tool-b"));
+        assert!(!auth.verify_tool_grant(&grant_a1.to_uppercase(), "tool-a"));
+        assert!(!auth.verify_tool_grant("short", "tool-a"));
+        assert!(auth.verify_tool_grant(&grant_b1, "tool-b"));
+        assert!(auth.verify_tool_grant(&grant_a2, "tool-a"));
+
+        // Logout session1 immediately revokes all grants for session1 without touching session2
+        auth.logout_session(&session1);
+        assert!(!auth.verify_tool_grant(&grant_a1, "tool-a"));
+        assert!(!auth.verify_tool_grant(&grant_b1, "tool-b"));
+        assert!(auth.issue_tool_grant(&headers1, "tool-a").is_none());
+        assert!(auth.verify_tool_grant(&grant_a2, "tool-a"));
+
+        // Expired session grants fail verification and are pruned during login_admin
+        {
+            let mut store = auth.sessions.write().unwrap();
+            let rec = store.sessions.get_mut(&session2).unwrap();
+            rec.expires_at = Instant::now() - Duration::from_secs(1);
+        }
+        assert!(!auth.verify_tool_grant(&grant_a2, "tool-a"));
+        assert!(auth.issue_tool_grant(&headers2, "tool-a").is_none());
+
+        let _session3 = auth
+            .login_admin("127.0.0.3", "my-strong-admin-key-1234")
+            .unwrap();
+        let store = auth.sessions.read().unwrap();
+        assert!(!store.sessions.contains_key(&session2));
+        assert!(!store.grants.contains_key(&grant_a2));
     }
 }

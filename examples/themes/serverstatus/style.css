@@ -520,12 +520,21 @@ button.ops-tag-pill:hover {
 .ops-tool-cell-text {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.ops-tool-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 
 .ops-tool-cell-name {
   font-weight: 600;
   color: var(--ts-ink);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -577,6 +586,48 @@ button.ops-tag-pill:hover {
   font-size: 10.5px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.ops-vis-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ops-vis-badge[hidden] {
+  display: none;
+}
+
+.ops-vis-badge[data-visibility="private"] {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+:root[data-theme="dark"] .ops-vis-badge[data-visibility="private"] {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(96, 165, 250, 0.45);
+  color: #93c5fd;
+}
+
+.ops-vis-badge[data-visibility="draft"] {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+:root[data-theme="dark"] .ops-vis-badge[data-visibility="draft"] {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fcd34d;
 }
 
 .ops-ver-cell {
@@ -904,6 +955,7 @@ button.ops-tag-pill:hover {
     font-size: 13px;
   }
 
+  #active-tool-vis-badge,
   #active-tool-id,
   #active-tool-version,
   #active-tool-theme-badge,

@@ -107,8 +107,12 @@
             <span id="stat-total" class="stat-value">0</span>
           </div>
           <div class="stat-card">
-            <span class="stat-label">已发布</span>
-            <span id="stat-published" class="stat-value">0</span>
+            <span class="stat-label">公开</span>
+            <span id="stat-public" class="stat-value">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">私有</span>
+            <span id="stat-private" class="stat-value">0</span>
           </div>
           <div class="stat-card">
             <span class="stat-label">草稿</span>
@@ -150,7 +154,7 @@
           <div class="card-header card-header-wrap">
             <div>
               <h2 id="tools-card-title" class="card-title">已安装工具</h2>
-              <p class="card-desc">控制工具发布状态、在线预览草稿或移除已安装工具。</p>
+              <p class="card-desc">控制工具可见性（公开 / 私有 / 草稿）、在线预览或移除已安装工具。</p>
             </div>
 
             <div class="tools-controls">
@@ -168,12 +172,22 @@
                 <button
                   type="button"
                   class="filter-tab"
-                  data-filter="published"
+                  data-filter="public"
                   role="tab"
                   aria-selected="false"
                 >
-                  <span>已发布</span>
-                  <span id="tab-count-published" class="tab-count">0</span>
+                  <span>公开</span>
+                  <span id="tab-count-public" class="tab-count">0</span>
+                </button>
+                <button
+                  type="button"
+                  class="filter-tab"
+                  data-filter="private"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  <span>私有</span>
+                  <span id="tab-count-private" class="tab-count">0</span>
                 </button>
                 <button
                   type="button"
@@ -337,7 +351,7 @@
                   <span class="http-method">GET</span>
                   <code class="api-path">/api/admin/tools</code>
                 </div>
-                <span class="api-desc">列出所有工具（包含草稿）</span>
+                <span class="api-desc">列出所有工具（包含 <code>public</code> / <code>private</code> / <code>draft</code>，支持 <code>?visibility=public|private|draft</code> 及兼容参数 <code>?draft=true|false</code>）</span>
               </li>
               <li class="api-item">
                 <div class="api-sig">
@@ -351,14 +365,14 @@
                   <span class="http-method">POST</span>
                   <code class="api-path">/api/admin/tools/import/html</code>
                 </div>
-                <span class="api-desc">JSON <code>{"id","name","html","description","category","icon","draft","injectSdk"}</code> 收录单文件 HTML 工具（默认 <code>overwrite=false</code>，重名返回 <code>409 TOOL_EXISTS</code>；<code>?overwrite=true</code> 覆盖替换）</span>
+                <span class="api-desc">JSON <code>{"id","name","html","description","category","icon","visibility","injectSdk"}</code> 收录单文件 HTML 工具（<code>visibility</code> 支持 <code>"public" | "private" | "draft"</code>，默认 <code>"public"</code>，兼容旧版 <code>draft</code> 字段；默认 <code>overwrite=false</code>，重名返回 <code>409 TOOL_EXISTS</code>；<code>?overwrite=true</code> 覆盖替换）</span>
               </li>
               <li class="api-item">
                 <div class="api-sig">
                   <span class="http-method">PATCH</span>
                   <code class="api-path">/api/admin/tools/{id}</code>
                 </div>
-                <span class="api-desc">JSON <code>{"draft": true | false}</code> 切换发布状态</span>
+                <span class="api-desc">JSON <code>{"visibility": "public" | "private" | "draft"}</code> 切换可见性（兼容旧版 <code>{"draft": true | false}</code>）</span>
               </li>
               <li class="api-item">
                 <div class="api-sig">
@@ -434,10 +448,15 @@
             <textarea id="html-desc" class="input textarea" rows="2" maxlength="240" placeholder="一句话说明这个工具"></textarea>
           </div>
 
-          <label class="check-row">
-            <input id="html-draft" type="checkbox">
-            <span>保存为草稿 (draft)</span>
-          </label>
+          <div class="field">
+            <label for="html-visibility" class="field-label">可见性</label>
+            <select id="html-visibility" class="input">
+              <option value="" selected>自动（新建公开 / 覆盖保留原状态）</option>
+              <option value="public">公开（所有人可见）</option>
+              <option value="private">私有（仅管理员可见）</option>
+              <option value="draft">草稿（暂不展示）</option>
+            </select>
+          </div>
           <label class="check-row">
             <input id="html-inject-sdk" type="checkbox" checked>
             <span>自动注入 ToolStow 主题 SDK</span>

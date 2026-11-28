@@ -10,7 +10,7 @@ use uuid::Uuid;
 use zip::ZipArchive;
 
 use crate::error::AppError;
-use crate::manifest::{self, RawManifest, ToolEntry};
+use crate::manifest::{self, RawManifest, ToolEntry, Visibility};
 
 /// Default maximum compressed `.zip` size (50 MiB).
 pub const DEFAULT_MAX_ZIP_BYTES: usize = 50 * 1024 * 1024;
@@ -95,8 +95,9 @@ pub struct SingleHtmlToolInput {
     pub tags: Option<Vec<String>>,
     /// Optional Emoji icon.
     pub icon: Option<String>,
-    /// Whether this tool is saved as a draft.
-    pub draft: bool,
+    /// Optional explicit visibility state (`None` inherits an existing tool's visibility on
+    /// overwrite, or defaults to [`Visibility::Public`] for new tools).
+    pub visibility: Option<Visibility>,
     /// When `true`, injects `/ui/v1/toolstow.css` and `/ui/v1/theme.js` into the HTML document.
     pub inject_sdk: bool,
 }
@@ -159,12 +160,39 @@ pub fn install_zip_bytes(
 /// When `allow_overwrite` is `false` and `tools_dir/{id}` already exists, the staging directory is
 /// cleaned up automatically and [`InstallOutcome::AlreadyExists`] is returned without modifying the
 /// existing tool.
+///
+/// If an existing tool with the same `id` is already installed and the incoming archive's
+/// `manifest.json` omits both `visibility` and `draft`, the existing tool's visibility is
+/// inherited onto the staged `manifest.json` (both in `AlreadyExists.incoming` and on install).
 pub fn install_zip_bytes_checked(
     tools_dir: &Path,
     zip_bytes: &[u8],
     limits: ArchiveLimits,
     allow_overwrite: bool,
 ) -> Result<InstallOutcome, AppError> {
+    install_zip_bytes_checked_with_commit(
+        tools_dir,
+        zip_bytes,
+        limits,
+        allow_overwrite,
+        |_entry, install_fn| install_fn(),
+    )
+}
+
+/// Validates, extracts, and installs a `.zip` tool package into `tools_dir/{id}`, invoking
+/// `on_commit` around the final atomic directory swap so callers can hold an exclusive lock
+/// across both the disk rename and the in-memory registry update without blocking readers during
+/// archive extraction and validation.
+pub fn install_zip_bytes_checked_with_commit<F>(
+    tools_dir: &Path,
+    zip_bytes: &[u8],
+    limits: ArchiveLimits,
+    allow_overwrite: bool,
+    on_commit: F,
+) -> Result<InstallOutcome, AppError>
+where
+    F: FnOnce(&ToolEntry, &mut dyn FnMut() -> Result<bool, AppError>) -> Result<bool, AppError>,
+{
     if zip_bytes.len() > limits.max_zip_bytes {
         return Err(AppError::payload_too_large(format!(
             "uploaded zip archive is {} bytes, exceeding limit of {} bytes",
@@ -203,16 +231,45 @@ pub fn install_zip_bytes_checked(
     extract_planned_entries(&mut archive, &planned, stage_dir.path(), limits)?;
 
     // Validate the extracted tool directory before touching the live tools directory.
-    let entry = manifest::load_and_validate_manifest(stage_dir.path(), None)?;
+    let (mut entry, has_explicit_visibility) =
+        manifest::load_and_validate_manifest_with_source(stage_dir.path(), None)?;
     let target = tools_dir.join(&entry.id);
+    let target_exists = match fs::symlink_metadata(&target) {
+        Ok(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to inspect target tool directory '{}': {err}",
+                target.display()
+            )));
+        }
+    };
+    let existing = if target_exists {
+        manifest::load_and_validate_manifest(&target, Some(&entry.id)).ok()
+    } else {
+        None
+    };
 
-    if !allow_overwrite && target.exists() {
-        let existing = manifest::load_and_validate_manifest(&target, Some(&entry.id))
-            .ok()
-            .map(Box::new);
+    if target_exists && !has_explicit_visibility {
+        let existing_vis = manifest::read_existing_visibility(&target).map_err(|err| {
+            AppError::unprocessable(format!(
+                "cannot determine visibility of existing tool '{}': {err}; specify 'visibility' explicitly to overwrite",
+                entry.id
+            ))
+        })?;
+        write_manifest_visibility_in_dir(stage_dir.path(), existing_vis)?;
+        entry = manifest::load_and_validate_manifest(stage_dir.path(), None)?;
+    }
+
+    if entry.visibility == Visibility::Draft && !manifest_has_canonical_draft(stage_dir.path())? {
+        write_manifest_visibility_in_dir(stage_dir.path(), Visibility::Draft)?;
+        entry = manifest::load_and_validate_manifest(stage_dir.path(), None)?;
+    }
+
+    if !allow_overwrite && target_exists {
         // `stage_dir` drops here, cleaning up the temporary directory without touching `target`.
         return Ok(InstallOutcome::AlreadyExists {
-            existing,
+            existing: existing.map(Box::new),
             incoming: entry,
         });
     }
@@ -220,9 +277,26 @@ pub fn install_zip_bytes_checked(
     // Atomically move the validated staging directory into `tools_dir/{id}`.
     let staged_path = stage_dir.keep();
     let mut cleanup = CleanupPath::new(staged_path.clone());
+    let mut backup_to_remove: Option<PathBuf> = None;
 
-    let updated = install_staged_dir(&staging_root, &staged_path, &target, &entry.id)?;
+    let updated = on_commit(&entry, &mut || {
+        let (updated, backup) =
+            install_staged_dir_swap(&staging_root, &staged_path, &target, &entry.id)?;
+        backup_to_remove = backup;
+        Ok(updated)
+    })?;
     cleanup.disarm();
+
+    if let Some(backup) = backup_to_remove
+        && let Err(err) = fs::remove_dir_all(&backup)
+    {
+        warn!(
+            tool_id = %entry.id,
+            backup = %backup.display(),
+            error = %err,
+            "failed to clean up backup directory after atomic replace"
+        );
+    }
 
     Ok(InstallOutcome::Installed(InstallResult { entry, updated }))
 }
@@ -233,12 +307,38 @@ pub fn install_zip_bytes_checked(
 /// When `allow_overwrite` is `false` and `tools_dir/{id}` already exists, the staging directory is
 /// cleaned up automatically and [`InstallOutcome::AlreadyExists`] is returned without modifying the
 /// existing tool.
+///
+/// When `input.visibility` is `None` and an existing valid tool is already installed at
+/// `tools_dir/{id}`, the existing tool's visibility is inherited; otherwise it defaults to
+/// [`Visibility::Public`].
 pub fn install_single_html_checked(
     tools_dir: &Path,
     input: SingleHtmlToolInput,
     limits: ArchiveLimits,
     allow_overwrite: bool,
 ) -> Result<InstallOutcome, AppError> {
+    install_single_html_checked_with_commit(
+        tools_dir,
+        input,
+        limits,
+        allow_overwrite,
+        |_entry, install_fn| install_fn(),
+    )
+}
+
+/// Validates, optionally injects the ToolStow UI SDK, and atomically installs a standalone
+/// single-file HTML tool into `tools_dir/{id}`, invoking `on_commit` around the final atomic
+/// directory swap so callers can serialize disk swap + registry update under an exclusive lock.
+pub fn install_single_html_checked_with_commit<F>(
+    tools_dir: &Path,
+    input: SingleHtmlToolInput,
+    limits: ArchiveLimits,
+    allow_overwrite: bool,
+    on_commit: F,
+) -> Result<InstallOutcome, AppError>
+where
+    F: FnOnce(&ToolEntry, &mut dyn FnMut() -> Result<bool, AppError>) -> Result<bool, AppError>,
+{
     manifest::validate_id(&input.id)?;
 
     let trimmed_name = input.name.trim();
@@ -288,6 +388,34 @@ pub fn install_single_html_checked(
         AppError::internal(format!("failed to write staged index.html: {err}"))
     })?;
 
+    let target = tools_dir.join(&input.id);
+    let target_exists = match fs::symlink_metadata(&target) {
+        Ok(_) => true,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => {
+            return Err(AppError::internal(format!(
+                "failed to inspect target tool directory '{}': {err}",
+                target.display()
+            )));
+        }
+    };
+    let existing = if target_exists {
+        manifest::load_and_validate_manifest(&target, Some(&input.id)).ok()
+    } else {
+        None
+    };
+
+    let effective_visibility = match input.visibility {
+        Some(vis) => vis,
+        None if target_exists => manifest::read_existing_visibility(&target).map_err(|err| {
+            AppError::unprocessable(format!(
+                "cannot determine visibility of existing tool '{}': {err}; specify 'visibility' explicitly to overwrite",
+                input.id
+            ))
+        })?,
+        None => Visibility::Public,
+    };
+
     let raw_manifest = RawManifest {
         id: input.id,
         name: trimmed_name.to_string(),
@@ -300,7 +428,8 @@ pub fn install_single_html_checked(
         runtime: Some(manifest::DEFAULT_RUNTIME.to_string()),
         theme_aware: Some(theme_aware),
         sandbox: None,
-        draft: input.draft,
+        visibility: Some(effective_visibility.as_str().to_string()),
+        draft: (effective_visibility == Visibility::Draft).then_some(true),
     };
 
     let mut manifest_bytes = serde_json::to_vec_pretty(&raw_manifest)
@@ -312,23 +441,36 @@ pub fn install_single_html_checked(
     })?;
 
     let entry = manifest::load_and_validate_manifest(stage_dir.path(), None)?;
-    let target = tools_dir.join(&entry.id);
 
-    if !allow_overwrite && target.exists() {
-        let existing = manifest::load_and_validate_manifest(&target, Some(&entry.id))
-            .ok()
-            .map(Box::new);
+    if !allow_overwrite && target_exists {
         return Ok(InstallOutcome::AlreadyExists {
-            existing,
+            existing: existing.map(Box::new),
             incoming: entry,
         });
     }
 
     let staged_path = stage_dir.keep();
     let mut cleanup = CleanupPath::new(staged_path.clone());
+    let mut backup_to_remove: Option<PathBuf> = None;
 
-    let updated = install_staged_dir(&staging_root, &staged_path, &target, &entry.id)?;
+    let updated = on_commit(&entry, &mut || {
+        let (updated, backup) =
+            install_staged_dir_swap(&staging_root, &staged_path, &target, &entry.id)?;
+        backup_to_remove = backup;
+        Ok(updated)
+    })?;
     cleanup.disarm();
+
+    if let Some(backup) = backup_to_remove
+        && let Err(err) = fs::remove_dir_all(&backup)
+    {
+        warn!(
+            tool_id = %entry.id,
+            backup = %backup.display(),
+            error = %err,
+            "failed to clean up backup directory after atomic replace"
+        );
+    }
 
     Ok(InstallOutcome::Installed(InstallResult { entry, updated }))
 }
@@ -830,36 +972,64 @@ pub fn delete_tool_dir(tools_dir: &Path, id: &str) -> Result<bool, AppError> {
     Ok(true)
 }
 
-/// Atomically updates `"draft"` in `tools_dir/{id}/manifest.json` and returns the reloaded [`ToolEntry`].
-///
-/// Validates `id`, checks that `manifest.json` exists and is a regular file (returning `404` if missing),
-/// preserves all other JSON fields in `manifest.json`, writes atomically via a temporary file in the tool
-/// directory + rename, and reloads via [`manifest::load_and_validate_manifest`].
-pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEntry, AppError> {
-    manifest::validate_id(id)?;
-
-    let tool_dir = tools_dir.join(id);
-    let dir_meta = fs::symlink_metadata(&tool_dir).map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            AppError::not_found(format!("tool '{id}' not found"))
-        } else {
-            AppError::internal(format!(
-                "failed to inspect tool directory '{}': {err}",
-                tool_dir.display()
-            ))
-        }
+/// Returns `true` when `tool_dir/manifest.json` already contains both `"visibility": "draft"`
+/// and downgrade-safe `"draft": true`.
+fn manifest_has_canonical_draft(tool_dir: &Path) -> Result<bool, AppError> {
+    let manifest_path = tool_dir.join("manifest.json");
+    let raw_bytes = fs::read(&manifest_path).map_err(|err| {
+        AppError::internal(format!(
+            "failed to read manifest '{}': {err}",
+            manifest_path.display()
+        ))
     })?;
-    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
-        return Err(AppError::unprocessable(format!(
-            "tool path '{}' must be a regular directory",
-            tool_dir.display()
-        )));
-    }
+    let value: serde_json::Value = serde_json::from_slice(&raw_bytes)
+        .map_err(|err| AppError::unprocessable(format!("invalid manifest.json: {err}")))?;
+    let Some(obj) = value.as_object() else {
+        return Ok(false);
+    };
+    let has_vis_draft = obj
+        .get("visibility")
+        .and_then(|v| v.as_str())
+        .is_some_and(|v| v == Visibility::Draft.as_str());
+    let has_draft_true = obj.get("draft").and_then(|v| v.as_bool()) == Some(true);
+    Ok(has_vis_draft && has_draft_true)
+}
 
+/// Applies canonical `"visibility"` and downgrade-safe `"draft"` fields to a `manifest.json`
+/// JSON object:
+/// - `Visibility::Draft` writes BOTH `"visibility": "draft"` AND `"draft": true` (safe on `<= v0.3.5`).
+/// - `Visibility::Public` and `Visibility::Private` write `"visibility"` and remove legacy `"draft"`.
+fn apply_visibility_to_manifest_object(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    visibility: Visibility,
+) {
+    obj.insert(
+        "visibility".to_string(),
+        serde_json::Value::String(visibility.as_str().to_string()),
+    );
+    match visibility {
+        Visibility::Draft => {
+            obj.insert("draft".to_string(), serde_json::Value::Bool(true));
+        }
+        Visibility::Public | Visibility::Private => {
+            obj.remove("draft");
+        }
+    }
+}
+
+/// Atomically rewrites `manifest.json` inside `tool_dir` to record `visibility` (preserving all
+/// other JSON keys and applying downgrade-safe `draft` writeback rules).
+fn write_manifest_visibility_in_dir(
+    tool_dir: &Path,
+    visibility: Visibility,
+) -> Result<(), AppError> {
     let manifest_path = tool_dir.join("manifest.json");
     let manifest_meta = fs::symlink_metadata(&manifest_path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
-            AppError::not_found(format!("tool '{id}' manifest.json not found"))
+            AppError::not_found(format!(
+                "manifest.json not found in '{}'",
+                tool_dir.display()
+            ))
         } else {
             AppError::internal(format!(
                 "failed to inspect manifest '{}': {err}",
@@ -886,13 +1056,13 @@ pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEnt
     let obj = value
         .as_object_mut()
         .ok_or_else(|| AppError::unprocessable("manifest.json must be a JSON object"))?;
-    obj.insert("draft".to_string(), serde_json::Value::Bool(draft));
+    apply_visibility_to_manifest_object(obj, visibility);
 
     let mut pretty = serde_json::to_vec_pretty(&value)
         .map_err(|err| AppError::internal(format!("failed to serialize manifest.json: {err}")))?;
     pretty.push(b'\n');
 
-    let mut tmp = tempfile::NamedTempFile::new_in(&tool_dir).map_err(|err| {
+    let mut tmp = tempfile::NamedTempFile::new_in(tool_dir).map_err(|err| {
         AppError::internal(format!(
             "failed to create temporary manifest file in '{}': {err}",
             tool_dir.display()
@@ -912,7 +1082,58 @@ pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEnt
         ))
     })?;
 
+    Ok(())
+}
+
+/// Atomically updates `"visibility"` in `tools_dir/{id}/manifest.json` (writing `"draft": true`
+/// alongside `"visibility": "draft"` for downgrade safety, and removing legacy `"draft"` for
+/// `"public"` and `"private"`) and returns the reloaded [`ToolEntry`].
+///
+/// Validates `id`, checks that `manifest.json` exists and is a regular file (returning `404` if
+/// missing), preserves all other JSON fields in `manifest.json`, writes atomically via a temporary
+/// file in the tool directory + rename, and reloads via [`manifest::load_and_validate_manifest`].
+pub fn set_tool_visibility(
+    tools_dir: &Path,
+    id: &str,
+    visibility: Visibility,
+) -> Result<ToolEntry, AppError> {
+    manifest::validate_id(id)?;
+
+    let tool_dir = tools_dir.join(id);
+    let dir_meta = fs::symlink_metadata(&tool_dir).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            AppError::not_found(format!("tool '{id}' not found"))
+        } else {
+            AppError::internal(format!(
+                "failed to inspect tool directory '{}': {err}",
+                tool_dir.display()
+            ))
+        }
+    })?;
+    if dir_meta.file_type().is_symlink() || !dir_meta.file_type().is_dir() {
+        return Err(AppError::unprocessable(format!(
+            "tool path '{}' must be a regular directory",
+            tool_dir.display()
+        )));
+    }
+
+    write_manifest_visibility_in_dir(&tool_dir, visibility)?;
+
     manifest::load_and_validate_manifest(&tool_dir, Some(id))
+}
+
+/// Legacy compatibility wrapper around [`set_tool_visibility`], mapping `true` to
+/// [`Visibility::Draft`] and `false` to [`Visibility::Public`].
+pub fn set_tool_draft(tools_dir: &Path, id: &str, draft: bool) -> Result<ToolEntry, AppError> {
+    set_tool_visibility(
+        tools_dir,
+        id,
+        if draft {
+            Visibility::Draft
+        } else {
+            Visibility::Public
+        },
+    )
 }
 
 /// Inspects every entry in the zip archive for symlinks, unsafe paths, and macOS junk.
@@ -1255,13 +1476,15 @@ fn extract_planned_entries(
     Ok(())
 }
 
-/// Atomically installs `staged_path` into `target`, backing up and rolling back if `target` exists.
-fn install_staged_dir(
+/// Atomically swaps `staged_path` into `target`, backing up and rolling back if `target` exists,
+/// and returns `(updated, optional_backup_dir)` so callers can remove the backup directory after
+/// releasing any short-lived exclusive swap lock.
+fn install_staged_dir_swap(
     staging_root: &Path,
     staged_path: &Path,
     target: &Path,
     tool_id: &str,
-) -> Result<bool, AppError> {
+) -> Result<(bool, Option<PathBuf>), AppError> {
     let target_exists = match fs::symlink_metadata(target) {
         Ok(_) => true,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
@@ -1298,16 +1521,7 @@ fn install_staged_dir(
             )));
         }
 
-        if let Err(err) = fs::remove_dir_all(&backup) {
-            warn!(
-                tool_id,
-                backup = %backup.display(),
-                error = %err,
-                "failed to clean up backup directory after atomic replace"
-            );
-        }
-
-        Ok(true)
+        Ok((true, Some(backup)))
     } else {
         fs::rename(staged_path, target).map_err(|err| {
             AppError::internal(format!(
@@ -1316,8 +1530,30 @@ fn install_staged_dir(
             ))
         })?;
 
-        Ok(false)
+        Ok((false, None))
     }
+}
+
+/// Atomically installs `staged_path` into `target`, backing up and rolling back if `target` exists.
+#[cfg(test)]
+fn install_staged_dir(
+    staging_root: &Path,
+    staged_path: &Path,
+    target: &Path,
+    tool_id: &str,
+) -> Result<bool, AppError> {
+    let (updated, backup) = install_staged_dir_swap(staging_root, staged_path, target, tool_id)?;
+    if let Some(backup) = backup
+        && let Err(err) = fs::remove_dir_all(&backup)
+    {
+        warn!(
+            tool_id,
+            backup = %backup.display(),
+            error = %err,
+            "failed to clean up backup directory after atomic replace"
+        );
+    }
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -1732,20 +1968,29 @@ mod tests {
 
         // Toggle draft -> true
         let updated_draft = set_tool_draft(&tools_dir, "draft-demo", true).unwrap();
+        assert_eq!(updated_draft.visibility, Visibility::Draft);
         assert!(updated_draft.draft);
         assert_eq!(updated_draft.version, "1.2.0");
         assert_eq!(updated_draft.tags, vec!["alpha"]);
 
-        // Existing fields (including extra JSON fields) remain preserved on disk
+        // Existing fields (including extra JSON fields) remain preserved on disk;
+        // draft writes both canonical "visibility": "draft" and downgrade-safe "draft": true.
         let raw: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(tools_dir.join("draft-demo/manifest.json")).unwrap())
                 .unwrap();
+        assert_eq!(raw["visibility"], "draft");
         assert_eq!(raw["draft"], true);
         assert_eq!(raw["customField"], "keep");
 
         // Toggle draft -> false
         let republished = set_tool_draft(&tools_dir, "draft-demo", false).unwrap();
+        assert_eq!(republished.visibility, Visibility::Public);
         assert!(!republished.draft);
+        let raw_pub: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tools_dir.join("draft-demo/manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(raw_pub["visibility"], "public");
+        assert!(raw_pub.get("draft").is_none());
 
         // Missing tool -> 404
         let err = set_tool_draft(&tools_dir, "no-such-tool", true).unwrap_err();
@@ -1754,6 +1999,61 @@ mod tests {
         // Invalid ID -> 422
         let err = set_tool_draft(&tools_dir, "../escape", true).unwrap_err();
         assert_eq!(err.error_code(), "UNPROCESSABLE_ENTITY");
+    }
+
+    #[test]
+    fn set_tool_visibility_migrates_legacy_draft_and_preserves_other_fields() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"legacy-draft","name":"Legacy Draft","draft":true,"version":"3.1.0","extra":{"a":1}}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>Legacy</h1>"),
+        ]);
+        let installed = install_zip_bytes(&tools_dir, &zip, ArchiveLimits::default()).unwrap();
+        assert_eq!(installed.entry.visibility, Visibility::Draft);
+        assert!(installed.entry.draft);
+
+        // Migrate legacy `"draft": true` to `"visibility": "private"` and verify `"draft"` is removed
+        let private_entry =
+            set_tool_visibility(&tools_dir, "legacy-draft", Visibility::Private).unwrap();
+        assert_eq!(private_entry.visibility, Visibility::Private);
+        assert!(!private_entry.draft);
+        assert_eq!(private_entry.version, "3.1.0");
+
+        let raw: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("legacy-draft/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw["visibility"], "private");
+        assert!(raw.get("draft").is_none());
+        assert_eq!(raw["extra"]["a"], 1);
+
+        // Transition private -> public -> draft
+        let public_entry =
+            set_tool_visibility(&tools_dir, "legacy-draft", Visibility::Public).unwrap();
+        assert_eq!(public_entry.visibility, Visibility::Public);
+        assert!(!public_entry.draft);
+        let raw_pub: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("legacy-draft/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw_pub["visibility"], "public");
+        assert!(raw_pub.get("draft").is_none());
+
+        let draft_entry =
+            set_tool_visibility(&tools_dir, "legacy-draft", Visibility::Draft).unwrap();
+        assert_eq!(draft_entry.visibility, Visibility::Draft);
+        assert!(draft_entry.draft);
+        let raw_draft: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("legacy-draft/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw_draft["visibility"], "draft");
+        assert_eq!(raw_draft["draft"], true);
     }
 
     #[test]
@@ -1832,7 +2132,7 @@ mod tests {
                 category: Some("Utilities".to_string()),
                 tags: Some(vec!["html".to_string(), " single ".to_string(), "html".to_string()]),
                 icon: Some("📄".to_string()),
-                draft: false,
+                visibility: Some(Visibility::Public),
                 inject_sdk: false,
             },
             ArchiveLimits::default(),
@@ -1852,6 +2152,7 @@ mod tests {
                 assert_eq!(res.entry.runtime, "static");
                 assert_eq!(res.entry.entry, "index.html");
                 assert!(!res.entry.theme_aware);
+                assert_eq!(res.entry.visibility, Visibility::Public);
                 assert!(!res.entry.draft);
             }
             InstallOutcome::AlreadyExists { .. } => panic!("expected first install to succeed"),
@@ -1869,7 +2170,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: true,
+                visibility: Some(Visibility::Draft),
                 inject_sdk: true,
             },
             ArchiveLimits::default(),
@@ -1884,6 +2185,7 @@ mod tests {
                 assert!(!existing.theme_aware);
                 assert_eq!(incoming.name, "My HTML Tool v2");
                 assert!(incoming.theme_aware);
+                assert_eq!(incoming.visibility, Visibility::Draft);
                 assert!(incoming.draft);
             }
             InstallOutcome::Installed(_) => panic!("expected AlreadyExists when overwrite=false"),
@@ -1906,7 +2208,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: true,
+                visibility: Some(Visibility::Draft),
                 inject_sdk: true,
             },
             ArchiveLimits::default(),
@@ -1919,10 +2221,17 @@ mod tests {
                 assert!(res.updated);
                 assert_eq!(res.entry.name, "My HTML Tool v2");
                 assert!(res.entry.theme_aware);
+                assert_eq!(res.entry.visibility, Visibility::Draft);
                 assert!(res.entry.draft);
             }
             InstallOutcome::AlreadyExists { .. } => panic!("expected overwrite to succeed"),
         }
+        let disk_manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("my-html-tool/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_manifest["visibility"], "draft");
+        assert_eq!(disk_manifest["draft"], true);
         let disk_html = fs::read_to_string(tools_dir.join("my-html-tool/index.html")).unwrap();
         assert!(disk_html.contains("/ui/v1/toolstow.css"));
         assert!(disk_html.contains("/ui/v1/theme.js"));
@@ -1943,7 +2252,7 @@ mod tests {
             category: None,
             tags: None,
             icon: None,
-            draft: false,
+            visibility: Some(Visibility::Public),
             inject_sdk: false,
         };
 
@@ -2072,7 +2381,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: false,
+                visibility: Some(Visibility::Public),
                 inject_sdk: false,
             },
             ArchiveLimits::default(),
@@ -2126,7 +2435,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: false,
+                visibility: Some(Visibility::Public),
                 inject_sdk: false,
             },
             ArchiveLimits::default(),
@@ -2148,7 +2457,7 @@ mod tests {
                 category: None,
                 tags: None,
                 icon: None,
-                draft: false,
+                visibility: Some(Visibility::Public),
                 inject_sdk: true,
             },
             ArchiveLimits::default(),
@@ -2219,5 +2528,376 @@ mod tests {
         assert!(scan_loaded.has_toolstow_css);
         assert!(scan_loaded.has_theme_js);
         assert_eq!(inject_toolstow_sdk(stylesheet_with_query), stylesheet_with_query);
+    }
+
+    #[test]
+    fn zip_overwrite_omitting_visibility_preserves_existing_private_and_draft_while_explicit_overrides()
+    {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        // 1. Install a private tool
+        let v1_private = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"vis-zip","name":"Vis Zip v1","version":"1.0.0","visibility":"private"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>v1 private</h1>"),
+        ]);
+        let res1 = install_zip_bytes(&tools_dir, &v1_private, ArchiveLimits::default()).unwrap();
+        assert_eq!(res1.entry.visibility, Visibility::Private);
+
+        // 2. Incoming v2 omits both `visibility` and `draft`
+        let v2_omitted = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"vis-zip","name":"Vis Zip v2","version":"2.0.0","customMeta":"keep-me"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>v2</h1>"),
+        ]);
+
+        // 2a. allow_overwrite=false -> AlreadyExists reports inherited `private` on incoming
+        match install_zip_bytes_checked(&tools_dir, &v2_omitted, ArchiveLimits::default(), false)
+            .unwrap()
+        {
+            InstallOutcome::AlreadyExists { existing, incoming } => {
+                assert_eq!(existing.unwrap().visibility, Visibility::Private);
+                assert_eq!(incoming.visibility, Visibility::Private);
+                assert!(!incoming.draft);
+                assert_eq!(incoming.version, "2.0.0");
+            }
+            InstallOutcome::Installed(_) => panic!("expected AlreadyExists"),
+        }
+
+        // 2b. allow_overwrite=true -> installed entry & disk manifest inherit `private` (no legacy draft key)
+        match install_zip_bytes_checked(&tools_dir, &v2_omitted, ArchiveLimits::default(), true)
+            .unwrap()
+        {
+            InstallOutcome::Installed(res) => {
+                assert!(res.updated);
+                assert_eq!(res.entry.visibility, Visibility::Private);
+                assert!(!res.entry.draft);
+                assert_eq!(res.entry.version, "2.0.0");
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+        let disk_priv: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("vis-zip/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_priv["visibility"], "private");
+        assert!(disk_priv.get("draft").is_none());
+        assert_eq!(disk_priv["customMeta"], "keep-me");
+
+        // 3. Switch to `draft`, then overwrite with omitted visibility -> inherits `draft` AND writes `"draft": true`
+        set_tool_visibility(&tools_dir, "vis-zip", Visibility::Draft).unwrap();
+        match install_zip_bytes_checked(&tools_dir, &v2_omitted, ArchiveLimits::default(), false)
+            .unwrap()
+        {
+            InstallOutcome::AlreadyExists { existing, incoming } => {
+                assert_eq!(existing.unwrap().visibility, Visibility::Draft);
+                assert_eq!(incoming.visibility, Visibility::Draft);
+                assert!(incoming.draft);
+            }
+            InstallOutcome::Installed(_) => panic!("expected AlreadyExists"),
+        }
+        match install_zip_bytes_checked(&tools_dir, &v2_omitted, ArchiveLimits::default(), true)
+            .unwrap()
+        {
+            InstallOutcome::Installed(res) => {
+                assert_eq!(res.entry.visibility, Visibility::Draft);
+                assert!(res.entry.draft);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+        let disk_draft: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("vis-zip/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_draft["visibility"], "draft");
+        assert_eq!(disk_draft["draft"], true);
+        assert_eq!(disk_draft["customMeta"], "keep-me");
+
+        // 4. Explicit `"visibility": "public"` overrides inherited draft -> becomes public
+        let v3_explicit_public = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"vis-zip","name":"Vis Zip v3","version":"3.0.0","visibility":"public"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>v3 public</h1>"),
+        ]);
+        let res3 =
+            install_zip_bytes(&tools_dir, &v3_explicit_public, ArchiveLimits::default()).unwrap();
+        assert_eq!(res3.entry.visibility, Visibility::Public);
+        assert!(!res3.entry.draft);
+        assert!(staging_is_empty(&tools_dir));
+    }
+
+    #[test]
+    fn single_html_overwrite_omitting_visibility_inherits_existing_and_defaults_public_for_new() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        // 1. Fresh install with visibility: None -> defaults to Public, omits legacy `draft`
+        let fresh = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "new-html".to_string(),
+                name: "New HTML".to_string(),
+                html: "<h1>New</h1>".to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                visibility: None,
+                inject_sdk: false,
+            },
+            ArchiveLimits::default(),
+            false,
+        )
+        .unwrap();
+        match fresh {
+            InstallOutcome::Installed(res) => {
+                assert_eq!(res.entry.visibility, Visibility::Public);
+                assert!(!res.entry.draft);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+        let disk_new: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("new-html/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_new["visibility"], "public");
+        assert!(disk_new.get("draft").is_none());
+
+        // 2. Patch to Private, then overwrite with visibility: None -> preserves Private in 409 & 200
+        set_tool_visibility(&tools_dir, "new-html", Visibility::Private).unwrap();
+        let make_omitted = || SingleHtmlToolInput {
+            id: "new-html".to_string(),
+            name: "Updated HTML".to_string(),
+            html: "<h1>Updated</h1>".to_string(),
+            description: None,
+            category: None,
+            tags: None,
+            icon: None,
+            visibility: None,
+            inject_sdk: false,
+        };
+
+        match install_single_html_checked(&tools_dir, make_omitted(), ArchiveLimits::default(), false)
+            .unwrap()
+        {
+            InstallOutcome::AlreadyExists { existing, incoming } => {
+                assert_eq!(existing.unwrap().visibility, Visibility::Private);
+                assert_eq!(incoming.visibility, Visibility::Private);
+            }
+            InstallOutcome::Installed(_) => panic!("expected AlreadyExists"),
+        }
+        match install_single_html_checked(&tools_dir, make_omitted(), ArchiveLimits::default(), true)
+            .unwrap()
+        {
+            InstallOutcome::Installed(res) => {
+                assert_eq!(res.entry.visibility, Visibility::Private);
+                assert!(!res.entry.draft);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+        let disk_priv: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("new-html/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_priv["visibility"], "private");
+        assert!(disk_priv.get("draft").is_none());
+
+        // 3. Patch to Draft, then overwrite with visibility: None -> preserves Draft AND writes `"draft": true`
+        set_tool_visibility(&tools_dir, "new-html", Visibility::Draft).unwrap();
+        match install_single_html_checked(&tools_dir, make_omitted(), ArchiveLimits::default(), true)
+            .unwrap()
+        {
+            InstallOutcome::Installed(res) => {
+                assert_eq!(res.entry.visibility, Visibility::Draft);
+                assert!(res.entry.draft);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+        let disk_draft: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("new-html/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_draft["visibility"], "draft");
+        assert_eq!(disk_draft["draft"], true);
+    }
+
+    #[test]
+    fn damaged_private_tool_overwrite_preserves_private_and_corrupt_manifest_fails_closed() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        // 1. Create a damaged private tool (missing index.html, intact manifest.json with visibility: "private")
+        let damaged_dir = tools_dir.join("damaged-priv");
+        fs::create_dir_all(&damaged_dir).unwrap();
+        fs::write(
+            damaged_dir.join("manifest.json"),
+            r#"{"id":"damaged-priv","name":"Damaged Private","visibility":"private"}"#,
+        )
+        .unwrap();
+
+        // 1a. Overwrite with ZIP omitting visibility/draft -> preserves `private`
+        let omitted_zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"damaged-priv","name":"Repaired via ZIP"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>Repaired ZIP</h1>"),
+        ]);
+        match install_zip_bytes_checked(&tools_dir, &omitted_zip, ArchiveLimits::default(), false)
+            .unwrap()
+        {
+            InstallOutcome::AlreadyExists { existing, incoming } => {
+                assert!(existing.is_none());
+                assert_eq!(incoming.visibility, Visibility::Private);
+            }
+            InstallOutcome::Installed(_) => panic!("expected AlreadyExists"),
+        }
+        let zip_res = install_zip_bytes(&tools_dir, &omitted_zip, ArchiveLimits::default()).unwrap();
+        assert!(zip_res.updated);
+        assert_eq!(zip_res.entry.visibility, Visibility::Private);
+        let disk_zip: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(damaged_dir.join("manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_zip["visibility"], "private");
+
+        // 1b. Damage index.html again and overwrite with single-HTML omitting visibility -> preserves `private`
+        fs::remove_file(damaged_dir.join("index.html")).unwrap();
+        let html_omitted = SingleHtmlToolInput {
+            id: "damaged-priv".to_string(),
+            name: "Repaired via HTML".to_string(),
+            html: "<h1>Repaired HTML</h1>".to_string(),
+            description: None,
+            category: None,
+            tags: None,
+            icon: None,
+            visibility: None,
+            inject_sdk: false,
+        };
+        match install_single_html_checked(&tools_dir, html_omitted, ArchiveLimits::default(), true)
+            .unwrap()
+        {
+            InstallOutcome::Installed(res) => {
+                assert!(res.updated);
+                assert_eq!(res.entry.visibility, Visibility::Private);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+        let disk_html: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(damaged_dir.join("manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_html["visibility"], "private");
+
+        // 2. Corrupt manifest.json -> omitted visibility fails closed with 422; explicit visibility repairs
+        fs::write(damaged_dir.join("manifest.json"), "{corrupt-json").unwrap();
+
+        let err_zip =
+            install_zip_bytes_checked(&tools_dir, &omitted_zip, ArchiveLimits::default(), true)
+                .unwrap_err();
+        assert_eq!(err_zip.error_code(), "UNPROCESSABLE_ENTITY");
+        assert!(err_zip.to_string().contains("specify 'visibility' explicitly"));
+
+        let err_html = install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "damaged-priv".to_string(),
+                name: "Try Omitted".to_string(),
+                html: "<h1>x</h1>".to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                visibility: None,
+                inject_sdk: false,
+            },
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(err_html.error_code(), "UNPROCESSABLE_ENTITY");
+
+        // Explicit visibility repairs corrupt target (ZIP)
+        let explicit_priv_zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"damaged-priv","name":"Explicit Private","visibility":"private"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>Fixed</h1>"),
+        ]);
+        let repaired =
+            install_zip_bytes(&tools_dir, &explicit_priv_zip, ArchiveLimits::default()).unwrap();
+        assert_eq!(repaired.entry.visibility, Visibility::Private);
+
+        // Missing manifest.json -> omitted visibility fails closed with 422; explicit visibility repairs (single-HTML)
+        fs::remove_file(damaged_dir.join("manifest.json")).unwrap();
+        let err_missing =
+            install_zip_bytes_checked(&tools_dir, &omitted_zip, ArchiveLimits::default(), true)
+                .unwrap_err();
+        assert_eq!(err_missing.error_code(), "UNPROCESSABLE_ENTITY");
+
+        match install_single_html_checked(
+            &tools_dir,
+            SingleHtmlToolInput {
+                id: "damaged-priv".to_string(),
+                name: "Explicit Public".to_string(),
+                html: "<h1>Public Fixed</h1>".to_string(),
+                description: None,
+                category: None,
+                tags: None,
+                icon: None,
+                visibility: Some(Visibility::Public),
+                inject_sdk: false,
+            },
+            ArchiveLimits::default(),
+            true,
+        )
+        .unwrap()
+        {
+            InstallOutcome::Installed(res) => {
+                assert_eq!(res.entry.visibility, Visibility::Public);
+            }
+            InstallOutcome::AlreadyExists { .. } => panic!("expected Installed"),
+        }
+    }
+
+    #[test]
+    fn explicit_draft_zip_normalizes_manifest_with_downgrade_safe_draft_true() {
+        let tmp = TempDir::new().unwrap();
+        let tools_dir = tmp.path().join("tools");
+
+        let explicit_draft_zip = build_zip(&[
+            TestZipEntry::File(
+                "manifest.json",
+                br#"{"id":"draft-only-vis","name":"Draft Only Vis","visibility":"draft","extraField":"keep"}"#,
+            ),
+            TestZipEntry::File("index.html", b"<h1>Draft</h1>"),
+        ]);
+
+        let res =
+            install_zip_bytes(&tools_dir, &explicit_draft_zip, ArchiveLimits::default()).unwrap();
+        assert_eq!(res.entry.visibility, Visibility::Draft);
+        assert!(res.entry.draft);
+
+        let disk_manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tools_dir.join("draft-only-vis/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk_manifest["visibility"], "draft");
+        assert_eq!(disk_manifest["draft"], true);
+        assert_eq!(disk_manifest["extraField"], "keep");
+
+        // Loaded fingerprint matches the normalized on-disk manifest.json (hot path ready!)
+        assert_eq!(
+            res.entry.manifest_fingerprint,
+            manifest::read_manifest_fingerprint(&tools_dir.join("draft-only-vis"))
+        );
     }
 }

@@ -20,11 +20,14 @@ const els = {
   quickSwitcher: document.getElementById("quick-switcher"),
   activeToolIcon: document.getElementById("active-tool-icon"),
   activeToolName: document.getElementById("active-tool-name"),
+  activeToolVisBadge: document.getElementById("active-tool-vis-badge"),
   infoToggle: document.getElementById("info-toggle"),
   infoPopover: document.getElementById("info-popover"),
   activeToolId: document.getElementById("active-tool-id"),
   activeToolVersion: document.getElementById("active-tool-version"),
   infoVersionRow: document.getElementById("info-version-row"),
+  infoVisibilityRow: document.getElementById("info-visibility-row"),
+  activeToolVisInfo: document.getElementById("active-tool-vis-info"),
   infoThemeRow: document.getElementById("info-theme-row"),
   activeToolDesc: document.getElementById("active-tool-desc"),
   activeToolTags: document.getElementById("active-tool-tags"),
@@ -58,6 +61,36 @@ let host = null;
 
 function normalizeKey(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function getToolVisibility(tool) {
+  if (window.ToolStowHost && typeof window.ToolStowHost.normalizeVisibility === "function") {
+    return window.ToolStowHost.normalizeVisibility(tool);
+  }
+  if (
+    tool &&
+    (tool.visibility === "private" || tool.visibility === "draft" || tool.visibility === "public")
+  ) {
+    return tool.visibility;
+  }
+  return tool && tool.draft === true ? "draft" : "public";
+}
+
+function createVisibilityBadge(tool) {
+  const vis = getToolVisibility(tool);
+  if (vis === "public") return null;
+  const badge = document.createElement("span");
+  badge.className = vis === "private" ? "vis-badge vis-badge-private" : "vis-badge vis-badge-draft";
+  badge.textContent = vis === "private" ? "私有" : "草稿";
+  return badge;
+}
+
+function formatQuickSwitcherLabel(tool) {
+  const name = tool.name || tool.id;
+  const vis = getToolVisibility(tool);
+  if (vis === "private") return `${name} (私有)`;
+  if (vis === "draft") return `${name} (草稿)`;
+  return name;
 }
 
 function showStatus(message, kind = "info", autoHideMs = 4500) {
@@ -198,10 +231,18 @@ function renderDirectoryList(s) {
       const body = document.createElement("span");
       body.className = "tool-row-body";
 
+      const titleRow = document.createElement("span");
+      titleRow.className = "tool-row-title-row";
+
       const nameEl = document.createElement("span");
       nameEl.className = "tool-row-name";
       nameEl.textContent = tool.name || tool.id;
-      body.appendChild(nameEl);
+      titleRow.appendChild(nameEl);
+
+      const visBadge = createVisibilityBadge(tool);
+      if (visBadge) titleRow.appendChild(visBadge);
+
+      body.appendChild(titleRow);
 
       const desc = typeof tool.description === "string" ? tool.description.trim() : "";
       if (desc) {
@@ -259,7 +300,9 @@ function setInfoOpen(open, { restoreFocus = false } = {}) {
 }
 
 function renderQuickSwitcher(s) {
-  const signature = `${s.selectedId}|${s.allTools.map((t) => `${t.id}:${t.name}`).join(",")}`;
+  const signature = `${s.selectedId}|${s.allTools
+    .map((t) => `${t.id}:${t.name}:${getToolVisibility(t)}`)
+    .join(",")}`;
   if (signature === ui.switcherSignature) return;
   ui.switcherSignature = signature;
 
@@ -267,7 +310,7 @@ function renderQuickSwitcher(s) {
   for (const tool of s.allTools) {
     const opt = document.createElement("option");
     opt.value = tool.id;
-    opt.textContent = tool.name || tool.id;
+    opt.textContent = formatQuickSwitcherLabel(tool);
     fragment.appendChild(opt);
   }
   els.quickSwitcher.replaceChildren(fragment);
@@ -279,6 +322,21 @@ function renderInfoPopover(tool, s) {
 
   els.activeToolVersion.textContent = tool.version ? `v${tool.version}` : "";
   els.infoVersionRow.hidden = !tool.version;
+
+  const vis = getToolVisibility(tool);
+  if (vis === "private") {
+    els.activeToolVisInfo.className = "vis-badge vis-badge-private";
+    els.activeToolVisInfo.textContent = "私有 · 仅管理员可见";
+    els.infoVisibilityRow.hidden = false;
+  } else if (vis === "draft") {
+    els.activeToolVisInfo.className = "vis-badge vis-badge-draft";
+    els.activeToolVisInfo.textContent = "草稿";
+    els.infoVisibilityRow.hidden = false;
+  } else {
+    els.activeToolVisInfo.className = "vis-badge";
+    els.activeToolVisInfo.textContent = "";
+    els.infoVisibilityRow.hidden = true;
+  }
 
   els.infoThemeRow.hidden = !(tool.themeAware === true || s.activeIframeReady === true);
 
@@ -306,6 +364,22 @@ function renderInfoPopover(tool, s) {
 function renderWorkspace(tool, s) {
   window.ToolStowHost.renderIcon(els.activeToolIcon, tool);
   els.activeToolName.textContent = tool.name || tool.id;
+
+  const vis = getToolVisibility(tool);
+  if (vis === "private") {
+    els.activeToolVisBadge.className = "vis-badge vis-badge-private wb-vis-badge";
+    els.activeToolVisBadge.textContent = "私有";
+    els.activeToolVisBadge.hidden = false;
+  } else if (vis === "draft") {
+    els.activeToolVisBadge.className = "vis-badge vis-badge-draft wb-vis-badge";
+    els.activeToolVisBadge.textContent = "草稿";
+    els.activeToolVisBadge.hidden = false;
+  } else {
+    els.activeToolVisBadge.className = "vis-badge wb-vis-badge";
+    els.activeToolVisBadge.textContent = "";
+    els.activeToolVisBadge.hidden = true;
+  }
+
   renderQuickSwitcher(s);
   els.quickSwitcher.value = tool.id;
   renderInfoPopover(tool, s);
@@ -416,6 +490,9 @@ function renderPaletteList(s) {
     nameEl.className = "cmd-palette-item-name";
     nameEl.textContent = tool.name || tool.id;
     titleRow.appendChild(nameEl);
+
+    const visBadge = createVisibilityBadge(tool);
+    if (visBadge) titleRow.appendChild(visBadge);
 
     if (isCurrent) {
       const currentBadge = document.createElement("span");
@@ -543,20 +620,7 @@ function focusSearch() {
   els.searchInput.select();
 }
 
-function refreshVisibleDirectory() {
-  const state = host.getState();
-  if (document.visibilityState === "visible" && !state.selectedId && !state.loading) {
-    host.refresh();
-  }
-}
-
 function bindEvents() {
-  document.addEventListener("visibilitychange", refreshVisibleDirectory);
-  window.addEventListener("focus", refreshVisibleDirectory);
-  window.addEventListener("pageshow", (e) => {
-    if (e.persisted) refreshVisibleDirectory();
-  });
-
   els.brandLink.addEventListener("click", (e) => {
     e.preventDefault();
     host.clearSelection({ updateHash: true });
